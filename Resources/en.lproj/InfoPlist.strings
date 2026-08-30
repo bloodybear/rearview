@@ -1,0 +1,3 @@
+"CFBundleName" = "Rearview";
+"CFBundleDisplayName" = "Rearview";
+"NSScreenCaptureUsageDescription" = "Screen Recording permission is required to recognize and translate Japanese text in the selected screen area.";

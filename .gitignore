@@ -1,0 +1,10 @@
+.DS_Store
+.build/
+.swiftpm-cache/
+.swiftpm-config/
+.swiftpm-security/
+dist/
+*.xcuserstate
+DerivedData/
+.idea/
+.local/
