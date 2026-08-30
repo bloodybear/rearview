@@ -119,6 +119,15 @@ swift build -c "$BUILD_CONFIGURATION" --disable-sandbox \
   "$APP/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $APP_BUILD" \
   "$APP/Contents/Info.plist"
+SPARKLE_FRAMEWORK="$(find "$ROOT/.build" -type d -path "*/$BUILD_CONFIGURATION/Sparkle.framework" -print -quit)"
+if [[ -z "$SPARKLE_FRAMEWORK" || ! -d "$SPARKLE_FRAMEWORK" ]]; then
+  print -u2 -- "error: Sparkle.framework was not produced by the build"
+  exit 1
+fi
+/bin/mkdir -p "$APP/Contents/Frameworks"
+/usr/bin/ditto "$SPARKLE_FRAMEWORK" "$APP/Contents/Frameworks/Sparkle.framework"
+/usr/bin/install_name_tool -add_rpath '@loader_path/../Frameworks' \
+  "$APP/Contents/MacOS/Rearview"
 if [[ "$PACKAGE_MODE" == "dev" ]]; then
   /usr/libexec/PlistBuddy -c 'Set :CFBundleIdentifier io.github.bloodybear.rearview.dev' \
     "$APP/Contents/Info.plist"

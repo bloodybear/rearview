@@ -45,6 +45,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let broker = TranslationBroker()
     private lazy var coordinator = SessionCoordinator(broker: broker)
     private let selector = ScreenSelectionController()
+#if LST_EXCLUDE_DEBUG_FEATURES
+    private let appUpdater: AppUpdater
+#endif
     private var statusItem: NSStatusItem!
     private var selectionMenuItem: NSMenuItem?
     private var settingsMenuItem: NSMenuItem?
@@ -83,10 +86,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     ) {
         self.permissionClient = permissionClient
         self.defaults = defaults
+#if LST_EXCLUDE_DEBUG_FEATURES
+        self.appUpdater = AppUpdater()
+#endif
         super.init()
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+#if LST_EXCLUDE_DEBUG_FEATURES
+        appUpdater.startIfConfigured()
+#endif
         if permissionClient.preflight() {
             startScreenCapturePermissionProbe()
         } else {
@@ -191,6 +200,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             withTitle: L10n.text("설정…"), action: #selector(showSettings),
             keyEquivalent: ""
         )
+#if LST_EXCLUDE_DEBUG_FEATURES
+        appUpdater.addCheckForUpdatesItem(to: menu)
+#endif
         updateStatusMenuShortcuts()
 #if !LST_EXCLUDE_DEBUG_FEATURES
         let separator = NSMenuItem.separator()
@@ -206,7 +218,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 #endif
         menu.addItem(.separator())
         menu.addItem(withTitle: L10n.text("종료"), action: #selector(quit), keyEquivalent: "")
-        menu.items.forEach { $0.target = self }
+        menu.items.forEach { item in
+            if item.target == nil { item.target = self }
+        }
         statusItem.menu = menu
     }
 
