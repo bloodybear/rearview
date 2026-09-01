@@ -1,11 +1,12 @@
 #!/bin/zsh
 set -euo pipefail
 
+SCRIPT_PATH="${0:A}"
 ROOT="${0:A:h:h}"
 cd "$ROOT"
 
 usage() {
-  print -u2 -- "usage: $0 [dev] [zip] [dmg]"
+  print -u2 -- "usage: $SCRIPT_PATH [dev] [zip] [dmg]"
   exit 2
 }
 
@@ -83,12 +84,14 @@ fi
 VERSION_PLIST="$ROOT/Resources/Info.plist"
 APP_VERSION="${REARVIEW_VERSION:-$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$VERSION_PLIST")}"
 APP_BUILD="${REARVIEW_BUILD:-$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$VERSION_PLIST")}"
-if [[ -n "${REARVIEW_VERSION:-}" ]] && [[ "$APP_VERSION" != <->.<->.<-> ]]; then
+if [[ -n "${REARVIEW_VERSION:-}" ]] &&
+   [[ ! "$APP_VERSION" =~ "^[0-9]{2}\\.(1[0-2]|[1-9])\\.[0-9]+$" ]]; then
   print -u2 -- "error: REARVIEW_VERSION must use YY.M.Patch numeric format: $APP_VERSION"
   exit 1
 fi
-if [[ -n "${REARVIEW_BUILD:-}" ]] && [[ "$APP_BUILD" != <->.<-> ]]; then
-  print -u2 -- "error: REARVIEW_BUILD must use YYYYMMDD.N numeric format: $APP_BUILD"
+if [[ -n "${REARVIEW_BUILD:-}" ]] &&
+   [[ ! "$APP_BUILD" =~ "^[0-9]{6}\\.[0-9]{6}$" ]]; then
+  print -u2 -- "error: REARVIEW_BUILD must use YYMMDD.HHmmSS numeric format: $APP_BUILD"
   exit 1
 fi
 

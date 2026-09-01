@@ -1,11 +1,12 @@
 #!/bin/zsh
 set -euo pipefail
 
+SCRIPT_PATH="${0:A}"
 ROOT="${0:A:h:h}"
 cd "$ROOT"
 
 usage() {
-  print -u2 -- "usage: $0 [archives-directory] [appcast-path]"
+  print -u2 -- "usage: $SCRIPT_PATH [archives-directory] [appcast-path]"
   print -u2 -- "  archives-directory: directory containing versioned Rearview update archives"
   print -u2 -- "  appcast-path:      output appcast path (default: $ROOT/appcast.xml)"
   exit 2
@@ -20,7 +21,8 @@ APPCAST_PATH="${2:-$ROOT/appcast.xml}"
 
 VERSION_PLIST="$ROOT/Resources/Info.plist"
 APP_VERSION="${REARVIEW_VERSION:-$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$VERSION_PLIST")}"
-if [[ "$APP_VERSION" != <->.<->.<-> ]]; then
+if [[ -n "${REARVIEW_VERSION:-}" ]] &&
+   [[ ! "$APP_VERSION" =~ "^[0-9]{2}\\.(1[0-2]|[1-9])\\.[0-9]+$" ]]; then
   print -u2 -- "error: REARVIEW_VERSION must use YY.M.Patch numeric format: $APP_VERSION"
   exit 1
 fi
