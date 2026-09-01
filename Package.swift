@@ -8,9 +8,15 @@ let package = Package(
         .executable(name: "Rearview", targets: ["Rearview"]),
         .executable(name: "BenchmarkFixture", targets: ["BenchmarkFixture"])
     ],
+    dependencies: [
+        .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.9.6")
+    ],
     targets: [
         .executableTarget(
             name: "Rearview",
+            dependencies: [
+                .product(name: "Sparkle", package: "Sparkle")
+            ],
             swiftSettings: [
                 .unsafeFlags(["-Xfrontend", "-strict-concurrency=minimal"])
             ]

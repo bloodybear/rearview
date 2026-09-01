@@ -80,6 +80,18 @@ if ! /usr/bin/security find-identity -v -p codesigning \
   exit 1
 fi
 
+VERSION_PLIST="$ROOT/Resources/Info.plist"
+APP_VERSION="${REARVIEW_VERSION:-$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$VERSION_PLIST")}"
+APP_BUILD="${REARVIEW_BUILD:-$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$VERSION_PLIST")}"
+if [[ -n "${REARVIEW_VERSION:-}" ]] && [[ "$APP_VERSION" != <->.<->.<-> ]]; then
+  print -u2 -- "error: REARVIEW_VERSION must use YY.M.Patch numeric format: $APP_VERSION"
+  exit 1
+fi
+if [[ -n "${REARVIEW_BUILD:-}" ]] && [[ "$APP_BUILD" != <->.<-> ]]; then
+  print -u2 -- "error: REARVIEW_BUILD must use YYYYMMDD.N numeric format: $APP_BUILD"
+  exit 1
+fi
+
 if [[ -z "${SDKROOT:-}" ]]; then
   SDKROOT=$(/usr/bin/xcrun --sdk macosx --show-sdk-path) || {
     print -u2 -- "error: unable to locate the macOS SDK with xcrun"
@@ -103,6 +115,19 @@ swift build -c "$BUILD_CONFIGURATION" --disable-sandbox \
 /bin/cp "$ROOT/.build/$BUILD_CONFIGURATION/Rearview" \
   "$APP/Contents/MacOS/Rearview"
 /bin/cp "$ROOT/Resources/Info.plist" "$APP/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $APP_VERSION" \
+  "$APP/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $APP_BUILD" \
+  "$APP/Contents/Info.plist"
+SPARKLE_FRAMEWORK="$(find "$ROOT/.build" -type d -path "*/$BUILD_CONFIGURATION/Sparkle.framework" -print -quit)"
+if [[ -z "$SPARKLE_FRAMEWORK" || ! -d "$SPARKLE_FRAMEWORK" ]]; then
+  print -u2 -- "error: Sparkle.framework was not produced by the build"
+  exit 1
+fi
+/bin/mkdir -p "$APP/Contents/Frameworks"
+/usr/bin/ditto "$SPARKLE_FRAMEWORK" "$APP/Contents/Frameworks/Sparkle.framework"
+/usr/bin/install_name_tool -add_rpath '@loader_path/../Frameworks' \
+  "$APP/Contents/MacOS/Rearview"
 if [[ "$PACKAGE_MODE" == "dev" ]]; then
   /usr/libexec/PlistBuddy -c 'Set :CFBundleIdentifier io.github.bloodybear.rearview.dev' \
     "$APP/Contents/Info.plist"
@@ -118,6 +143,10 @@ if [[ "$PACKAGE_MODE" == "dev" ]]; then
   /bin/cp "$ROOT/.build/$BUILD_CONFIGURATION/BenchmarkFixture" \
     "$HELPER/Contents/MacOS/BenchmarkFixture"
   /bin/cp "$ROOT/Resources/BenchmarkFixture-Info.plist" "$HELPER/Contents/Info.plist"
+  /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $APP_VERSION" \
+    "$HELPER/Contents/Info.plist"
+  /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $APP_BUILD" \
+    "$HELPER/Contents/Info.plist"
   /usr/bin/codesign --force --sign "$SIGNING_IDENTITY" "$HELPER"
 fi
 
@@ -147,6 +176,7 @@ if (( BUILD_DMG )); then
 fi
 
 print -- "Development feature: $DEBUG_FEATURE_STATUS"
+print -- "Version: $APP_VERSION ($APP_BUILD)"
 print -- "Signed with identity: $SIGNING_IDENTITY"
 print -- "Created app: $APP"
 if (( BUILD_ZIP )); then
