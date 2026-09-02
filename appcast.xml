@@ -3,14 +3,14 @@
     <channel>
         <title>Rearview</title>
         <item>
-            <title>26.8.0</title>
-            <pubDate>Tue, 01 Sep 2026 21:29:37 +0900</pubDate>
+            <title>26.9.0</title>
+            <pubDate>Wed, 02 Sep 2026 09:26:10 +0900</pubDate>
             <link>https://github.com/bloodybear/rearview</link>
-            <sparkle:version>20260831.1</sparkle:version>
-            <sparkle:shortVersionString>26.8.0</sparkle:shortVersionString>
+            <sparkle:version>260902.092604</sparkle:version>
+            <sparkle:shortVersionString>26.9.0</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
             <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <enclosure url="https://github.com/bloodybear/rearview/releases/download/v26.8.0/Rearview-26.8.0.zip" length="3783880" type="application/octet-stream" sparkle:edSignature="pIjvH2bnmOMZAFazulwnNBlfJG9tp4TZ5DJO9wc4Ko5JJC7Opq9m+BJ3YrbdJUCCeVUKo9Bo7vjgnbeAn8dqBA=="/>
+            <enclosure url="https://github.com/bloodybear/rearview/releases/download/v26.9.0/Rearview-26.9.0.zip" length="3811918" type="application/octet-stream" sparkle:edSignature="0cTrlPw19lHCjZdJ/ZilT9rbkjHeOf19aTNjWecT9oyJZf0ITf/xk3p0622rA8+jRT6/+peVCkuTOwfRdm/ZCA=="/>
         </item>
     </channel>
 </rss>
