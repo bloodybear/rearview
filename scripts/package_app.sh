@@ -90,8 +90,8 @@ if [[ -n "${REARVIEW_VERSION:-}" ]] &&
   exit 1
 fi
 if [[ -n "${REARVIEW_BUILD:-}" ]] &&
-   [[ ! "$APP_BUILD" =~ "^[0-9]{6}\\.[0-9]{6}$" ]]; then
-  print -u2 -- "error: REARVIEW_BUILD must use YYMMDD.HHmmSS numeric format: $APP_BUILD"
+   [[ ! "$APP_BUILD" =~ "^[0-9]{6}\\.[0-9]+$" ]]; then
+  print -u2 -- "error: REARVIEW_BUILD must use YYMMDD.CommitNumber numeric format: $APP_BUILD"
   exit 1
 fi
 
