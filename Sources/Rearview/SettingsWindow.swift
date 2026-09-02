@@ -101,6 +101,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
     var onCapturePolicyChange: ((CapturePolicy) -> Void)?
     var onOCRSettingsChange: ((OCRMode, OCRSettings) -> Void)?
     var onRefinementOCRPolicyChange: ((RefinementOCRPolicy) -> Void)?
+#if LST_EXCLUDE_DEBUG_FEATURES
+    var updateSettingsProvider: (() -> UpdateSettingsSnapshot)?
+    var onAutomaticChecksChange: ((Bool) -> Void)?
+    var onAutomaticDownloadsChange: ((Bool) -> Void)?
+#endif
 
     private let debugFeatures = NSSwitch()
     private let mirrorBackgroundOpacityField = NSTextField()
@@ -157,6 +162,10 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
     private let refinementConfidenceField = NSTextField()
     private let recognitionLanguagesPopup = NSPopUpButton()
     private let resetButton = NSButton()
+#if LST_EXCLUDE_DEBUG_FEATURES
+    private let automaticChecks = NSSwitch()
+    private let automaticDownloads = NSSwitch()
+#endif
     private weak var settingsScrollView: NSScrollView?
     private var activeDocumentWidthConstraint: NSLayoutConstraint?
     private var settingsPages: [SettingsPage] = []
@@ -293,6 +302,17 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
             ocrAutoLanguageSwitches[mode]?.state = settings.automaticallyDetectsLanguage ? .on : .off
         }
         recognitionLanguagesPopup.selectItem(withTitle: OCRRecognitionLanguageChoice.load().title)
+#if LST_EXCLUDE_DEBUG_FEATURES
+        if let updateSettings = updateSettingsProvider?() {
+            automaticChecks.state = updateSettings.automaticallyChecksForUpdates ? .on : .off
+            automaticDownloads.state = updateSettings.automaticallyDownloadsUpdates ? .on : .off
+            automaticDownloads.isEnabled = updateSettings.allowsAutomaticUpdates
+        } else {
+            automaticChecks.state = .on
+            automaticDownloads.state = .off
+            automaticDownloads.isEnabled = false
+        }
+#endif
     }
 
     private func buildContent() {
@@ -385,10 +405,25 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
                 verticalInset: SettingsLayoutMetrics.compoundRowVerticalInset
             ),
         ])
+#if LST_EXCLUDE_DEBUG_FEATURES
+        let updateSettingsSection = makeSection(title: L10n.text("업데이트"), rows: [
+            makePreferenceRow(
+                title: L10n.text("업데이트 자동 확인"),
+                description: L10n.text("새 업데이트를 백그라운드에서 자동으로 확인합니다. 확인 주기는 하루에 한 번입니다."),
+                control: automaticChecks
+            ),
+            makePreferenceRow(
+                title: L10n.text("업데이트 자동 다운로드 및 설치"),
+                description: L10n.text("업데이트를 백그라운드에서 다운로드하고 다음 앱 종료 시 설치합니다."),
+                control: automaticDownloads,
+                verticalInset: SettingsLayoutMetrics.compoundRowVerticalInset
+            ),
+        ])
+#endif
         let settingsManagementSection = makeSection(title: L10n.text("설정 관리"), rows: [
             makePreferenceRow(
                 title: L10n.text("모든 설정 초기화"),
-                description: L10n.text("단축키, 표시 방식, 캡처 및 OCR 설정을 기본값으로 되돌립니다. macOS 시스템 권한은 변경하지 않습니다."),
+                description: L10n.text("단축키, 표시 방식, 캡처, OCR 및 업데이트 설정을 기본값으로 되돌립니다. macOS 시스템 권한은 변경하지 않습니다."),
                 control: resetButton
             ),
         ])
@@ -441,8 +476,14 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         ])
         let advancedOCRSection = makeSection(title: L10n.text("고급 OCR"), rows: makeAdvancedOCRRows())
 
+        var generalSections: [NSView] = [startupSection, languageAndTranslationSection]
+#if LST_EXCLUDE_DEBUG_FEATURES
+        generalSections.append(updateSettingsSection)
+#endif
+        generalSections.append(settingsManagementSection)
+
         var definitions: [(String, String, String, [NSView])] = [
-            ("general", L10n.text("일반"), "gearshape", [startupSection, languageAndTranslationSection, settingsManagementSection]),
+            ("general", L10n.text("일반"), "gearshape", generalSections),
             ("shortcuts", L10n.text("단축키"), "keyboard", shortcutSections),
             ("display", L10n.text("화면 표시"), "rectangle.on.rectangle", [displayModeSection, mirrorDisplaySection, overlayDisplaySection, selectionDisplaySection]),
             ("captureOCR", L10n.text("캡처 및 OCR"), "viewfinder", [captureSection, updateSection, ocrExecutionSection, refinementConditionSection, languageSection, advancedOCRSection]),
@@ -609,6 +650,12 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         resetButton.bezelStyle = .rounded
         resetButton.target = self
         resetButton.action = #selector(resetSettings)
+#if LST_EXCLUDE_DEBUG_FEATURES
+        automaticChecks.target = self
+        automaticChecks.action = #selector(automaticChecksChanged)
+        automaticDownloads.target = self
+        automaticDownloads.action = #selector(automaticDownloadsChanged)
+#endif
 
         imageSaveDirectoryField.font = .systemFont(ofSize: 12)
         imageSaveDirectoryField.lineBreakMode = .byTruncatingMiddle
@@ -1152,6 +1199,17 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
 
 
     @objc private func debugFeaturesChanged() { let enabled = debugFeatures.state == .on; DebugFeatures.save(enabled); onDebugFeaturesChange?(enabled) }
+#if LST_EXCLUDE_DEBUG_FEATURES
+    @objc private func automaticChecksChanged() {
+        onAutomaticChecksChange?(automaticChecks.state == .on)
+        refresh()
+    }
+
+    @objc private func automaticDownloadsChanged() {
+        onAutomaticDownloadsChange?(automaticDownloads.state == .on)
+        refresh()
+    }
+#endif
     @objc private func displayModeChanged() {
         let mode: TranslationDisplayMode = displayModeControl.selectedSegment == 0 ? .mirror : .overlay
         mode.save()
@@ -1465,15 +1523,15 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
     @objc private func resetSettings() {
         let alert = NSAlert()
         alert.messageText = L10n.text("설정을 초기화할까요?")
-        alert.informativeText = L10n.text("단축키, 표시 방식, 캡처 및 OCR 설정이 모두 기본값으로 돌아갑니다.")
+        alert.informativeText = L10n.text("단축키, 표시 방식, 캡처, OCR 및 업데이트 설정이 모두 기본값으로 돌아갑니다.")
         alert.alertStyle = .warning
         alert.addButton(withTitle: L10n.text("초기화"))
         alert.addButton(withTitle: L10n.text("취소"))
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         stopRecordingHotKey()
         AppSettings.reset()
-        refresh()
         onSettingsReset?()
+        refresh()
     }
 
     func windowWillClose(_ notification: Notification) {

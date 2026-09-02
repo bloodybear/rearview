@@ -243,7 +243,7 @@ enum AppSettings {
         RefinementOCRPolicy.confidenceThresholdKey, RefinementOCRPolicy.delayMillisecondsKey,
         OCRRecognitionLanguageChoice.defaultsKey,
         ImageSaveSettings.directoryDefaultsKey, ImageSaveSettings.filenameTemplateDefaultsKey
-    ] + [OCRMode.realtime, .refinement].flatMap { mode in
+    ] + UpdateSettingsDefaults.keys + [OCRMode.realtime, .refinement].flatMap { mode in
         let key = "ocr.\(mode.rawValue)."
         return [
             "\(key)engine", "\(key)level", "\(key)minimumTextHeight",

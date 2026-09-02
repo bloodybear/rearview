@@ -117,6 +117,12 @@ enum L10n {
 선택…	Choose…	選択…
 설정…	Settings…	設定…
 업데이트 확인…	Check for Updates…	アップデートを確認…
+새 업데이트 있음…	New Update Available…	新しいアップデートがあります…
+업데이트 다운로드 중…	Downloading Update…	アップデートをダウンロード中…
+업데이트 설치 대기 중…	Update Ready to Install…	アップデートのインストール待ち…
+Rearview 업데이트	Rearview Update	Rearviewアップデート
+새 버전 %@을 사용할 수 있습니다.	Version %@ is available.	バージョン%@を利用できます。
+업데이트가 설치되지 않았습니다. 버전 %@을 확인하세요.	The update has not been installed. Check version %@.	アップデートがまだインストールされていません。バージョン%@を確認してください。
 종료	Quit	終了
 프로파일링 시작	Start Profiling	プロファイリングを開始
 프로파일링 종료 및 결과 보기	Stop Profiling and View Results	プロファイリングを終了して結果を表示
@@ -132,6 +138,11 @@ Rearview 설정	Rearview Settings	Rearview設定
 시작 및 실행	Startup & Operation	起動と動作
 macOS 시작 시 자동 실행	Launch at Login	ログイン時に起動
 사용자 로그인 후 Rearview를 자동으로 실행합니다.	Automatically launches Rearview after you log in.	ログイン後にRearviewを自動的に起動します。
+업데이트	Updates	アップデート
+업데이트 자동 확인	Check for Updates Automatically	アップデートを自動的に確認
+새 업데이트를 백그라운드에서 자동으로 확인합니다. 확인 주기는 하루에 한 번입니다.	Automatically checks for new updates in the background. Checks run once a day.	新しいアップデートをバックグラウンドで自動的に確認します。確認は1日1回行われます。
+업데이트 자동 다운로드 및 설치	Automatically Download and Install Updates	アップデートを自動的にダウンロードしてインストール
+업데이트를 백그라운드에서 다운로드하고 다음 앱 종료 시 설치합니다.	Downloads updates in the background and installs them the next time the app quits.	アップデートをバックグラウンドでダウンロードし、次回アプリ終了時にインストールします。
 언어 및 번역	Language & Translation	言語と翻訳
 표시 언어	Display Language	表示言語
 앱의 메뉴, 설정 및 번역 UI에 사용할 언어를 선택합니다.	Choose the language used for app menus, settings, and translation UI.	アプリのメニュー、設定、翻訳UIで使用する言語を選択します。
@@ -142,6 +153,7 @@ macOS 시작 시 자동 실행	Launch at Login	ログイン時に起動
 설정 관리	Settings Management	設定管理
 모든 설정 초기화	Reset All Settings	すべての設定をリセット
 단축키, 표시 방식, 캡처 및 OCR 설정을 기본값으로 되돌립니다. macOS 시스템 권한은 변경하지 않습니다.	Restores shortcuts, display, capture, and OCR settings to defaults. macOS permissions are not changed.	ショートカット、表示、キャプチャ、OCR設定を初期値に戻します。macOSの権限は変更しません。
+단축키, 표시 방식, 캡처, OCR 및 업데이트 설정을 기본값으로 되돌립니다. macOS 시스템 권한은 변경하지 않습니다.	Restores shortcuts, display, capture, OCR, and update settings to defaults. macOS permissions are not changed.	ショートカット、表示、キャプチャ、OCR、アップデート設定を初期値に戻します。macOSの権限は変更しません。
 기본값으로 초기화…	Reset to Defaults…	初期値に戻す…
 전역	Global	グローバル
 전역 단축키	Global Shortcuts	グローバルショートカット
@@ -266,7 +278,7 @@ Text OCR · Accurate · Current. 보정 입력 배율과 언어 보정 설정입
 디버그 기능	Debug Features	デバッグ機能
 프로파일링·벤치마크 메뉴와 OCR Debug Overlay 버튼을 표시합니다.	Show profiling and benchmark menus and the OCR Debug Overlay button.	プロファイリングとベンチマークのメニュー、およびOCR Debug Overlayボタンを表示します。
 설정을 초기화할까요?	Reset settings?	設定をリセットしますか？
-단축키, 표시 방식, 캡처 및 OCR 설정이 모두 기본값으로 돌아갑니다.	All shortcuts, display, capture, and OCR settings will return to defaults.	ショートカット、表示、キャプチャ、OCR設定がすべて初期値に戻ります。
+단축키, 표시 방식, 캡처, OCR 및 업데이트 설정이 모두 기본값으로 돌아갑니다.	All shortcuts, display, capture, OCR, and update settings will return to defaults.	ショートカット、表示、キャプチャ、OCR、アップデート設定がすべて初期値に戻ります。
 초기화	Reset	リセット
 취소	Cancel	キャンセル
 확인	OK	OK

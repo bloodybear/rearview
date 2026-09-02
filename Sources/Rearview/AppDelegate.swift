@@ -90,12 +90,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.appUpdater = AppUpdater()
 #endif
         super.init()
+#if LST_EXCLUDE_DEBUG_FEATURES
+        appUpdater.onStateChange = { [weak self] _ in
+            self?.rebuildStatusMenu()
+        }
+        appUpdater.onSettingsChange = { [weak self] _ in
+            self?.settingsWindow?.refresh()
+        }
+#endif
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-#if LST_EXCLUDE_DEBUG_FEATURES
-        appUpdater.startIfConfigured()
-#endif
         if permissionClient.preflight() {
             startScreenCapturePermissionProbe()
         } else {
@@ -123,6 +128,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         installStatusItem()
         installHotKey()
         installLocalShortcutMonitor()
+#if LST_EXCLUDE_DEBUG_FEATURES
+        appUpdater.startIfConfigured()
+#endif
 #if !LST_EXCLUDE_DEBUG_FEATURES
         if CommandLine.arguments.contains("--benchmark") {
             Task { @MainActor [weak self] in
@@ -674,6 +682,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             controller = SettingsWindowController()
             controller.onSettingsReset = { [weak self] in self?.applyResetSettings() }
+#if LST_EXCLUDE_DEBUG_FEATURES
+            controller.updateSettingsProvider = { [weak self] in
+                self?.appUpdater.settingsSnapshot ?? .defaults
+            }
+            controller.onAutomaticChecksChange = { [weak self] enabled in
+                self?.appUpdater.setAutomaticallyChecksForUpdates(enabled)
+            }
+            controller.onAutomaticDownloadsChange = { [weak self] enabled in
+                self?.appUpdater.setAutomaticallyDownloadsUpdates(enabled)
+            }
+#endif
             controller.onDebugFeaturesChange = { [weak self] enabled in self?.setDebugFeaturesEnabled(enabled) }
             controller.onMirrorBackgroundOpacityChange = { [weak self] opacity in self?.coordinator.setMirrorBackgroundOpacity(opacity) }
             controller.onDisplayModeChange = { [weak self] mode in
@@ -819,6 +838,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         coordinator.setMirrorFollowsSelectionSize(MirrorFollowsSelectionSize.load())
         coordinator.setTargetApplicationTracking(TargetApplicationTracking.load())
         _ = setLaunchAtLogin(LaunchAtLogin.load())
+#if LST_EXCLUDE_DEBUG_FEATURES
+        appUpdater.resetSettings()
+#endif
         Task { await coordinator.setMirrorUpdateStyle(mirrorUpdateStyle) }
         Task { await coordinator.setCapturePolicy(CapturePolicy.load()) }
         coordinator.setRefinementOCRPolicy(RefinementOCRPolicy.load())
