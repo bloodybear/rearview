@@ -2,5 +2,15 @@
 <rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
     <channel>
         <title>Rearview</title>
+        <item>
+            <title>26.9.0</title>
+            <pubDate>Wed, 02 Sep 2026 09:55:28 +0900</pubDate>
+            <link>https://github.com/bloodybear/rearview</link>
+            <sparkle:version>260902.13</sparkle:version>
+            <sparkle:shortVersionString>26.9.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/bloodybear/rearview/releases/download/v26.9.0/Rearview-26.9.0.zip" length="3811916" type="application/octet-stream" sparkle:edSignature="9+VOX0gIVmBEhcjjKp0WIgWX3GseLSQC0CV6Srd8bAt1KQJUR3QrMFAJdLaN4dYyvqH/Zg3buKjuiHf/6cK6BA=="/>
+        </item>
     </channel>
 </rss>
