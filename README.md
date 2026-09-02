@@ -10,24 +10,7 @@ Rearview is a macOS menu bar app that translates Japanese and Korean text from a
 - Selectable translated text
 - Window tracking
 - On-device processing
-- Automatic update checks in release builds
-- Optional background update download and installation on the next app quit
-
-## Updates
-
-Release builds check for updates automatically once a day. The setting is available under
-`Settings > General > Updates` and is enabled by default. Background download and installation
-is disabled by default and can be enabled separately.
-
-When an update is found, Rearview shows a macOS notification and marks the update in the menu bar.
-Clicking the notification or menu item opens Sparkle's standard update window. Rearview never
-force-quits the app for an automatic update; an automatically downloaded update is installed the
-next time the app quits normally. Manual installation may restart the app through Sparkle's standard
-flow.
-
-Notification permission is requested when the first update is found. If notifications are disabled,
-the menu bar status remains available. Update checks use the current network connection without a
-separate limited-network policy.
+- Automatic daily update checks with optional background installation
 
 ## Requirements
 
