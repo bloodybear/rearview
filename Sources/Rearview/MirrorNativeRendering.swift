@@ -1546,8 +1546,9 @@ public enum NativeMirrorViewTesting {
         let line = CTLineCreateWithAttributedString(attributedText)
         let naturalWidth = CGFloat(CTLineGetTypographicBounds(line, nil, nil, nil))
         let sourceWidth = floor(
-            naturalWidth * 0.75
+            naturalWidth * MirrorTextLayoutTuning.minimumHorizontalTextScale
                 - sourceHeight * MirrorTextLayoutTuning.horizontalExpansionHeightMultiplier
+                - 2
         )
         guard naturalWidth > 0, sourceWidth > 0 else { return false }
 

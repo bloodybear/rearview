@@ -209,9 +209,9 @@ func mirrorWindowFrameAsStoredByAppKit(_ frame: CGRect) -> CGRect {
 }
 
 enum MirrorTextLayoutTuning {
-    static let maximumTextVerticalScale: CGFloat = 0.95
-    static let backgroundVerticalExpansionFactor: CGFloat = 1.05
-    static let minimumHorizontalTextScale: CGFloat = 0.8
+    static let maximumTextVerticalScale: CGFloat = 0.98
+    static let backgroundVerticalExpansionFactor: CGFloat = 1.03
+    static let minimumHorizontalTextScale: CGFloat = 0.75
     static let minimumFontScale: CGFloat = 0.85
     static let fontScaleSearchCount = 2
     static let horizontalExpansionHeightMultiplier: CGFloat = 2
@@ -230,7 +230,7 @@ func mirrorHorizontalTextScale(naturalWidth: CGFloat, availableWidth: CGFloat) -
     )
 }
 
-func mirrorInitialTextRect(sourceRect: CGRect, inside bounds: CGRect) -> CGRect {
+private func mirrorInitialTextExpansionRect(sourceRect: CGRect) -> CGRect {
     guard sourceRect.width > 0, sourceRect.height > 0 else { return sourceRect }
     let extra = sourceRect.height
         * max(0, MirrorTextLayoutTuning.backgroundVerticalExpansionFactor - 1) / 2
@@ -239,7 +239,11 @@ func mirrorInitialTextRect(sourceRect: CGRect, inside bounds: CGRect) -> CGRect 
         y: sourceRect.minY - extra,
         width: sourceRect.width,
         height: sourceRect.height + extra * 2
-    ).intersection(bounds)
+    )
+}
+
+func mirrorInitialTextRect(sourceRect: CGRect, inside bounds: CGRect) -> CGRect {
+    mirrorInitialTextExpansionRect(sourceRect: sourceRect).intersection(bounds)
 }
 
 func mirrorRectsOverlap(_ lhs: CGRect, _ rhs: CGRect) -> Bool {
@@ -250,24 +254,21 @@ func mirrorRectsOverlap(_ lhs: CGRect, _ rhs: CGRect) -> Bool {
 
 func mirrorTextCollisionRects(for frame: CGRect, sourceRect: CGRect) -> [CGRect] {
     guard frame.width > 0, frame.height > 0, sourceRect.height > 0 else { return [frame] }
-    let initialExtra = sourceRect.height
-        * max(0, MirrorTextLayoutTuning.backgroundVerticalExpansionFactor - 1) / 2
-    let initialMinY = sourceRect.minY - initialExtra
-    let initialMaxY = sourceRect.maxY + initialExtra
+    let initialRect = mirrorInitialTextExpansionRect(sourceRect: sourceRect)
     var result = [CGRect(
         x: frame.minX, y: sourceRect.minY,
         width: frame.width, height: sourceRect.height
     )]
-    if frame.minY < initialMinY {
+    if frame.minY < initialRect.minY {
         result.append(CGRect(
             x: frame.minX, y: frame.minY,
-            width: frame.width, height: initialMinY - frame.minY
+            width: frame.width, height: initialRect.minY - frame.minY
         ))
     }
-    if frame.maxY > initialMaxY {
+    if frame.maxY > initialRect.maxY {
         result.append(CGRect(
-            x: frame.minX, y: initialMaxY,
-            width: frame.width, height: frame.maxY - initialMaxY
+            x: frame.minX, y: initialRect.maxY,
+            width: frame.width, height: frame.maxY - initialRect.maxY
         ))
     }
     return result.filter { $0.width > 0 && $0.height > 0 }
