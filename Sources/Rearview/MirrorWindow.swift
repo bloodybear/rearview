@@ -570,11 +570,21 @@ private final class MirrorSaveRevealButton: NSVisualEffectView {
 @MainActor
 private final class OverlayPassThroughContentView: NSView {
     weak var interactiveView: NSView?
+    weak var backgroundInteractiveView: NSView?
+    var allowsBackgroundInteraction = false
 
     override func hitTest(_ point: NSPoint) -> NSView? {
-        guard let interactiveView, !interactiveView.isHidden else { return nil }
-        let pointInTarget = interactiveView.convert(point, from: self)
-        return interactiveView.hitTest(pointInTarget)
+        if let interactiveView, !interactiveView.isHidden {
+            let pointInTarget = interactiveView.convert(point, from: self)
+            if let hit = interactiveView.hitTest(pointInTarget) {
+                return hit
+            }
+        }
+        guard allowsBackgroundInteraction,
+              let backgroundInteractiveView,
+              !backgroundInteractiveView.isHidden else { return nil }
+        let pointInTarget = backgroundInteractiveView.convert(point, from: self)
+        return backgroundInteractiveView.hitTest(pointInTarget)
     }
 }
 
@@ -801,6 +811,7 @@ final class TranslationOverlayPanel: NSPanel {
     private let statusStack = NSStackView()
     private let saveRevealButton = MirrorSaveRevealButton()
     private let pauseBadge = MirrorPauseBadge()
+    private let container = OverlayPassThroughContentView()
     private var selectionModeEnabled = false
     private var ignoresSelectionMouseEvents: Bool
     private var mouseGestureActive = false
@@ -832,7 +843,6 @@ final class TranslationOverlayPanel: NSPanel {
         self.ignoresMouseEvents = true
         alphaValue = NSApp.isActive ? self.activeOpacity : self.inactiveOpacity
 
-        let container = OverlayPassThroughContentView()
         container.wantsLayer = true
         container.layer?.backgroundColor = NSColor.clear.cgColor
         translationView.showsCapturedImage = true
@@ -848,6 +858,7 @@ final class TranslationOverlayPanel: NSPanel {
         statusStack.addArrangedSubview(statusCapsule)
         statusStack.addArrangedSubview(saveRevealButton)
         container.interactiveView = saveRevealButton
+        container.backgroundInteractiveView = translationView
         container.addSubview(translationView)
         container.addSubview(statusStack)
         container.addSubview(pauseBadge)
@@ -887,6 +898,7 @@ final class TranslationOverlayPanel: NSPanel {
 
     func resetInteractionState() {
         mouseGestureActive = false
+        container.allowsBackgroundInteraction = false
         ignoresMouseEvents = true
     }
 
@@ -933,13 +945,47 @@ final class TranslationOverlayPanel: NSPanel {
     func refreshLocalization() { pauseBadge.refreshLocalization() }
 
     private func updateInteraction() {
-        ignoresMouseEvents = !(saveRevealButton.isHidden == false || mouseGestureActive || overlayAcceptsMouseEvents(
+        let allowsTranslationInteraction = mouseGestureActive || overlayAcceptsMouseEvents(
             selectionModeEnabled: selectionModeEnabled,
             ignoresMouseEvents: ignoresSelectionMouseEvents
-        ))
+        )
+        container.allowsBackgroundInteraction = allowsTranslationInteraction
+        ignoresMouseEvents = !(saveRevealButton.isHidden == false || allowsTranslationInteraction)
 
     }
 }
+
+#if DEBUG
+@_spi(Testing)
+@MainActor
+public enum OverlayPanelTesting {
+    public static func verifiesInteractionRouting() -> Bool {
+        let panel = TranslationOverlayPanel(
+            selection: CGRect(x: 0, y: 0, width: 320, height: 180),
+            inactiveOpacity: 1,
+            activeOpacity: 1,
+            ignoresMouseEvents: true
+        )
+        defer { panel.close() }
+        guard let contentView = panel.contentView else { return false }
+        contentView.layoutSubtreeIfNeeded()
+        let center = CGPoint(x: contentView.bounds.midX, y: contentView.bounds.midY)
+
+        guard panel.ignoresMouseEvents,
+              contentView.hitTest(center) == nil else { return false }
+
+        panel.setIgnoresSelectionMouseEvents(false)
+        contentView.layoutSubtreeIfNeeded()
+        guard !panel.ignoresMouseEvents,
+              contentView.hitTest(center) === panel.translationView else { return false }
+
+        panel.setIgnoresSelectionMouseEvents(true)
+        panel.showSaveRevealButton(true)
+        contentView.layoutSubtreeIfNeeded()
+        return !panel.ignoresMouseEvents && contentView.hitTest(center) == nil
+    }
+}
+#endif
 
 @MainActor
 fileprivate final class MirrorDockPreviewPanel: NSPanel {

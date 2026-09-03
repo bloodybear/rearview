@@ -32,6 +32,15 @@ final class MirrorViewAppKitTests: XCTestCase {
         )
     }
 
+    func testOverlayPanelRoutesInteractiveMouseEvents() {
+        XCTAssertTrue(
+            runInApplicationEventLoop {
+                OverlayPanelTesting.verifiesInteractionRouting()
+            },
+            "오버레이 패널의 마우스 무시/상호작용 hit-test 계약이 깨졌습니다."
+        )
+    }
+
     func testDockPreviewRapidReentryRestoresVisibleState() {
         XCTAssertTrue(
             runInApplicationEventLoop {
