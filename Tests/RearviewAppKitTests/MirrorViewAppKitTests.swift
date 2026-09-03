@@ -14,6 +14,15 @@ final class MirrorViewAppKitTests: XCTestCase {
         )
     }
 
+    func testHorizontalCompressionKeepsOneLineAndSelectionGeometryAligned() {
+        XCTAssertTrue(
+            runInApplicationEventLoop {
+                NativeMirrorViewTesting.verifiesHorizontalCompressionAndFontScaling()
+            },
+            "가로 압축·폰트 축소 또는 선택 fragment 좌표 계약이 깨졌습니다."
+        )
+    }
+
     func testLiveResizeKeepsNativeCompositeStable() {
         XCTAssertTrue(
             runInApplicationEventLoop {

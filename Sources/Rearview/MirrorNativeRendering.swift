@@ -14,6 +14,7 @@ private struct NativeMirrorTextLayout {
     let lineCount: Int
     let text: String
     let textOriginX: CGFloat
+    let horizontalScale: CGFloat
 }
 
 private struct NativeMirrorRectKey: Hashable {
@@ -54,6 +55,7 @@ private struct NativeMirrorArtwork {
     let backgroundLayer: CGImage?
     let textLayer: CGImage?
     let textRects: [UUID: CGRect]
+    let layouts: [UUID: NativeMirrorTextLayout]
     let fragments: [NativeMirrorRenderedFragment]
 }
 
@@ -63,7 +65,6 @@ private final class NativeMirrorRenderer {
         let text: String
         let sourceRect: NativeMirrorRectKey
         let oneLineRect: NativeMirrorRectKey
-        let twoLineRect: NativeMirrorRectKey
     }
 
     private var layoutCache: [LayoutKey: NativeMirrorTextLayout] = [:]
@@ -83,6 +84,19 @@ private final class NativeMirrorRenderer {
     var image: CGImage? { compositeImage }
     var renderedTextRects: [UUID: CGRect] { artwork?.textRects ?? [:] }
     var renderedFragments: [NativeMirrorRenderedFragment] { artwork?.fragments ?? [] }
+
+    fileprivate func layoutMetrics(for id: UUID) -> (
+        frame: CGRect, fontSize: CGFloat, horizontalScale: CGFloat, lineCount: Int, text: String
+    )? {
+        guard let layout = artwork?.layouts[id] else { return nil }
+        return (
+            frame: layout.frame,
+            fontSize: layout.fontSize,
+            horizontalScale: layout.horizontalScale,
+            lineCount: layout.lineCount,
+            text: layout.text
+        )
+    }
 
     func render(frame: MirrorFrame, backgroundOpacity: CGFloat) {
         let fingerprint = fingerprint(for: frame)
@@ -172,6 +186,7 @@ private final class NativeMirrorRenderer {
             )
         }
         var textRects: [UUID: CGRect] = [:]
+        var layouts: [UUID: NativeMirrorTextLayout] = [:]
         var fragments: [NativeMirrorRenderedFragment] = []
         let sourceIndexByID = Dictionary(
             uniqueKeysWithValues: frame.translatedItems.enumerated().map { ($0.element.id, $0.offset) }
@@ -184,8 +199,9 @@ private final class NativeMirrorRenderer {
             let item = frame.translatedItems[index]
             guard item.isTranslated else { continue }
             let sourceRect = sourceRects[index]
-            let initialRect = mirrorInitialTextRect(sourceRect: sourceRect, inside: pixelRect)
-            let referenceFontSize = referenceFontSize(for: initialRect.height)
+            let referenceFontSize = referenceFontSize(
+                for: mirrorMaximumTextHeight(for: sourceRect.height)
+            )
             let requiredWidth = measuredTextSize(
                 item.translatedText,
                 fontSize: referenceFontSize,
@@ -200,20 +216,10 @@ private final class NativeMirrorRenderer {
                 inside: pixelRect,
                 sourceIndex: index
             )
-            let twoLineRect = mirrorTwoLineTextRect(
-                sourceRect: sourceRect,
-                horizontalRect: oneLineRect,
-                otherRects: sourceRects,
-                reservedCollisionRects: reservedCollisionRects,
-                inside: pixelRect,
-                sourceIndex: index
-            )
             let layout = layout(
                 for: item,
                 sourceRect: sourceRect,
-                initialRect: initialRect,
-                oneLineRect: oneLineRect,
-                twoLineRect: twoLineRect
+                oneLineRect: oneLineRect
             )
             reservedCollisionRects.append(contentsOf:
                 mirrorTextCollisionRects(for: layout.frame, sourceRect: sourceRect)
@@ -221,6 +227,7 @@ private final class NativeMirrorRenderer {
             backgroundContext.setFillColor(item.background.nsColor.cgColor)
             backgroundContext.fill(layout.frame)
             textRects[item.id] = layout.frame
+            layouts[item.id] = layout
             fragments.append(contentsOf: draw(item: item, layout: layout, in: textContext))
         }
         return NativeMirrorArtwork(
@@ -229,6 +236,7 @@ private final class NativeMirrorRenderer {
             backgroundLayer: backgroundContext.makeImage(),
             textLayer: textContext.makeImage(),
             textRects: textRects,
+            layouts: layouts,
             fragments: fragments
         )
     }
@@ -256,14 +264,12 @@ private final class NativeMirrorRenderer {
     }
 
     private func layout(
-        for item: MirrorItem, sourceRect: CGRect, initialRect: CGRect,
-        oneLineRect: CGRect, twoLineRect: CGRect
+        for item: MirrorItem, sourceRect: CGRect, oneLineRect: CGRect
     ) -> NativeMirrorTextLayout {
         let key = LayoutKey(
             text: item.translatedText,
             sourceRect: NativeMirrorRectKey(sourceRect),
-            oneLineRect: NativeMirrorRectKey(oneLineRect),
-            twoLineRect: NativeMirrorRectKey(twoLineRect)
+            oneLineRect: NativeMirrorRectKey(oneLineRect)
         )
         if let cached = layoutCache[key] {
             layoutCacheHits += 1
@@ -271,21 +277,56 @@ private final class NativeMirrorRenderer {
         }
         layoutCacheMisses += 1
 
-        let referenceFontSize = referenceFontSize(for: initialRect.height)
-        let oneLineScale = largestFittingScale(
-            text: item.translatedText,
-            referenceFontSize: referenceFontSize,
-            size: oneLineRect.size,
-            lineCount: 1
+        let referenceFontSize = referenceFontSize(
+            for: mirrorMaximumTextHeight(for: sourceRect.height)
         )
-        if let oneLineScale {
-            let fontSize = referenceFontSize * oneLineScale
+        let requiredWidth = measuredTextSize(
+            item.translatedText,
+            fontSize: referenceFontSize,
+            width: .greatestFiniteMagnitude,
+            lineCount: 1
+        ).width
+        let horizontalScale = mirrorHorizontalTextScale(
+            naturalWidth: requiredWidth,
+            availableWidth: oneLineRect.width
+        )
+        if fits(
+            item.translatedText,
+            fontSize: referenceFontSize,
+            size: oneLineRect.size,
+            lineCount: 1,
+            horizontalScale: horizontalScale
+        ) {
             let measured = measuredTextSize(
                 item.translatedText,
-                fontSize: fontSize,
+                fontSize: referenceFontSize,
                 width: oneLineRect.width,
                 lineCount: 1
             )
+            let result = NativeMirrorTextLayout(
+                frame: oneLineRect,
+                fontSize: referenceFontSize,
+                lineCount: 1,
+                text: item.translatedText,
+                textOriginX: oneLineTextOriginX(
+                    sourceRect: sourceRect,
+                    frame: oneLineRect,
+                    measuredWidth: measured.width * horizontalScale
+                ),
+                horizontalScale: horizontalScale
+            )
+            store(result, for: key)
+            return result
+        }
+
+        if let fontScale = largestFittingScale(
+            text: item.translatedText,
+            referenceFontSize: referenceFontSize,
+            size: oneLineRect.size,
+            lineCount: 1,
+            horizontalScale: horizontalScale
+        ) {
+            let fontSize = referenceFontSize * fontScale
             let result = NativeMirrorTextLayout(
                 frame: oneLineRect,
                 fontSize: fontSize,
@@ -294,25 +335,14 @@ private final class NativeMirrorRenderer {
                 textOriginX: oneLineTextOriginX(
                     sourceRect: sourceRect,
                     frame: oneLineRect,
-                    measuredWidth: measured.width
-                )
-            )
-            store(result, for: key)
-            return result
-        }
-
-        if let twoLineScale = largestFittingScale(
-            text: item.translatedText,
-            referenceFontSize: referenceFontSize,
-            size: twoLineRect.size,
-            lineCount: 2
-        ) {
-            let result = NativeMirrorTextLayout(
-                frame: twoLineRect,
-                fontSize: referenceFontSize * twoLineScale,
-                lineCount: 2,
-                text: item.translatedText,
-                textOriginX: twoLineRect.minX
+                    measuredWidth: measuredTextSize(
+                        item.translatedText,
+                        fontSize: fontSize,
+                        width: oneLineRect.width,
+                        lineCount: 1
+                    ).width * horizontalScale
+                ),
+                horizontalScale: horizontalScale
             )
             store(result, for: key)
             return result
@@ -321,15 +351,27 @@ private final class NativeMirrorRenderer {
         let truncated = largestFittingTruncatedText(
             text: item.translatedText,
             referenceFontSize: referenceFontSize,
-            size: twoLineRect.size,
-            lineCount: 2
+            size: oneLineRect.size,
+            lineCount: 1,
+            horizontalScale: horizontalScale
         )
         let result = NativeMirrorTextLayout(
-            frame: twoLineRect,
-            fontSize: truncated?.fontSize ?? referenceFontSize * MirrorTextLayoutTuning.oneLineMinimumFontScale,
-            lineCount: 2,
+            frame: oneLineRect,
+            fontSize: truncated?.fontSize ?? referenceFontSize * MirrorTextLayoutTuning.minimumFontScale,
+            lineCount: 1,
             text: truncated?.text ?? "…",
-            textOriginX: twoLineRect.minX
+            textOriginX: oneLineTextOriginX(
+                sourceRect: sourceRect,
+                frame: oneLineRect,
+                measuredWidth: measuredTextSize(
+                    truncated?.text ?? "…",
+                    fontSize: truncated?.fontSize
+                        ?? referenceFontSize * MirrorTextLayoutTuning.minimumFontScale,
+                    width: oneLineRect.width,
+                    lineCount: 1
+                ).width * horizontalScale
+            ),
+            horizontalScale: horizontalScale
         )
         store(result, for: key)
         return result
@@ -351,7 +393,7 @@ private final class NativeMirrorRenderer {
     }
 
     private func fontScaleCandidates() -> [CGFloat] {
-        let lower = min(1, max(0, MirrorTextLayoutTuning.oneLineMinimumFontScale))
+        let lower = min(1, max(0, MirrorTextLayoutTuning.minimumFontScale))
         let searchCount = max(0, MirrorTextLayoutTuning.fontScaleSearchCount)
         guard lower < 1, searchCount > 0 else { return [1] }
         let candidateCount = 1 << min(searchCount, 20)
@@ -361,7 +403,8 @@ private final class NativeMirrorRenderer {
     }
 
     private func largestFittingScale(
-        text: String, referenceFontSize: CGFloat, size: CGSize, lineCount: Int
+        text: String, referenceFontSize: CGFloat, size: CGSize, lineCount: Int,
+        horizontalScale: CGFloat
     ) -> CGFloat? {
         guard referenceFontSize > 0 else { return nil }
         let candidates = fontScaleCandidates()
@@ -369,7 +412,8 @@ private final class NativeMirrorRenderer {
             text,
             fontSize: referenceFontSize * candidates[0],
             size: size,
-            lineCount: lineCount
+            lineCount: lineCount,
+            horizontalScale: horizontalScale
         ) {
             return candidates[0]
         }
@@ -383,7 +427,8 @@ private final class NativeMirrorRenderer {
                 text,
                 fontSize: referenceFontSize * candidates[midpoint],
                 size: size,
-                lineCount: lineCount
+                lineCount: lineCount,
+                horizontalScale: horizontalScale
             ) {
                 best = midpoint
                 high = midpoint - 1
@@ -395,13 +440,18 @@ private final class NativeMirrorRenderer {
     }
 
     private func largestFittingTruncatedText(
-        text: String, referenceFontSize: CGFloat, size: CGSize, lineCount: Int
+        text: String, referenceFontSize: CGFloat, size: CGSize, lineCount: Int,
+        horizontalScale: CGFloat
     ) -> (text: String, fontSize: CGFloat)? {
         guard referenceFontSize > 0 else { return nil }
         for scale in fontScaleCandidates() {
             let fontSize = referenceFontSize * scale
             if let text = longestFittingPrefix(
-                text: text, fontSize: fontSize, size: size, lineCount: lineCount
+                text: text,
+                fontSize: fontSize,
+                size: size,
+                lineCount: lineCount,
+                horizontalScale: horizontalScale
             ) {
                 return (text, fontSize)
             }
@@ -410,7 +460,8 @@ private final class NativeMirrorRenderer {
     }
 
     private func longestFittingPrefix(
-        text: String, fontSize: CGFloat, size: CGSize, lineCount: Int
+        text: String, fontSize: CGFloat, size: CGSize, lineCount: Int,
+        horizontalScale: CGFloat
     ) -> String? {
         let characters = Array(text)
         var low = 0
@@ -419,7 +470,13 @@ private final class NativeMirrorRenderer {
         while low <= high {
             let midpoint = (low + high) / 2
             let candidate = String(characters.prefix(midpoint)) + "…"
-            if fits(candidate, fontSize: fontSize, size: size, lineCount: lineCount) {
+            if fits(
+                candidate,
+                fontSize: fontSize,
+                size: size,
+                lineCount: lineCount,
+                horizontalScale: horizontalScale
+            ) {
                 best = candidate
                 low = midpoint + 1
             } else {
@@ -440,13 +497,14 @@ private final class NativeMirrorRenderer {
     }
 
     private func fits(
-        _ text: String, fontSize: CGFloat, size: CGSize, lineCount: Int
+        _ text: String, fontSize: CGFloat, size: CGSize, lineCount: Int,
+        horizontalScale: CGFloat = 1
     ) -> Bool {
         let measured = measuredTextSize(
             text, fontSize: fontSize, width: size.width, lineCount: lineCount
         )
         return measured.complete
-            && measured.width <= size.width + 0.5
+            && measured.width * horizontalScale <= size.width + 0.5
             && measured.height <= size.height + 0.5
     }
 
@@ -545,6 +603,14 @@ private final class NativeMirrorRenderer {
         context.saveGState()
         context.addRect(layout.frame)
         context.clip()
+        context.concatenate(CGAffineTransform(
+            a: layout.horizontalScale,
+            b: 0,
+            c: 0,
+            d: 1,
+            tx: layout.textOriginX * (1 - layout.horizontalScale),
+            ty: 0
+        ))
         for entry in lines {
             baseline -= entry.ascent
             context.textPosition = CGPoint(x: layout.textOriginX, y: baseline)
@@ -562,9 +628,9 @@ private final class NativeMirrorRenderer {
                     itemID: item.id,
                     text: string.substring(with: characterRange),
                     rect: CGRect(
-                        x: layout.textOriginX + min(startX, endX),
+                        x: layout.textOriginX + min(startX, endX) * layout.horizontalScale,
                         y: lowerY,
-                        width: max(0.5, abs(endX - startX)),
+                        width: max(0.5, abs(endX - startX) * layout.horizontalScale),
                         height: entry.ascent + entry.descent
                     ),
                     characterOffset: fragments.count
@@ -665,6 +731,18 @@ final class NativeTranslationMirrorView: NSView, NSMenuItemValidation {
     fileprivate var compositeBuildCountForTesting: Int { renderer.compositeBuildCount }
     fileprivate func renderedTextRectForTesting(_ id: UUID) -> CGRect? {
         renderer.renderedTextRects[id]
+    }
+    fileprivate func layoutMetricsForTesting(_ id: UUID) -> (
+        frame: CGRect, fontSize: CGFloat, horizontalScale: CGFloat, lineCount: Int, text: String
+    )? {
+        renderer.layoutMetrics(for: id)
+    }
+    fileprivate func renderedFragmentsForTesting(_ id: UUID) -> [NativeMirrorRenderedFragment] {
+        renderer.renderedFragments.filter { $0.itemID == id }
+    }
+    fileprivate func selectionFragmentRectsForTesting() -> [CGRect] {
+        rebuildSelectionFragments()
+        return selectionFragments.map(\.rect)
     }
     fileprivate var isPresentingLiveResizeComposite: Bool { liveResizeCompositeImage != nil }
     override var isFlipped: Bool { false }
@@ -1435,6 +1513,76 @@ public enum NativeMirrorViewTesting {
             && view.hasNativeCompositeForTesting
             && view.artworkBuildCountForTesting == artworkBuildsBeforeOpacity
             && view.compositeBuildCountForTesting > compositesBeforeOpacity
+    }
+
+    public static func verifiesHorizontalCompressionAndFontScaling() -> Bool {
+        let width = 1_200
+        let height = 300
+        let sourceHeight: CGFloat = 40
+        let text = "가나다라마바사아자차카타파하거너더러머버서"
+        guard let context = CGContext(
+            data: nil, width: width, height: height, bitsPerComponent: 8,
+            bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ), let image = context.makeImage(),
+        let probeFont = CTFontCreateUIFontForLanguage(.system, 1, nil),
+        let textFont = CTFontCreateUIFontForLanguage(.system, 1, nil) else { return false }
+
+        let probeHeight = CGFloat(
+            CTFontGetAscent(probeFont)
+                + CTFontGetDescent(probeFont)
+                + max(0, CTFontGetLeading(probeFont))
+        )
+        guard probeHeight > 0 else { return false }
+        let maximumFontSize = sourceHeight
+            * MirrorTextLayoutTuning.maximumTextVerticalScale / probeHeight
+        let scaledTextFont = CTFontCreateCopyWithAttributes(
+            textFont, maximumFontSize, nil, nil
+        )
+        let attributes: [NSAttributedString.Key: Any] = [
+            NSAttributedString.Key(kCTFontAttributeName as String): scaledTextFont
+        ]
+        let attributedText = NSAttributedString(string: text, attributes: attributes)
+        let line = CTLineCreateWithAttributedString(attributedText)
+        let naturalWidth = CGFloat(CTLineGetTypographicBounds(line, nil, nil, nil))
+        let sourceWidth = floor(
+            naturalWidth * 0.75
+                - sourceHeight * MirrorTextLayoutTuning.horizontalExpansionHeightMultiplier
+        )
+        guard naturalWidth > 0, sourceWidth > 0 else { return false }
+
+        let itemID = UUID()
+        let item = MirrorItem(
+            id: itemID,
+            translatedText: text,
+            presentation: .translated,
+            normalizedRect: CGRect(
+                x: 40 / CGFloat(width), y: 100 / CGFloat(height),
+                width: sourceWidth / CGFloat(width), height: sourceHeight / CGFloat(height)
+            ),
+            background: .lightBackground,
+            foreground: .darkText
+        )
+        let view = NativeTranslationMirrorView(
+            frame: CGRect(x: 0, y: 0, width: width, height: height)
+        )
+        view.setRenderingActive(true)
+        view.frameSnapshot = MirrorFrame(image: image, translatedItems: [item], frameID: 1)
+        let renderedFragments = view.renderedFragmentsForTesting(itemID)
+        guard let metrics = view.layoutMetricsForTesting(itemID),
+              !renderedFragments.isEmpty,
+              metrics.lineCount == 1,
+              metrics.text == text,
+              abs(metrics.horizontalScale - MirrorTextLayoutTuning.minimumHorizontalTextScale) < 0.000_001,
+              metrics.fontSize < maximumFontSize - 0.1,
+              renderedFragments.allSatisfy({ $0.rect.maxX <= metrics.frame.maxX + 0.5 }),
+              view.selectAllTextForTesting() == text else { return false }
+
+        let selectionRects = view.selectionFragmentRectsForTesting()
+        guard selectionRects.count == renderedFragments.count else { return false }
+        return zip(selectionRects, renderedFragments).allSatisfy { selectionRect, fragment in
+            mirrorRectsAreVisuallyEqual(selectionRect, fragment.rect, backingScale: 1)
+        }
     }
 
     public static func verifiesLiveResizeKeepsNativeComposite() -> Bool {

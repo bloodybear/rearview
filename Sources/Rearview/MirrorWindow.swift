@@ -209,17 +209,31 @@ func mirrorWindowFrameAsStoredByAppKit(_ frame: CGRect) -> CGRect {
 }
 
 enum MirrorTextLayoutTuning {
-    static let initialVerticalExpansionFactor: CGFloat = 1.05
-    static let twoLineMaximumHeightFactor: CGFloat = 2.0
-    static let oneLineMinimumFontScale: CGFloat = 0.85
+    static let maximumTextVerticalScale: CGFloat = 0.95
+    static let backgroundVerticalExpansionFactor: CGFloat = 1.05
+    static let minimumHorizontalTextScale: CGFloat = 0.8
+    static let minimumFontScale: CGFloat = 0.85
     static let fontScaleSearchCount = 2
-    static let horizontalExpansionHeightMultiplier: CGFloat = 4
+    static let horizontalExpansionHeightMultiplier: CGFloat = 2
+}
+
+func mirrorMaximumTextHeight(for sourceHeight: CGFloat) -> CGFloat {
+    max(0, sourceHeight) * MirrorTextLayoutTuning.maximumTextVerticalScale
+}
+
+func mirrorHorizontalTextScale(naturalWidth: CGFloat, availableWidth: CGFloat) -> CGFloat {
+    guard naturalWidth > 0 else { return 1 }
+    let requiredScale = availableWidth / naturalWidth
+    return min(
+        1,
+        max(MirrorTextLayoutTuning.minimumHorizontalTextScale, requiredScale)
+    )
 }
 
 func mirrorInitialTextRect(sourceRect: CGRect, inside bounds: CGRect) -> CGRect {
     guard sourceRect.width > 0, sourceRect.height > 0 else { return sourceRect }
     let extra = sourceRect.height
-        * max(0, MirrorTextLayoutTuning.initialVerticalExpansionFactor - 1) / 2
+        * max(0, MirrorTextLayoutTuning.backgroundVerticalExpansionFactor - 1) / 2
     return CGRect(
         x: sourceRect.minX,
         y: sourceRect.minY - extra,
@@ -237,7 +251,7 @@ func mirrorRectsOverlap(_ lhs: CGRect, _ rhs: CGRect) -> Bool {
 func mirrorTextCollisionRects(for frame: CGRect, sourceRect: CGRect) -> [CGRect] {
     guard frame.width > 0, frame.height > 0, sourceRect.height > 0 else { return [frame] }
     let initialExtra = sourceRect.height
-        * max(0, MirrorTextLayoutTuning.initialVerticalExpansionFactor - 1) / 2
+        * max(0, MirrorTextLayoutTuning.backgroundVerticalExpansionFactor - 1) / 2
     let initialMinY = sourceRect.minY - initialExtra
     let initialMaxY = sourceRect.maxY + initialExtra
     var result = [CGRect(
@@ -261,10 +275,6 @@ func mirrorTextCollisionRects(for frame: CGRect, sourceRect: CGRect) -> [CGRect]
 
 private func mirrorVerticalOverlap(_ lhs: CGRect, _ rhs: CGRect) -> Bool {
     lhs.minY < rhs.maxY && lhs.maxY > rhs.minY
-}
-
-private func mirrorHorizontalOverlap(_ lhs: CGRect, _ rhs: CGRect) -> Bool {
-    lhs.minX < rhs.maxX && lhs.maxX > rhs.minX
 }
 
 func mirrorOneLineTextRect(
@@ -298,66 +308,6 @@ func mirrorOneLineTextRect(
         y: mirrorInitialTextRect(sourceRect: sourceRect, inside: bounds).minY,
         width: sourceRect.width + leftExtra + rightExtra,
         height: mirrorInitialTextRect(sourceRect: sourceRect, inside: bounds).height
-    ).intersection(bounds)
-}
-
-func mirrorTwoLineTextRect(
-    sourceRect: CGRect, horizontalRect: CGRect, otherRects: [CGRect],
-    reservedCollisionRects: [CGRect], inside bounds: CGRect, sourceIndex: Int
-) -> CGRect {
-    guard sourceRect.width > 0, sourceRect.height > 0 else { return sourceRect }
-    let initialRect = mirrorInitialTextRect(sourceRect: sourceRect, inside: bounds)
-    let obstacles = otherRects.enumerated().compactMap { index, rect in
-        index == sourceIndex ? nil : rect
-    } + reservedCollisionRects
-    var lowerLimit = bounds.minY
-    var upperLimit = bounds.maxY
-    for obstacle in obstacles where mirrorHorizontalOverlap(obstacle, horizontalRect) {
-        // The initial expansion strips are intentionally ignored. Only the part
-        // of an obstacle that reaches beyond one of those strips can limit
-        // the additional two-line expansion.
-        if obstacle.maxY > initialRect.maxY {
-            upperLimit = min(upperLimit, max(initialRect.maxY, obstacle.minY))
-        }
-        if obstacle.minY < initialRect.minY {
-            lowerLimit = max(lowerLimit, min(initialRect.minY, obstacle.maxY))
-        }
-    }
-
-    let targetHeight = max(
-        initialRect.height,
-        sourceRect.height * MirrorTextLayoutTuning.twoLineMaximumHeightFactor
-    )
-    let initialUp = max(0, initialRect.maxY - sourceRect.maxY)
-    let initialDown = max(0, sourceRect.minY - initialRect.minY)
-    let availableUp = max(0, upperLimit - initialRect.maxY)
-    let availableDown = max(0, initialRect.minY - lowerLimit)
-    let desiredExtra = max(0, targetHeight - initialRect.height)
-    var extraUp = min(
-        max(0, (targetHeight - sourceRect.height) / 2 - initialUp), availableUp
-    )
-    var extraDown = min(
-        max(0, (targetHeight - sourceRect.height) / 2 - initialDown), availableDown
-    )
-    var remaining = max(0, desiredExtra - extraUp - extraDown)
-    let spareUp = max(0, availableUp - extraUp)
-    let spareDown = max(0, availableDown - extraDown)
-    if spareUp >= spareDown {
-        let addition = min(remaining, spareUp)
-        extraUp += addition
-        remaining -= addition
-        extraDown += min(remaining, spareDown)
-    } else {
-        let addition = min(remaining, spareDown)
-        extraDown += addition
-        remaining -= addition
-        extraUp += min(remaining, spareUp)
-    }
-    return CGRect(
-        x: horizontalRect.minX,
-        y: sourceRect.minY - initialDown - extraDown,
-        width: horizontalRect.width,
-        height: sourceRect.height + initialDown + initialUp + extraDown + extraUp
     ).intersection(bounds)
 }
 

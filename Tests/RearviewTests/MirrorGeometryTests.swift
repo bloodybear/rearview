@@ -166,20 +166,26 @@ struct MirrorGeometryTests {
         #expect(mirrorWindowFrameAsStoredByAppKit(prospectiveWindowFrame) == storedWindowFrame)
     }
 
-    @Test func translationLayoutUsesConfiguredExpansionAndCollisionRules() {
+    @Test func translationLayoutUsesConfiguredExpansionAndCompressionRules() {
         let source = CGRect(x: 20, y: 40, width: 100, height: 20)
         let bounds = CGRect(x: 0, y: 0, width: 200, height: 100)
 
-        #expect(MirrorTextLayoutTuning.initialVerticalExpansionFactor >= 1)
-        #expect(MirrorTextLayoutTuning.twoLineMaximumHeightFactor >= 1)
-        #expect(MirrorTextLayoutTuning.oneLineMinimumFontScale > 0)
-        #expect(MirrorTextLayoutTuning.oneLineMinimumFontScale <= 1)
+        #expect(MirrorTextLayoutTuning.maximumTextVerticalScale > 0)
+        #expect(MirrorTextLayoutTuning.maximumTextVerticalScale <= 1)
+        #expect(MirrorTextLayoutTuning.backgroundVerticalExpansionFactor >= 1)
+        #expect(MirrorTextLayoutTuning.minimumHorizontalTextScale > 0)
+        #expect(MirrorTextLayoutTuning.minimumHorizontalTextScale <= 1)
+        #expect(MirrorTextLayoutTuning.minimumFontScale > 0)
+        #expect(MirrorTextLayoutTuning.minimumFontScale <= 1)
         #expect(MirrorTextLayoutTuning.fontScaleSearchCount >= 0)
         #expect(MirrorTextLayoutTuning.horizontalExpansionHeightMultiplier >= 0)
-        guard MirrorTextLayoutTuning.initialVerticalExpansionFactor >= 1,
-              MirrorTextLayoutTuning.twoLineMaximumHeightFactor >= 1,
-              MirrorTextLayoutTuning.oneLineMinimumFontScale > 0,
-              MirrorTextLayoutTuning.oneLineMinimumFontScale <= 1,
+        guard MirrorTextLayoutTuning.maximumTextVerticalScale > 0,
+              MirrorTextLayoutTuning.maximumTextVerticalScale <= 1,
+              MirrorTextLayoutTuning.backgroundVerticalExpansionFactor >= 1,
+              MirrorTextLayoutTuning.minimumHorizontalTextScale > 0,
+              MirrorTextLayoutTuning.minimumHorizontalTextScale <= 1,
+              MirrorTextLayoutTuning.minimumFontScale > 0,
+              MirrorTextLayoutTuning.minimumFontScale <= 1,
               MirrorTextLayoutTuning.fontScaleSearchCount >= 0,
               MirrorTextLayoutTuning.horizontalExpansionHeightMultiplier >= 0 else {
             return
@@ -187,7 +193,7 @@ struct MirrorGeometryTests {
 
         let initial = mirrorInitialTextRect(sourceRect: source, inside: bounds)
         let initialExtra = source.height
-            * (MirrorTextLayoutTuning.initialVerticalExpansionFactor - 1) / 2
+            * (MirrorTextLayoutTuning.backgroundVerticalExpansionFactor - 1) / 2
         let expectedInitial = CGRect(
             x: source.minX,
             y: source.minY - initialExtra,
@@ -198,6 +204,10 @@ struct MirrorGeometryTests {
 
         let initialCollision = mirrorTextCollisionRects(for: initial, sourceRect: source)
         #expect(initialCollision == [source])
+        #expect(expectApproximatelyEqual(
+            mirrorMaximumTextHeight(for: source.height),
+            source.height * MirrorTextLayoutTuning.maximumTextVerticalScale
+        ))
 
         let maximumWidth = source.width
             + source.height * MirrorTextLayoutTuning.horizontalExpansionHeightMultiplier
@@ -235,73 +245,16 @@ struct MirrorGeometryTests {
             height: initial.height
         ).intersection(bounds))
 
-        let twoLine = mirrorTwoLineTextRect(
-            sourceRect: source,
-            horizontalRect: expanded,
-            otherRects: [source],
-            reservedCollisionRects: [],
-            inside: bounds,
-            sourceIndex: 0
-        )
-        let targetHeight = max(
-            initial.height,
-            source.height * MirrorTextLayoutTuning.twoLineMaximumHeightFactor
-        )
-        let expectedTwoLineHeight = min(targetHeight, bounds.height)
-        #expect(twoLine.minX == expanded.minX)
-        #expect(twoLine.width == expanded.width)
-        #expect(twoLine.height == expectedTwoLineHeight)
-        #expect(twoLine.minY == source.midY - expectedTwoLineHeight / 2)
-
-        let initialMinY = source.minY - initialExtra
-        let initialMaxY = source.maxY + initialExtra
-        var expectedCollision = [CGRect(
-            x: twoLine.minX,
-            y: source.minY,
-            width: twoLine.width,
-            height: source.height
-        )]
-        if twoLine.minY < initialMinY {
-            expectedCollision.append(CGRect(
-                x: twoLine.minX,
-                y: twoLine.minY,
-                width: twoLine.width,
-                height: initialMinY - twoLine.minY
-            ))
-        }
-        if twoLine.maxY > initialMaxY {
-            expectedCollision.append(CGRect(
-                x: twoLine.minX,
-                y: initialMaxY,
-                width: twoLine.width,
-                height: twoLine.maxY - initialMaxY
-            ))
-        }
-        #expect(mirrorTextCollisionRects(for: twoLine, sourceRect: source) == expectedCollision)
-
-        let initialStripOnlyObstacle = mirrorTwoLineTextRect(
-            sourceRect: source,
-            horizontalRect: expanded,
-            otherRects: [source, CGRect(
-                x: source.minX, y: initial.maxY - 0.75, width: source.width, height: 0.5
-            )],
-            reservedCollisionRects: [],
-            inside: bounds,
-            sourceIndex: 0
-        )
-        #expect(initialStripOnlyObstacle == twoLine)
-
-        let extraExpansionObstacle = mirrorTwoLineTextRect(
-            sourceRect: source,
-            horizontalRect: expanded,
-            otherRects: [source, CGRect(
-                x: source.minX, y: initial.maxY + 0.5, width: source.width, height: 1
-            )],
-            reservedCollisionRects: [],
-            inside: bounds,
-            sourceIndex: 0
-        )
-        #expect(extraExpansionObstacle.maxY <= initial.maxY + 0.5)
+        #expect(expectApproximatelyEqual(
+            mirrorHorizontalTextScale(naturalWidth: 120, availableWidth: 140), 1
+        ))
+        #expect(expectApproximatelyEqual(
+            mirrorHorizontalTextScale(naturalWidth: 200, availableWidth: 180), 0.9
+        ))
+        #expect(expectApproximatelyEqual(
+            mirrorHorizontalTextScale(naturalWidth: 200, availableWidth: 100),
+            MirrorTextLayoutTuning.minimumHorizontalTextScale
+        ))
 
         let reserved = CGRect(x: 140, y: 40, width: 20, height: 20)
         let reservedExpansion = mirrorOneLineTextRect(
