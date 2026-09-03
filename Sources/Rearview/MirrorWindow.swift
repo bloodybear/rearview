@@ -564,8 +564,8 @@ private final class OverlayPassThroughContentView: NSView {
     override func hitTest(_ point: NSPoint) -> NSView? {
         if let interactiveView, !interactiveView.isHidden {
             let pointInTarget = interactiveView.convert(point, from: self)
-            if let hit = interactiveView.hitTest(pointInTarget) {
-                return hit
+            if interactiveView.bounds.contains(pointInTarget) {
+                return interactiveView
             }
         }
         guard allowsBackgroundInteraction,
@@ -968,6 +968,7 @@ public enum OverlayPanelTesting {
               contentView.hitTest(center) === panel.translationView else { return false }
 
         panel.setIgnoresSelectionMouseEvents(true)
+        panel.showStatus(title: "Saved", symbol: "checkmark.circle.fill")
         panel.showSaveRevealButton(true)
         contentView.layoutSubtreeIfNeeded()
         guard !panel.ignoresMouseEvents,
