@@ -481,9 +481,18 @@ private final class MirrorStatusCapsule: NSVisualEffectView {
 }
 
 @MainActor
+private final class MirrorSaveRevealControl: NSButton {
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func resetCursorRects() {
+        addCursorRect(bounds, cursor: .pointingHand)
+    }
+}
+
+@MainActor
 private final class MirrorSaveRevealButton: NSVisualEffectView {
     var onReveal: (() -> Void)?
-    private let button = NSButton()
+    private let button = MirrorSaveRevealControl()
     private var trackingAreaReference: NSTrackingArea?
     private var isPointerInside = false
 
@@ -983,7 +992,17 @@ public enum OverlayPanelTesting {
         panel.setIgnoresSelectionMouseEvents(true)
         panel.showSaveRevealButton(true)
         contentView.layoutSubtreeIfNeeded()
-        return !panel.ignoresMouseEvents && contentView.hitTest(center) == nil
+        guard !panel.ignoresMouseEvents,
+              contentView.hitTest(center) == nil else { return false }
+
+        let buttonPoint = CGPoint(x: contentView.bounds.maxX - 26, y: 26)
+        guard let hit = contentView.hitTest(buttonPoint),
+              let button = hit as? NSButton,
+              button.acceptsFirstMouse(for: nil) else { return false }
+        var didReveal = false
+        panel.showSaveRevealButton(true) { didReveal = true }
+        button.performClick(nil)
+        return didReveal
     }
 }
 #endif
