@@ -481,26 +481,19 @@ private final class MirrorStatusCapsule: NSVisualEffectView {
 }
 
 @MainActor
-private final class MirrorSaveRevealControl: NSButton {
+private final class MirrorSaveRevealButton: NSButton {
+    var onReveal: (() -> Void)?
+    private var trackingAreaReference: NSTrackingArea?
+    private var isPointerInside = false
+
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     override func resetCursorRects() {
         addCursorRect(bounds, cursor: .pointingHand)
     }
-}
-
-@MainActor
-private final class MirrorSaveRevealButton: NSVisualEffectView {
-    var onReveal: (() -> Void)?
-    private let button = MirrorSaveRevealControl()
-    private var trackingAreaReference: NSTrackingArea?
-    private var isPointerInside = false
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
-        material = .hudWindow
-        blendingMode = .withinWindow
-        state = .active
         wantsLayer = true
         layer?.cornerRadius = 9
         layer?.masksToBounds = true
@@ -509,25 +502,14 @@ private final class MirrorSaveRevealButton: NSVisualEffectView {
         layer?.borderWidth = 1
 
         let label = L10n.text("Finder에서 파일 보기")
-        button.image = NSImage(systemSymbolName: "folder", accessibilityDescription: label)
-        button.imagePosition = .imageOnly
-        button.isBordered = false
-        button.contentTintColor = .white
-        button.toolTip = label
-        button.setAccessibilityLabel(label)
-        button.target = self
-        button.action = #selector(reveal)
-        button.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(button)
-        NSLayoutConstraint.activate([
-            button.leadingAnchor.constraint(equalTo: leadingAnchor),
-            button.trailingAnchor.constraint(equalTo: trailingAnchor),
-            button.topAnchor.constraint(equalTo: topAnchor),
-            button.bottomAnchor.constraint(equalTo: bottomAnchor)
-        ])
-
-        toolTip = L10n.text("Finder에서 파일 보기")
-        setAccessibilityLabel(toolTip ?? L10n.text("Finder에서 파일 보기"))
+        image = NSImage(systemSymbolName: "folder", accessibilityDescription: label)
+        imagePosition = .imageOnly
+        isBordered = false
+        contentTintColor = .white
+        toolTip = label
+        setAccessibilityLabel(label)
+        target = self
+        action = #selector(reveal)
         translatesAutoresizingMaskIntoConstraints = false
         widthAnchor.constraint(equalToConstant: 28).isActive = true
         heightAnchor.constraint(equalToConstant: 28).isActive = true
@@ -546,10 +528,6 @@ private final class MirrorSaveRevealButton: NSVisualEffectView {
         addTrackingArea(trackingArea)
         trackingAreaReference = trackingArea
         super.updateTrackingAreas()
-    }
-
-    override func resetCursorRects() {
-        addCursorRect(bounds, cursor: .pointingHand)
     }
 
     override func mouseEntered(with event: NSEvent) {
