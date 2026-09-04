@@ -62,6 +62,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var localShortcutMonitor: Any?
     private var summaryWindow: ProfileSummaryWindowController?
     private var settingsWindow: SettingsWindowController?
+    private var aboutWindow: AboutWindowController?
     private var benchmarkProcess: Process?
     private var mirrorUpdateStyle = MirrorUpdateStyle.load()
     private var selectionHotKey = SelectionHotKey.load()
@@ -198,6 +199,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func rebuildStatusMenu() {
         statusItem.button?.image = statusItemImage()
+        statusItem.menu = makeStatusMenu()
+    }
+
+    private func makeStatusMenu() -> NSMenu {
         let menu = NSMenu()
         let selectionItem = menu.addItem(
             withTitle: L10n.text("영역 선택…"),
@@ -225,12 +230,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         setDebugMenuItemsVisible(DebugFeatures.load())
 #endif
         menu.addItem(.separator())
+        menu.addItem(withTitle: L10n.text("Rearview 정보…"), action: #selector(showAbout), keyEquivalent: "")
         menu.addItem(withTitle: L10n.text("종료"), action: #selector(quit), keyEquivalent: "")
         menu.items.forEach { item in
             if item.target == nil { item.target = self }
         }
-        statusItem.menu = menu
+        return menu
     }
+
+    func statusMenuForTesting() -> NSMenu { makeStatusMenu() }
 
     private func installHotKey() {
         let signature = OSType(0x4C535452) // LSTR
@@ -789,6 +797,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
     }
 
+    @objc private func showAbout() {
+        let controller: AboutWindowController
+        if let aboutWindow {
+            controller = aboutWindow
+        } else {
+            controller = AboutWindowController()
+            aboutWindow = controller
+        }
+        controller.refreshLocalization()
+        controller.showWindow(nil)
+        controller.window?.center()
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
     private func setDebugMenuItemsVisible(_ visible: Bool) {
         debugMenuSeparator?.isHidden = !visible
         debugMenuItems.forEach { $0.isHidden = !visible }
@@ -802,6 +824,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         rebuildStatusMenu()
         coordinator.refreshLocalization()
         summaryWindow?.refreshLocalization()
+        aboutWindow?.refreshLocalization()
         permissionIntroductionWindow?.refreshLocalization()
         permissionRecoveryWindow?.refreshLocalization()
 
