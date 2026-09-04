@@ -297,12 +297,40 @@ struct SettingsAndShortcutTests {
             displayMode: .overlay, debugFeaturesEnabled: true
         )
         let overlayIDs = overlay.map(\.id)
+        #expect(OverlayControlBarCatalog.compactOrder == [
+            .refreshMode, .translationDirection, .displayMode, .application
+        ])
+        #expect(OverlayControlBarMetrics.mirrorDragSpacerWidth == 24)
+        #expect(OverlayControlBarMetrics.translationDirectionSymbolPointSize == 14)
+        #expect(overlay.first(where: { $0.id == .application })?.width == 128)
+        #expect(overlay.first(where: { $0.id == .application })?.compactWidth == 34)
+        #expect(overlay.first(where: { $0.id == .displayMode })?.width == 78)
+        #expect(overlay.first(where: { $0.id == .displayMode })?.compactWidth == 26)
+        #expect(overlay.first(where: { $0.id == .translationDirection })?.width == 78)
+        #expect(overlay.first(where: { $0.id == .translationDirection })?.compactWidth == 26)
+        #expect(overlay.first(where: { $0.id == .refreshMode })?.width == 62)
+        #expect(overlay.first(where: { $0.id == .refreshMode })?.compactWidth == 26)
+        #expect(overlayControlBarTranslationDirectionSymbolName(
+            for: .japaneseToKorean
+        ) == "character.square.ko")
+        #expect(overlayControlBarTranslationDirectionSymbolName(
+            for: .koreanToJapanese
+        ) == "character.square.ja")
         #expect(overlayIDs.firstIndex(of: .protectNonSourceText)
             == overlayIDs.firstIndex(of: .translationDirection).map { $0 + 1 })
         #expect(overlay.contains(where: { $0.id == .search }))
         #expect(!overlay.contains(where: { $0.id == .zoomOut }))
         #expect(overlayControlBarResponsiveLayout(width: 800, items: overlay)
             == OverlayControlBarResponsiveLayout(visibleItemIDs: overlayIDs, overflowItemIDs: []))
+        let overlayCompactPresentation = overlayControlBarResponsivePresentation(
+            width: 782,
+            items: overlay,
+            includesChrome: true,
+            minimumSpacerWidth: OverlayControlBarMetrics.itemSpacing
+        )
+        #expect(overlayCompactPresentation.layout.visibleItemIDs == overlayIDs)
+        #expect(overlayCompactPresentation.layout.overflowItemIDs.isEmpty)
+        #expect(overlayCompactPresentation.compactedItemIDs == [.refreshMode])
         var previousVisibleCount = 0
         for width in stride(from: CGFloat(200), through: 650, by: 1) {
             let layout = overlayControlBarResponsiveLayout(width: width, items: overlay)
@@ -341,6 +369,27 @@ struct SettingsAndShortcutTests {
             mirrorLayoutWithReservedSpacer.visibleItemIDs
                 + mirrorLayoutWithReservedSpacer.overflowItemIDs == mirrorIDs
         )
+        let mirrorCompactPresentation = overlayControlBarResponsivePresentation(
+            width: 800,
+            items: mirror,
+            includesChrome: false,
+            minimumSpacerWidth: OverlayControlBarMetrics.mirrorDragSpacerWidth
+        )
+        #expect(mirrorCompactPresentation.layout.visibleItemIDs == mirrorIDs)
+        #expect(mirrorCompactPresentation.layout.overflowItemIDs.isEmpty)
+        #expect(mirrorCompactPresentation.compactedItemIDs == [
+            .refreshMode, .translationDirection, .displayMode
+        ])
+        let mirrorTooNarrowPresentation = overlayControlBarResponsivePresentation(
+            width: 1,
+            items: mirror,
+            includesChrome: false,
+            minimumSpacerWidth: OverlayControlBarMetrics.mirrorDragSpacerWidth
+        )
+        #expect(mirrorTooNarrowPresentation.compactedItemIDs == [
+            .refreshMode, .translationDirection, .displayMode, .application
+        ])
+        #expect(mirrorTooNarrowPresentation.layout.overflowItemIDs == mirrorIDs)
         #expect(overlayControlBarResponsiveLayout(width: 1, items: mirror, includesChrome: false)
             .overflowItemIDs == mirrorIDs)
         #expect(overlayControlBarHoverAlpha(isEnabled: true, pointerInside: false, mouseDown: false) == nil)

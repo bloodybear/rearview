@@ -193,12 +193,14 @@ struct OverlayControlBarItemDefinition: Sendable {
     let id: OverlayControlBarItemID
     let group: OverlayControlBarItemGroup
     let width: CGFloat
+    let compactWidth: CGFloat?
     let overflowPresentation: OverlayControlBarOverflowPresentation
     let requiresDebugFeatures: Bool
     let modes: [TranslationDisplayMode]
 
     init(
         id: OverlayControlBarItemID, group: OverlayControlBarItemGroup, width: CGFloat,
+        compactWidth: CGFloat? = nil,
         overflowPresentation: OverlayControlBarOverflowPresentation,
         requiresDebugFeatures: Bool = false,
         modes: [TranslationDisplayMode] = [.mirror, .overlay]
@@ -206,28 +208,49 @@ struct OverlayControlBarItemDefinition: Sendable {
         self.id = id
         self.group = group
         self.width = width
+        self.compactWidth = compactWidth
         self.overflowPresentation = overflowPresentation
         self.requiresDebugFeatures = requiresDebugFeatures
         self.modes = modes
     }
+
+    func usingWidth(_ width: CGFloat) -> Self {
+        Self(
+            id: id,
+            group: group,
+            width: width,
+            compactWidth: compactWidth,
+            overflowPresentation: overflowPresentation,
+            requiresDebugFeatures: requiresDebugFeatures,
+            modes: modes
+        )
+    }
 }
 
 enum OverlayControlBarCatalog {
+    static let compactOrder: [OverlayControlBarItemID] = [
+        .refreshMode, .translationDirection, .displayMode, .application
+    ]
+
     static let items: [OverlayControlBarItemDefinition] = [
         .init(id: .application, group: .leading,
               width: OverlayControlBarMetrics.applicationWidth,
+              compactWidth: OverlayControlBarMetrics.applicationCompactWidth,
               overflowPresentation: .applicationMenu),
         .init(id: .displayMode, group: .leading,
               width: OverlayControlBarMetrics.displayModeWidth,
+              compactWidth: OverlayControlBarMetrics.iconControlWidth,
               overflowPresentation: .displayModeAction),
         .init(id: .translationDirection, group: .leading,
               width: OverlayControlBarMetrics.displayModeWidth,
+              compactWidth: OverlayControlBarMetrics.iconControlWidth,
               overflowPresentation: .translationDirectionAction),
         .init(id: .protectNonSourceText, group: .leading,
               width: OverlayControlBarMetrics.iconControlWidth,
               overflowPresentation: .protectNonSourceTextAction),
         .init(id: .refreshMode, group: .leading,
               width: OverlayControlBarMetrics.refreshModeWidth,
+              compactWidth: OverlayControlBarMetrics.iconControlWidth,
               overflowPresentation: .refreshModeMenu),
         .init(id: .mouseEvents, group: .leading, width: OverlayControlBarMetrics.iconControlWidth,
               overflowPresentation: .mouseEventsAction),
@@ -325,14 +348,16 @@ enum OverlayControlBarMetrics {
     static let height = OverlayControlBarTuning.height
     static let controlHeight: CGFloat = 26
     static let iconControlWidth: CGFloat = 26
+    static let translationDirectionSymbolPointSize: CGFloat = 14
     static let applicationWidth: CGFloat = 128
+    static let applicationCompactWidth: CGFloat = 34
     static let displayModeWidth: CGFloat = 78
     static let refreshModeWidth: CGFloat = 62
     static let dragHandleWidth: CGFloat = 26
     static let overflowWidth: CGFloat = 26
     static let closeWidth: CGFloat = 26
     static let itemSpacing: CGFloat = 5
-    static let mirrorDragSpacerWidth: CGFloat = 48
+    static let mirrorDragSpacerWidth: CGFloat = 24
     static let horizontalInset: CGFloat = 7
     static let verticalInset: CGFloat = 5
     static let minimumWidth: CGFloat = 260
@@ -392,6 +417,17 @@ struct OverlayControlBarResponsiveLayout: Equatable, Sendable {
     let overflowItemIDs: [OverlayControlBarItemID]
 
     var showsOverflow: Bool { !overflowItemIDs.isEmpty }
+}
+
+struct OverlayControlBarResponsivePresentation: Equatable, Sendable {
+    let layout: OverlayControlBarResponsiveLayout
+    let compactedItemIDs: [OverlayControlBarItemID]
+}
+
+func overlayControlBarTranslationDirectionSymbolName(
+    for direction: TranslationDirection
+) -> String {
+    direction == .japaneseToKorean ? "character.square.ko" : "character.square.ja"
 }
 
 func overlayControlBarHoverAlpha(
@@ -548,6 +584,49 @@ func overlayControlBarResponsiveLayout(
     return OverlayControlBarResponsiveLayout(
         visibleItemIDs: Array(items.prefix(visibleCount).map(\.id)),
         overflowItemIDs: Array(items.dropFirst(visibleCount).map(\.id))
+    )
+}
+
+func overlayControlBarResponsivePresentation(
+    width: CGFloat, items: [OverlayControlBarItemDefinition], includesChrome: Bool = true,
+    minimumSpacerWidth: CGFloat = 0
+) -> OverlayControlBarResponsivePresentation {
+    let compactOrder = OverlayControlBarCatalog.compactOrder.filter { id in
+        items.contains { $0.id == id && $0.compactWidth != nil }
+    }
+
+    for compactCount in 0 ... compactOrder.count {
+        let compactedItemIDs = Array(compactOrder.prefix(compactCount))
+        let compactedIDs = Set(compactedItemIDs)
+        let presentationItems = items.map { definition in
+            guard compactedIDs.contains(definition.id),
+                  let compactWidth = definition.compactWidth else {
+                return definition
+            }
+            return definition.usingWidth(compactWidth)
+        }
+        let layout = overlayControlBarResponsiveLayout(
+            width: width,
+            items: presentationItems,
+            includesChrome: includesChrome,
+            minimumSpacerWidth: minimumSpacerWidth
+        )
+        if !layout.showsOverflow || compactCount == compactOrder.count {
+            return OverlayControlBarResponsivePresentation(
+                layout: layout,
+                compactedItemIDs: compactedItemIDs
+            )
+        }
+    }
+
+    return OverlayControlBarResponsivePresentation(
+        layout: overlayControlBarResponsiveLayout(
+            width: width,
+            items: items,
+            includesChrome: includesChrome,
+            minimumSpacerWidth: minimumSpacerWidth
+        ),
+        compactedItemIDs: []
     )
 }
 
@@ -823,9 +902,11 @@ final class OverlayControlBarController: NSObject, NSMenuDelegate {
     private let closeControlHost = OverlayControlBarControlHost()
     private let leadingDragView = OverlayControlBarDragView()
     private var controlHosts: [OverlayControlBarItemID: OverlayControlBarControlHost] = [:]
+    private var controlWidthConstraints: [OverlayControlBarItemID: NSLayoutConstraint] = [:]
     private var responsiveLayout = OverlayControlBarResponsiveLayout(
         visibleItemIDs: [], overflowItemIDs: []
     )
+    private var compactedItemIDs: Set<OverlayControlBarItemID> = []
     private var opacityPopover: NSPopover?
     private weak var overflowApplicationMenu: NSMenu?
     private weak var overlayOpacitySlider: NSSlider?
@@ -1137,17 +1218,18 @@ final class OverlayControlBarController: NSObject, NSMenuDelegate {
         leadingControlsStack.addArrangedSubview(leadingDragView)
         for definition in OverlayControlBarCatalog.items {
             let host = OverlayControlBarControlHost()
-            configureControlHost(
+            let widthConstraint = configureControlHost(
                 host, control: control(for: definition.id), width: definition.width
             )
             controlHosts[definition.id] = host
+            controlWidthConstraints[definition.id] = widthConstraint
         }
         configureItemGrouping()
-        configureControlHost(
+        _ = configureControlHost(
             overflowControlHost, control: overflowButton,
             width: OverlayControlBarMetrics.overflowWidth
         )
-        configureControlHost(
+        _ = configureControlHost(
             closeControlHost, control: closeButton,
             width: OverlayControlBarMetrics.closeWidth
         )
@@ -1224,9 +1306,10 @@ final class OverlayControlBarController: NSObject, NSMenuDelegate {
 
     private func configureControlHost(
         _ host: OverlayControlBarControlHost, control: NSView, width: CGFloat
-    ) {
+    ) -> NSLayoutConstraint {
         host.translatesAutoresizingMaskIntoConstraints = false
-        host.widthAnchor.constraint(equalToConstant: width).isActive = true
+        let widthConstraint = host.widthAnchor.constraint(equalToConstant: width)
+        widthConstraint.isActive = true
         host.heightAnchor.constraint(
             equalToConstant: OverlayControlBarMetrics.controlHeight
         ).isActive = true
@@ -1238,12 +1321,39 @@ final class OverlayControlBarController: NSObject, NSMenuDelegate {
             control.topAnchor.constraint(equalTo: host.topAnchor),
             control.bottomAnchor.constraint(equalTo: host.bottomAnchor)
         ])
+        return widthConstraint
     }
 
     private func configureNativeControlAppearance(_ button: NSButton) {
         button.controlSize = .small
         button.isBordered = false
         button.contentTintColor = .labelColor
+    }
+
+    private func applyCompactButtonPresentation() {
+        let displayModeCompact = compactedItemIDs.contains(.displayMode)
+        displayModeButton.imagePosition = displayModeCompact ? .imageOnly : .imageLeading
+        displayModeButton.imageHugsTitle = !displayModeCompact
+        displayModeButton.title = displayModeCompact
+            ? ""
+            : (displayMode == .overlay ? L10n.text("오버레이") : L10n.text("미러"))
+
+        let translationDirectionCompact = compactedItemIDs.contains(.translationDirection)
+        translationDirectionButton.imagePosition = translationDirectionCompact
+            ? .imageOnly : .imageLeading
+        translationDirectionButton.imageHugsTitle = !translationDirectionCompact
+        translationDirectionButton.title = translationDirectionCompact
+            ? "" : translationDirection.title
+
+        let refreshModeCompact = compactedItemIDs.contains(.refreshMode)
+        refreshModeButton.imagePosition = refreshModeCompact ? .imageOnly : .imageLeading
+        refreshModeButton.imageHugsTitle = !refreshModeCompact
+        refreshModeButton.title = refreshModeCompact
+            ? "" : (refreshMode == .automatic ? L10n.text("자동") : L10n.text("수동"))
+
+        let applicationCompact = compactedItemIDs.contains(.application)
+        applicationPopup.imagePosition = applicationCompact ? .imageOnly : .imageLeading
+        applicationPopup.imageHugsTitle = !applicationCompact
     }
 
     private func control(for id: OverlayControlBarItemID) -> NSButton {
@@ -1527,8 +1637,10 @@ final class OverlayControlBarController: NSObject, NSMenuDelegate {
         refreshControlBarPointerState()
     }
 
-    private func symbol(_ name: String, description: String) -> NSImage {
-        let configuration = NSImage.SymbolConfiguration(pointSize: 12, weight: .medium)
+    private func symbol(
+        _ name: String, description: String, pointSize: CGFloat = 12
+    ) -> NSImage {
+        let configuration = NSImage.SymbolConfiguration(pointSize: pointSize, weight: .medium)
         let image = NSImage(systemSymbolName: name, accessibilityDescription: description)
             ?? NSImage(systemSymbolName: "ellipsis", accessibilityDescription: description)
             ?? NSImage()
@@ -1634,12 +1746,18 @@ final class OverlayControlBarController: NSObject, NSMenuDelegate {
 
     func setTranslationDirection(_ direction: TranslationDirection) {
         translationDirection = direction
+        translationDirectionButton.image = symbol(
+            overlayControlBarTranslationDirectionSymbolName(for: direction),
+            description: direction.title,
+            pointSize: OverlayControlBarMetrics.translationDirectionSymbolPointSize
+        )
         translationDirectionButton.title = direction.title
         setTooltip(toolbarShortcutToolTip(
             L10n.format("번역 방향: %@ (클릭하여 전환)", direction.title),
             action: .translationDirection
         ), for: translationDirectionButton)
         translationDirectionButton.setAccessibilityLabel(translationDirectionButton.toolTip ?? direction.title)
+        applyCompactButtonPresentation()
     }
 
     func setProtectsNonSourceText(_ enabled: Bool) {
@@ -1786,9 +1904,6 @@ final class OverlayControlBarController: NSObject, NSMenuDelegate {
         backgroundView.layer?.cornerRadius = 10
         updateDockedAppearance()
         updateBackgroundPresentation()
-        updateResponsivePresentation(
-            for: embeddedInMirrorToolbar ? container.frame.width : desiredFrame().frame.width
-        )
         updateDisplayModePresentation()
         setTranslationDirection(translationDirection)
         setProtectsNonSourceText(protectsNonSourceText)
@@ -1799,6 +1914,9 @@ final class OverlayControlBarController: NSObject, NSMenuDelegate {
         setFollowSelectionSize(followsSelectionSize)
         setMirrorDocking(mirrorDocking)
         copyButton.isEnabled = copyAllEnabled
+        updateResponsivePresentation(
+            for: embeddedInMirrorToolbar ? container.frame.width : desiredFrame().frame.width
+        )
     }
 
     private func updateBackgroundPresentation() {
@@ -1846,6 +1964,7 @@ final class OverlayControlBarController: NSObject, NSMenuDelegate {
         displayModeButton.setAccessibilityLabel(
             isOverlay ? L10n.text("오버레이 모드") : L10n.text("미러 모드")
         )
+        applyCompactButtonPresentation()
     }
 
     private func updateRefreshPresentation() {
@@ -1866,6 +1985,7 @@ final class OverlayControlBarController: NSObject, NSMenuDelegate {
         translateButton.contentTintColor = automatic
             ? .labelColor : regionPresentationColor(for: .manual)
         updateGradientPresentation()
+        applyCompactButtonPresentation()
     }
 
     private func updatePausePresentation() {
@@ -1974,13 +2094,23 @@ final class OverlayControlBarController: NSObject, NSMenuDelegate {
             displayMode: displayMode,
             debugFeaturesEnabled: debugFeaturesEnabled
         )
-        responsiveLayout = overlayControlBarResponsiveLayout(
+        let presentation = overlayControlBarResponsivePresentation(
             width: width,
             items: availableItems,
             includesChrome: !embeddedInMirrorToolbar,
             minimumSpacerWidth: embeddedInMirrorToolbar
-                ? OverlayControlBarMetrics.mirrorDragSpacerWidth : 0
+                ? OverlayControlBarMetrics.mirrorDragSpacerWidth
+                : OverlayControlBarMetrics.itemSpacing
         )
+        responsiveLayout = presentation.layout
+        compactedItemIDs = Set(presentation.compactedItemIDs)
+        applyCompactButtonPresentation()
+        for definition in OverlayControlBarCatalog.items {
+            let width = compactedItemIDs.contains(definition.id)
+                ? (definition.compactWidth ?? definition.width)
+                : definition.width
+            controlWidthConstraints[definition.id]?.constant = width
+        }
         let visibleIDs = Set(responsiveLayout.visibleItemIDs)
         for definition in OverlayControlBarCatalog.items {
             controlHosts[definition.id]?.isHidden = !visibleIDs.contains(definition.id)
@@ -2168,6 +2298,7 @@ final class OverlayControlBarController: NSObject, NSMenuDelegate {
         } else {
             applicationPopup.selectItem(at: 0)
         }
+        applyCompactButtonPresentation()
     }
 
     private func applicationIcon(for application: CaptureApplication) -> NSImage {
@@ -2825,6 +2956,69 @@ final class OverlayControlBarController: NSObject, NSMenuDelegate {
             )
         }
 
+        let compactWidth: CGFloat = 750
+        let compactPresentation = overlayControlBarResponsivePresentation(
+            width: compactWidth,
+            items: OverlayControlBarCatalog.availableItems(
+                displayMode: .overlay, debugFeaturesEnabled: debugFeaturesEnabled
+            ),
+            includesChrome: true,
+            minimumSpacerWidth: OverlayControlBarMetrics.itemSpacing
+        )
+        panel?.setFrame(
+            CGRect(x: 0, y: 0, width: compactWidth, height: OverlayControlBarMetrics.height),
+            display: false
+        )
+        updateResponsivePresentation(for: compactWidth)
+        container.layoutSubtreeIfNeeded()
+        record(
+            responsiveLayout == compactPresentation.layout
+                && compactedItemIDs == Set(compactPresentation.compactedItemIDs),
+            "overlay control bar: compact layout differs from its responsive presentation"
+        )
+        for definition in OverlayControlBarCatalog.items where definition.compactWidth != nil {
+            let compact = compactPresentation.compactedItemIDs.contains(definition.id)
+            let expectedWidth = compact
+                ? (definition.compactWidth ?? definition.width) : definition.width
+            record(
+                abs((controlWidthConstraints[definition.id]?.constant ?? 0) - expectedWidth) < 0.5,
+                "overlay control bar: compact width differs for \(definition.id.rawValue)"
+            )
+            let isImageLeading = control(for: definition.id).imagePosition == .imageLeading
+            record(
+                isImageLeading == !compact,
+                "overlay control bar: compact image position differs for \(definition.id.rawValue)"
+            )
+        }
+
+        updateResponsivePresentation(for: wideWidth)
+        container.layoutSubtreeIfNeeded()
+        record(
+            compactedItemIDs.isEmpty,
+            "overlay control bar: full-width layout did not restore text controls"
+        )
+        record(
+            displayModeButton.imagePosition == .imageLeading
+                && displayModeButton.title == L10n.text("오버레이"),
+            "overlay control bar: display mode title did not restore"
+        )
+        record(
+            translationDirectionButton.imagePosition == .imageLeading
+                && translationDirectionButton.title == translationDirection.title,
+            "overlay control bar: translation direction title did not restore"
+        )
+        record(
+            refreshModeButton.imagePosition == .imageLeading
+                && refreshModeButton.title == (refreshMode == .automatic
+                    ? L10n.text("자동") : L10n.text("수동")),
+            "overlay control bar: refresh mode title did not restore"
+        )
+        record(
+            applicationPopup.imagePosition == .imageLeading
+                && !applicationPopup.title.isEmpty,
+            "overlay control bar: application title did not restore"
+        )
+
         for definition in OverlayControlBarCatalog.items {
             guard let host = controlHosts[definition.id] else {
                 violations.append("overlay control bar: missing host for \(definition.id.rawValue)")
@@ -2844,7 +3038,7 @@ final class OverlayControlBarController: NSObject, NSMenuDelegate {
             )
         }
 
-        let overflowWidth: CGFloat = 570
+        let overflowWidth: CGFloat = 520
         panel?.setFrame(
             CGRect(x: 0, y: 0, width: overflowWidth, height: OverlayControlBarMetrics.height),
             display: false
@@ -2923,7 +3117,7 @@ final class OverlayControlBarController: NSObject, NSMenuDelegate {
             violations.append("mirror control bar must not create an overlay panel")
         }
         updateResponsivePresentation(for: 1)
-        let expectedNarrowLayout = overlayControlBarResponsiveLayout(
+        let expectedNarrowPresentation = overlayControlBarResponsivePresentation(
             width: 1,
             items: OverlayControlBarCatalog.availableItems(
                 displayMode: .mirror, debugFeaturesEnabled: debugFeaturesEnabled
@@ -2931,7 +3125,8 @@ final class OverlayControlBarController: NSObject, NSMenuDelegate {
             includesChrome: false,
             minimumSpacerWidth: OverlayControlBarMetrics.mirrorDragSpacerWidth
         )
-        if responsiveLayout != expectedNarrowLayout
+        if responsiveLayout != expectedNarrowPresentation.layout
+            || compactedItemIDs != Set(expectedNarrowPresentation.compactedItemIDs)
             || responsiveLayout.visibleItemIDs + responsiveLayout.overflowItemIDs != mirrorIDs {
             violations.append("mirror control bar overflow differs from its mode catalog")
         }
