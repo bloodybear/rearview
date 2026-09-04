@@ -1,6 +1,7 @@
 import AppKit
 import Carbon
 import CoreGraphics
+import ServiceManagement
 
 /// Canonical defaults for every persisted user preference.
 ///
@@ -1220,12 +1221,29 @@ enum MirrorFollowsSelectionSize {
 }
 
 enum LaunchAtLogin {
+    enum Action: Equatable {
+        case none
+        case register
+        case unregister
+    }
+
     static let defaultsKey = "launchAtLogin"
+
     static func load(from defaults: UserDefaults = .standard) -> Bool {
         defaults.object(forKey: defaultsKey) == nil
             ? AppDefaults.launchAtLogin : defaults.bool(forKey: defaultsKey)
     }
+
     static func save(_ enabled: Bool, to defaults: UserDefaults = .standard) { defaults.set(enabled, forKey: defaultsKey) }
+
+    static func isEnabled(_ status: SMAppService.Status) -> Bool {
+        status == .enabled
+    }
+
+    static func action(for enabled: Bool, status: SMAppService.Status) -> Action {
+        guard enabled != isEnabled(status) else { return .none }
+        return enabled ? .register : .unregister
+    }
 }
 
 enum TargetApplicationTracking {

@@ -102,6 +102,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        _ = synchronizeLaunchAtLogin()
         if permissionClient.preflight() {
             startScreenCapturePermissionProbe()
         } else {
@@ -691,6 +692,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             controller = settingsWindow
         } else {
             controller = SettingsWindowController()
+            controller.launchAtLoginStatusProvider = { SMAppService.mainApp.status }
             controller.onSettingsReset = { [weak self] in self?.applyResetSettings() }
 #if LST_EXCLUDE_DEBUG_FEATURES
             controller.updateSettingsProvider = { [weak self] in
@@ -863,7 +865,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         coordinator.setProtectsNonSourceText(TranslationTextProtection.load())
         coordinator.setMirrorFollowsSelectionSize(MirrorFollowsSelectionSize.load())
         coordinator.setTargetApplicationTracking(TargetApplicationTracking.load())
-        _ = setLaunchAtLogin(LaunchAtLogin.load())
+        _ = synchronizeLaunchAtLogin(showError: true)
 #if LST_EXCLUDE_DEBUG_FEATURES
         appUpdater.resetSettings()
 #endif
@@ -876,22 +878,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         applyDisplayLanguage(.load(), persistSelection: false)
     }
 
-    private func setLaunchAtLogin(_ enabled: Bool) -> Bool {
+    private func synchronizeLaunchAtLogin(showError: Bool = false) -> Bool {
+        let service = SMAppService.mainApp
+        let enabled = LaunchAtLogin.load()
+        let desiredAction = LaunchAtLogin.action(for: enabled, status: service.status)
+        guard desiredAction != .none else { return true }
+        return setLaunchAtLogin(enabled, showError: showError)
+    }
+
+    private func setLaunchAtLogin(_ enabled: Bool, showError: Bool = true) -> Bool {
+        let service = SMAppService.mainApp
+        let action = LaunchAtLogin.action(for: enabled, status: service.status)
+
         do {
-            if enabled {
-                try SMAppService.mainApp.register()
-            } else {
-                try SMAppService.mainApp.unregister()
+            switch action {
+            case .none:
+                break
+            case .register:
+                try service.register()
+            case .unregister:
+                try service.unregister()
             }
             LaunchAtLogin.save(enabled)
             return true
         } catch {
-            let alert = NSAlert()
-            alert.messageText = L10n.text("자동 실행 설정 실패")
-            alert.informativeText = error.localizedDescription
-            alert.alertStyle = .warning
-            alert.addButton(withTitle: L10n.text("확인"))
-            alert.runModal()
+            // The system state may have changed between the status read and
+            // the operation. Treat the requested state as successful when it
+            // is already reflected after the error.
+            if LaunchAtLogin.isEnabled(service.status) == enabled {
+                LaunchAtLogin.save(enabled)
+                return true
+            }
+            if showError {
+                let alert = NSAlert()
+                alert.messageText = L10n.text("자동 실행 설정 실패")
+                alert.informativeText = error.localizedDescription
+                alert.alertStyle = .warning
+                alert.addButton(withTitle: L10n.text("확인"))
+                alert.runModal()
+            }
             return false
         }
     }

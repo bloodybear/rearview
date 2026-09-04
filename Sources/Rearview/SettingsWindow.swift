@@ -1,5 +1,6 @@
 import AppKit
 import Carbon
+import ServiceManagement
 
 private final class SettingsDocumentView: NSView {
     override var isFlipped: Bool { true }
@@ -86,6 +87,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
     var onMirrorFollowSelectionSizeChange: ((Bool) -> Void)?
     var onTargetApplicationTrackingChange: ((Bool) -> Void)?
     var onLaunchAtLoginChange: ((Bool) -> Bool)?
+    var launchAtLoginStatusProvider: (() -> SMAppService.Status)?
     var onMirrorUpdateStyleChange: ((MirrorUpdateStyle) -> Void)?
     var onSelectionHotKeyChange: ((SelectionHotKey) -> Bool)?
     var onImmediateTranslationHotKeyChange: ((ImmediateTranslationHotKey) -> Bool)?
@@ -260,7 +262,10 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         regionBorderOpacityStepper.integerValue = regionBorderOpacityField.integerValue
         mirrorFollowSize.state = MirrorFollowsSelectionSize.load() ? .on : .off
         targetApplicationTracking.state = TargetApplicationTracking.load() ? .on : .off
-        launchAtLogin.state = LaunchAtLogin.load() ? .on : .off
+        let launchAtLoginEnabled = launchAtLoginStatusProvider.map {
+            LaunchAtLogin.isEnabled($0())
+        } ?? LaunchAtLogin.load()
+        launchAtLogin.state = launchAtLoginEnabled ? .on : .off
         mirrorUpdateStylePopup.selectItem(
             at: MirrorUpdateStyle.allCases.firstIndex(of: .load()) ?? 0
         )
@@ -1336,7 +1341,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
     @objc private func launchAtLoginChanged() {
         let enabled = launchAtLogin.state == .on
         guard onLaunchAtLoginChange?(enabled) != false else {
-            launchAtLogin.state = enabled ? .off : .on
+            refresh()
             return
         }
         LaunchAtLogin.save(enabled)
