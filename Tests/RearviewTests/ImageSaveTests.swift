@@ -8,6 +8,7 @@ struct ImageSaveTests {
     @Test func imageSaveSettingsRoundTripAndReset() {
         withTestDefaults { defaults in
             #expect(ImageSaveSettings.filenameTemplate(from: defaults) == AppDefaults.imageSaveFilenameTemplate)
+            #expect(ImageSaveSettings.filenameTemplate(from: defaults) == "{yyyy-MM-dd_HH-mm-ss}_{counter}")
             let directory = URL(fileURLWithPath: "/tmp/rearview-tests", isDirectory: true)
             ImageSaveSettings.save(directoryURL: directory, to: defaults)
             ImageSaveSettings.save(filenameTemplate: "capture_{yyyy}_{counter}", to: defaults)

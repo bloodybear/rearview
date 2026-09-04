@@ -121,7 +121,7 @@ enum AppDefaults {
     static let mirrorFollowsSelectionSize = true
 
     // Image saving
-    static let imageSaveFilenameTemplate = "Rearview_{yyyy-MM-dd_HH-mm-ss}_{counter}"
+    static let imageSaveFilenameTemplate = "{yyyy-MM-dd_HH-mm-ss}_{counter}"
 
     // Overlay
     static let inactiveOverlayOpacity: CGFloat = 0.85

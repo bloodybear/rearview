@@ -38,7 +38,7 @@ enum SettingsLayoutMetrics {
     static let contentHorizontalInset: CGFloat = 24
     static let cardHorizontalInset: CGFloat = 16
     static let rowControlGap: CGFloat = 20
-    static let trailingControlColumnWidth: CGFloat = 220
+    static let trailingControlColumnWidth: CGFloat = 260
     static let rowVerticalInset: CGFloat = 12
     static let compoundRowVerticalInset: CGFloat = 16
     static let compoundControlSpacing: CGFloat = 8
@@ -214,6 +214,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         if settingsPages.count != sidebarButtons.count || settingsPages.isEmpty {
             violations.append("settings sidebar/page count mismatch")
         }
+        if imageSaveFilenameField.cell?.usesSingleLineMode != true
+            || imageSaveFilenameField.cell?.wraps != false
+            || imageSaveFilenameField.cell?.isScrollable != true {
+            violations.append("image filename field must use single-line horizontal scrolling")
+        }
         for record in preferenceRowLayoutRecords {
             record.row.layoutSubtreeIfNeeded()
             let controlColumnFrame = record.row.convert(
@@ -232,6 +237,13 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
                 violations.append(
                     "\(record.title): control overflows its preference row "
                         + "(row: \(record.row.bounds), control: \(controlFrame))"
+                )
+            }
+            if controlFrame.minX < controlColumnFrame.minX - tolerance
+                || controlFrame.maxX > controlColumnFrame.maxX + tolerance {
+                violations.append(
+                    "\(record.title): control overflows its trailing column "
+                        + "(column: \(controlColumnFrame), control: \(controlFrame))"
                 )
             }
         }
@@ -673,7 +685,13 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         imageSaveDirectoryButton.action = #selector(selectImageSaveDirectory)
         imageSaveFilenameField.delegate = self
         imageSaveFilenameField.placeholderString = AppDefaults.imageSaveFilenameTemplate
-
+        imageSaveFilenameField.cell?.usesSingleLineMode = true
+        imageSaveFilenameField.cell?.wraps = false
+        imageSaveFilenameField.cell?.isScrollable = true
+        imageSaveFilenameField.translatesAutoresizingMaskIntoConstraints = false
+        imageSaveFilenameField.widthAnchor.constraint(
+            equalToConstant: SettingsLayoutMetrics.trailingControlColumnWidth
+        ).isActive = true
 
         displayModeControl.segmentCount = 2
         displayModeControl.setLabel(L10n.text("미러"), forSegment: 0)
