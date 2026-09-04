@@ -167,7 +167,6 @@ macOS 시작 시 자동 실행	Launch at Login	ログイン時に起動
 번역 결과를 별도 미러 창에 표시하거나 원래 영역 위에 오버레이로 표시합니다.	Shows translation results in a separate mirror window or as an overlay over the original area.	翻訳結果を別のミラーウィンドウに表示するか、元の範囲上にオーバーレイ表示します。
 화면 변화를 감지해 자동으로 갱신하거나, 사용자가 직접 번역을 실행하는 방식으로 전환합니다.	Switches between automatic updates when the screen changes and user-triggered translation.	画面の変化を検知して自動更新するか、ユーザーが手動で翻訳を実行するかを切り替えます。
 자동 갱신 모드에서는 번역을 일시정지하거나 재생하고, 수동 갱신 모드에서는 현재 영역을 즉시 번역합니다. 보조 키 없이 단일 키로 동작합니다.	In automatic refresh mode, pauses or resumes translation; in manual refresh mode, translates the current area immediately. Works as a single key without modifier keys.	自動更新モードでは翻訳を一時停止または再開し、手動更新モードでは現在の範囲をすぐに翻訳します。修飾キーなしの単一キーで動作します。
-미러 모드에서는 항상 위를, 오버레이 모드에서는 선택 영역의 마우스 입력 통과/무시를 전환합니다.	In Mirror mode, toggles always-on-top; in Overlay mode, toggles passing or ignoring mouse input for the selected area.	ミラーモードでは常に手前に表示する設定を、オーバーレイモードでは選択範囲のマウス入力の通過／無視を切り替えます。
 현재 인식된 텍스트와 번역문을 모두 선택합니다.	Selects all recognized text and translations.	認識されたテキストと翻訳文をすべて選択します。
 선택한 텍스트를 클립보드에 복사합니다.	Copies the selected text to the clipboard.	選択したテキストをクリップボードにコピーします。
 선택한 텍스트를 복사한 뒤 선택을 해제합니다.	Copies the selected text, then clears the selection.	選択したテキストをコピーしてから選択を解除します。
@@ -282,7 +281,6 @@ Text OCR · Accurate · Current. 보정 입력 배율과 언어 보정 설정입
 단축키, 표시 방식, 캡처, OCR 및 업데이트 설정이 모두 기본값으로 돌아갑니다.	All shortcuts, display, capture, OCR, and update settings will return to defaults.	ショートカット、表示、キャプチャ、OCR、アップデート設定がすべて初期値に戻ります。
 초기화	Reset	リセット
 취소	Cancel	キャンセル
-확인	OK	OK
 일→한	JA→KO	日→韓
 한→일	KO→JA	韓→日
 번역 방향 전환	Switch Translation Direction	翻訳方向を切り替え
@@ -290,7 +288,6 @@ Text OCR · Accurate · Current. 보정 입력 배율과 언어 보정 설정입
 미러/오버레이 모드 전환	Switch Mirror/Overlay Mode	ミラー／オーバーレイモードを切り替え
 자동/수동 갱신 전환	Switch Automatic/Manual Refresh	自動／手動更新を切り替え
 일시정지/재생/즉시 번역	Pause/Resume/Translate Now	一時停止／再開／今すぐ翻訳
-즉시 번역	Translate Now	今すぐ翻訳
 전체 복사	Copy All	すべてコピー
 이미지 복사	Copy Image	画像をコピー
 선택 모드 전환	Toggle Selection Mode	選択モードを切り替え
@@ -494,5 +491,20 @@ OCR이 가장 큰 비중을 차지합니다. 미러의 프레임 일관성을 �
 미러 텍스트 배치가 4ms를 넘습니다. 레이아웃 캐시와 충돌 후보 수를 확인하세요.	Mirror text layout exceeds 4 ms. Check the layout cache and number of collision candidates.	ミラーテキスト配置が4msを超えています。レイアウトキャッシュと衝突候補数を確認してください。
 프레임 손실률이 15%를 넘습니다. 최신 프레임 처리량보다 캡처 해상도·빈도가 높습니다.	Frame loss exceeds 15%. Capture resolution or frequency is higher than the latest-frame processing capacity.	フレーム損失率が15%を超えています。キャプチャ解像度または頻度が最新フレームの処理能力を上回っています。
 단일 지배 병목이 없습니다. end-to-end p95가 큰 세션을 더 길게 측정하세요.	There is no single dominant bottleneck. Measure longer sessions with high end-to-end p95.	単一の支配的なボトルネックはありません。end-to-end p95が高いセッションをより長く測定してください。
+미러 도킹 해제	Undock Mirror	ミラーのドッキングを解除
+선택	Choose	選択
+개발자 도구	Developer Tools	開発者ツール
+텍스트 및 선택	Text & Selection	テキストと選択
+단일키	Single Key	単一キー
+미러 크기	Mirror Size	ミラーサイズ
+텍스트 전체 복사	Copy All Text	テキストをすべてコピー
+번역 영역 이미지 저장	Save Translation Area Image	翻訳範囲の画像を保存
+이미지 저장 실패: %@	Image save failed: %@	画像の保存に失敗しました：%@
+미러 확대 비율 %d%%	Mirror zoom %d%%	ミラーの拡大率%d%%
+미러 네이티브 합성	Mirror Native Composition	ミラーのネイティブ合成
+영역 선택 화면에서 미러/오버레이 모드를 전환합니다.	Switches between mirror and overlay mode on the area-selection screen.	範囲選択画面でミラー／オーバーレイモードを切り替えます。
+영역 선택 화면에서 미러 도킹 방향을 지정합니다.	Sets the mirror docking direction on the area-selection screen.	範囲選択画面でミラーのドッキング方向を指定します。
+현재 번역 영역의 이미지를 PNG 파일로 저장합니다.	Saves an image of the current translation area as a PNG file.	現在の翻訳範囲の画像をPNGファイルとして保存します。
+미러 네이티브 합성이 프레임 예산을 넘습니다. artwork 캐시 적중률과 캡처 pixel 크기를 확인하세요.	Mirror native composition exceeds the frame budget. Check the artwork cache hit rate and capture pixel size.	ミラーのネイティブ合成がフレーム予算を超えています。artworkキャッシュのヒット率とキャプチャのピクセルサイズを確認してください。
 """
 }

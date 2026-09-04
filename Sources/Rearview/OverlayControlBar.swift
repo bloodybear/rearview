@@ -2450,7 +2450,7 @@ final class OverlayControlBarController: NSObject, NSMenuDelegate {
             )
         case .translationDirectionAction:
             return actionMenuItem(
-                "번역 방향: \(translationDirection.title)", symbol: "arrow.left.arrow.right",
+                L10n.format("번역 방향: %@", translationDirection.title), symbol: "arrow.left.arrow.right",
                 action: #selector(toggleTranslationDirection)
             )
         case .protectNonSourceTextAction:

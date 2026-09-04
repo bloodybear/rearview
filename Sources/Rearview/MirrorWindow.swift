@@ -663,7 +663,7 @@ private final class MirrorZoomBadge: NSVisualEffectView {
 
     func show(percentage: Int) {
         label.stringValue = "\(percentage)%"
-        setAccessibilityLabel("미러 확대 비율 \(percentage)%")
+        setAccessibilityLabel(L10n.format("미러 확대 비율 %d%%", percentage))
         isHidden = false
     }
 
