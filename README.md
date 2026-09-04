@@ -21,6 +21,29 @@ Rearview is a macOS menu bar app that translates Japanese and Korean text from a
 - Screen Recording permission
 - Japanese and Korean translation language packs
 
+## Download and launch
+
+1. Download the latest `Rearview.dmg` from the [GitHub Releases](https://github.com/bloodybear/rearview/releases) page.
+2. Open the DMG and drag `Rearview.app` to the `Applications` folder.
+3. Open Rearview from the `Applications` folder.
+
+Because Rearview is currently distributed without Apple notarization, macOS may block the first launch.
+
+If macOS shows a security warning:
+
+1. Try opening Rearview once.
+2. Open **System Settings → Privacy & Security**.
+3. Click **Open Anyway**, then confirm **Open**.
+
+### Terminal alternative
+
+Remove the download quarantine attribute with Terminal:
+
+```sh
+xattr -dr com.apple.quarantine "/Applications/Rearview.app"
+open "/Applications/Rearview.app"
+```
+
 ## Build
 
 ```sh
