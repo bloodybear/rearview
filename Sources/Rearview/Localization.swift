@@ -125,7 +125,6 @@ Rearview 업데이트	Rearview Update	Rearviewアップデート
 업데이트가 설치되지 않았습니다. 버전 %@을 확인하세요.	The update has not been installed. Check version %@.	アップデートがまだインストールされていません。バージョン%@を確認してください。
 Rearview 정보…	About Rearview…	Rearviewについて…
 버전 %@	Version %@	バージョン%@
-GitHub에서 보기	View on GitHub	GitHubで見る
 종료	Quit	終了
 프로파일링 시작	Start Profiling	プロファイリングを開始
 프로파일링 종료 및 결과 보기	Stop Profiling and View Results	プロファイリングを終了して結果を表示

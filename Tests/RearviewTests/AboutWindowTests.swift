@@ -21,8 +21,7 @@ struct AboutWindowTests {
     func aboutCatalogIsCompleteForEverySupportedLanguage() {
         let keys = [
             "Rearview 정보…",
-            "버전 %@",
-            "GitHub에서 보기"
+            "버전 %@"
         ]
 
         for language in AppDisplayLanguage.allCases {
@@ -46,34 +45,45 @@ struct AboutWindowTests {
             let iconView = aboutImageView("about-app-icon", in: contentView)
             let versionLabel = aboutTextField("about-version", in: contentView)
             let copyrightLabel = aboutTextField("about-copyright", in: contentView)
-            let githubButton = aboutButton("about-github", in: contentView)
+            let githubLink = aboutTextField("about-github-link", in: contentView)
 
             #expect(nameLabel?.stringValue == "Rearview")
+            #expect(nameLabel?.font?.pointSize == 20)
+            #expect(contentView?.frame.size == CGSize(width: 360, height: 240))
             #expect(versionLabel?.stringValue == L10n.format(
                 "버전 %@", appInfo.version, language: language
             ))
             #expect(copyrightLabel?.stringValue == appInfo.copyright)
-            #expect(githubButton?.title == L10n.text(
-                "GitHub에서 보기", language: language
-            ))
+            #expect(githubLink?.stringValue == AboutWindowController.githubURL.absoluteString)
             #expect((iconView?.frame.minY ?? 0) > (nameLabel?.frame.maxY ?? 0))
             #expect((nameLabel?.frame.minY ?? 0) > (versionLabel?.frame.maxY ?? 0))
             #expect((versionLabel?.frame.minY ?? 0) > (copyrightLabel?.frame.maxY ?? 0))
-            #expect((copyrightLabel?.frame.minY ?? 0) > (githubButton?.frame.maxY ?? 0))
+            #expect((copyrightLabel?.frame.minY ?? 0) > (githubLink?.frame.maxY ?? 0))
+            #expect(githubLink?.frame.minX == nameLabel?.frame.minX)
+            #expect(githubLink?.frame.maxX == nameLabel?.frame.maxX)
             #expect(!hasAmbiguousLayout(in: contentView))
             #expect(contentFits(contentView))
         }
     }
 
     @Test @MainActor
-    func githubButtonOpensTheProjectURL() {
+    func githubLinkDisplaysAndTargetsTheHTTPSURL() {
         let controller = AboutWindowController(appInfo: appInfo, language: .english)
-        var openedURL: URL?
-        controller.onOpenURL = { openedURL = $0 }
+        let githubLink = aboutTextField(
+            "about-github-link", in: controller.window?.contentView
+        )
+        let linkAttribute = githubLink?.attributedStringValue.attribute(
+            .link, at: 0, effectiveRange: nil
+        ) as? URL
+        let paragraphStyle = githubLink?.attributedStringValue.attribute(
+            .paragraphStyle, at: 0, effectiveRange: nil
+        ) as? NSParagraphStyle
 
-        aboutButton("about-github", in: controller.window?.contentView)?.performClick(nil)
-
-        #expect(openedURL == AboutWindowController.githubURL)
+        #expect(githubLink?.stringValue == "https://github.com/bloodybear/rearview")
+        #expect(linkAttribute == AboutWindowController.githubURL)
+        #expect(paragraphStyle?.alignment == .center)
+        #expect(githubLink?.isSelectable == true)
+        #expect(githubLink?.allowsEditingTextAttributes == true)
     }
 
     @Test @MainActor
@@ -117,14 +127,6 @@ struct AboutWindowTests {
         if let field = view as? NSTextField,
            field.accessibilityIdentifier() == identifier { return field }
         return view.subviews.lazy.compactMap { aboutTextField(identifier, in: $0) }.first
-    }
-
-    @MainActor
-    private func aboutButton(_ identifier: String, in view: NSView?) -> NSButton? {
-        guard let view else { return nil }
-        if let button = view as? NSButton,
-           button.accessibilityIdentifier() == identifier { return button }
-        return view.subviews.lazy.compactMap { aboutButton(identifier, in: $0) }.first
     }
 
     @MainActor
