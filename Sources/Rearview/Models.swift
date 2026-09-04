@@ -17,7 +17,7 @@ enum AppDefaults {
     // preferred language is available.
     static let displayLanguage: AppDisplayLanguage = .english
     static let translationDirection: TranslationDirection = .japaneseToKorean
-    static let protectNonSourceText = true
+    static let protectNonSourceText = false
 
     // MARK: Shortcuts
 
@@ -68,8 +68,10 @@ enum AppDefaults {
             ToolbarHotKey(keyCode: UInt32(kVK_ANSI_1), modifiers: command, keyLabel: "1", isEnabled: true)
         case .displayMode:
             ToolbarHotKey(keyCode: UInt32(kVK_ANSI_2), modifiers: command, keyLabel: "2", isEnabled: true)
+        case .protectNonSourceText:
+            ToolbarHotKey(keyCode: UInt32(kVK_ANSI_4), modifiers: command, keyLabel: "4", isEnabled: true)
         case .modeSpecificDisplayControl:
-            ToolbarHotKey(keyCode: UInt32(kVK_ANSI_5), modifiers: command, keyLabel: "5", isEnabled: true)
+            ToolbarHotKey(keyCode: UInt32(kVK_ANSI_6), modifiers: command, keyLabel: "6", isEnabled: true)
         case .followSelectionSize:
             ToolbarHotKey(keyCode: UInt32(kVK_ANSI_8), modifiers: command, keyLabel: "8", isEnabled: true)
         case .dockTop:
@@ -91,7 +93,7 @@ enum AppDefaults {
         case .translationDirection:
             ToolbarHotKey(keyCode: UInt32(kVK_ANSI_3), modifiers: command, keyLabel: "3", isEnabled: true)
         case .refreshMode:
-            ToolbarHotKey(keyCode: UInt32(kVK_ANSI_4), modifiers: command, keyLabel: "4", isEnabled: true)
+            ToolbarHotKey(keyCode: UInt32(kVK_ANSI_5), modifiers: command, keyLabel: "5", isEnabled: true)
         case .sessionControlSingleKey:
             ToolbarHotKey(keyCode: UInt32(kVK_Space), modifiers: 0, keyLabel: "Space", isEnabled: true)
         case .selectionMode:
@@ -467,6 +469,7 @@ enum ToolbarShortcutAction: String, CaseIterable, Sendable {
     case stopTranslation
     case applicationCapture
     case translationDirection
+    case protectNonSourceText
     case displayMode
     case refreshMode
     case sessionControlSingleKey
@@ -504,6 +507,7 @@ enum ToolbarShortcutAction: String, CaseIterable, Sendable {
         case .stopTranslation: L10n.text("번역 종료")
         case .applicationCapture: L10n.text("캡처 대상 선택")
         case .translationDirection: L10n.text("번역 방향 전환")
+        case .protectNonSourceText: L10n.text("원문 외 텍스트 보호 전환")
         case .displayMode: L10n.text("미러/오버레이 모드 전환")
         case .refreshMode: L10n.text("자동/수동 갱신 전환")
         case .sessionControlSingleKey: L10n.text("일시정지/재생/즉시 번역")
@@ -539,6 +543,8 @@ enum ToolbarShortcutAction: String, CaseIterable, Sendable {
             L10n.text("현재 영역에서 캡처할 앱을 선택합니다.")
         case .translationDirection:
             L10n.text("일→한과 한→일 번역 방향을 전환합니다.")
+        case .protectNonSourceText:
+            L10n.text("영어·반대 언어·숫자를 번역에서 제외하거나 혼합 문맥을 유지하도록 전환합니다.")
         case .displayMode:
             L10n.text("번역 결과를 별도 미러 창에 표시하거나 원래 영역 위에 오버레이로 표시합니다.")
         case .refreshMode:

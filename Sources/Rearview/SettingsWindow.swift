@@ -347,6 +347,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         let sessionControlShortcutSection = makeSection(title: L10n.text("번역 세션 제어"), rows:
             makeToolbarShortcutRows(for: [
                 .applicationCapture, .displayMode, .translationDirection,
+                .protectNonSourceText,
                 .refreshMode, .modeSpecificDisplayControl, .sessionControlSingleKey,
             ])
         )

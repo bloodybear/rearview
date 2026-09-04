@@ -140,6 +140,7 @@ enum OverlayControlBarItemID: String, CaseIterable, Sendable {
     case application
     case displayMode
     case translationDirection
+    case protectNonSourceText
     case refreshMode
     case mouseEvents
     case pause
@@ -168,6 +169,7 @@ enum OverlayControlBarOverflowPresentation: Sendable {
     case applicationMenu
     case displayModeAction
     case translationDirectionAction
+    case protectNonSourceTextAction
     case refreshModeMenu
     case pauseAction
     case translateAction
@@ -221,6 +223,9 @@ enum OverlayControlBarCatalog {
         .init(id: .translationDirection, group: .leading,
               width: OverlayControlBarMetrics.displayModeWidth,
               overflowPresentation: .translationDirectionAction),
+        .init(id: .protectNonSourceText, group: .leading,
+              width: OverlayControlBarMetrics.iconControlWidth,
+              overflowPresentation: .protectNonSourceTextAction),
         .init(id: .refreshMode, group: .leading,
               width: OverlayControlBarMetrics.refreshModeWidth,
               overflowPresentation: .refreshModeMenu),
@@ -296,6 +301,7 @@ func overlayControlBarShortcutSource(
     case .application: .toolbar(.applicationCapture)
     case .displayMode: .toolbar(.displayMode)
     case .translationDirection: .toolbar(.translationDirection)
+    case .protectNonSourceText: .toolbar(.protectNonSourceText)
     case .refreshMode: .toolbar(.refreshMode)
     case .mouseEvents: .toolbar(.modeSpecificDisplayControl)
     case .pause: .toolbar(.sessionControlSingleKey)
@@ -753,6 +759,7 @@ final class OverlayControlBarController: NSObject, NSMenuDelegate {
     private var regionBorderOpacity: CGFloat
     private var displayMode: TranslationDisplayMode
     private var translationDirection = TranslationDirection.load()
+    private var protectsNonSourceText = TranslationTextProtection.load()
     private var refreshMode: RefreshMode = .automatic
     private var paused = false
     private var docking: OverlayControlBarDocking = .aboveSelection
@@ -792,6 +799,7 @@ final class OverlayControlBarController: NSObject, NSMenuDelegate {
     )
     private let displayModeButton = OverlayControlBarButton()
     private let translationDirectionButton = OverlayControlBarButton()
+    private let protectNonSourceTextButton = OverlayControlBarButton()
     private let refreshModeButton = OverlayControlBarButton()
     private let pauseButton = OverlayControlBarButton()
     private let translateButton = OverlayControlBarButton()
@@ -841,6 +849,7 @@ final class OverlayControlBarController: NSObject, NSMenuDelegate {
     var currentDocking: OverlayControlBarDocking { docking }
     var onDisplayModeChange: ((TranslationDisplayMode) -> Void)?
     var onTranslationDirectionChange: ((TranslationDirection) -> Void)?
+    var onNonSourceTextProtectionToggle: (() -> Void)?
     var onApplicationCaptureChange: ((CaptureApplication?) -> Void)?
     var onApplicationListRequest: (() -> Void)?
     var onRefreshModeChange: ((RefreshMode) -> Void)?
@@ -1014,6 +1023,11 @@ final class OverlayControlBarController: NSObject, NSMenuDelegate {
         translationDirectionButton.imagePosition = .imageLeading
         translationDirectionButton.imageHugsTitle = true
         translationDirectionButton.alignment = .center
+        configureButton(
+            protectNonSourceTextButton, symbol: "shield.lefthalf.filled",
+            toolTip: L10n.text("원문 외 텍스트 보호 전환"),
+            action: #selector(toggleNonSourceTextProtection)
+        )
         configureButton(
             refreshModeButton, symbol: "arrow.clockwise", toolTip: L10n.text("갱신 모드 전환"),
             action: #selector(toggleRefreshMode)
@@ -1237,6 +1251,7 @@ final class OverlayControlBarController: NSObject, NSMenuDelegate {
         case .application: applicationPopup
         case .displayMode: displayModeButton
         case .translationDirection: translationDirectionButton
+        case .protectNonSourceText: protectNonSourceTextButton
         case .refreshMode: refreshModeButton
         case .pause: pauseButton
         case .translate: translateButton
@@ -1627,6 +1642,22 @@ final class OverlayControlBarController: NSObject, NSMenuDelegate {
         translationDirectionButton.setAccessibilityLabel(translationDirectionButton.toolTip ?? direction.title)
     }
 
+    func setProtectsNonSourceText(_ enabled: Bool) {
+        protectsNonSourceText = enabled
+        let label = enabled
+            ? L10n.text("원문 외 텍스트 보호 끄기")
+            : L10n.text("원문 외 텍스트 보호 켜기")
+        protectNonSourceTextButton.image = symbol(
+            "shield.lefthalf.filled", description: label
+        )
+        protectNonSourceTextButton.contentTintColor = enabled
+            ? .controlAccentColor : .labelColor
+        setTooltip(toolbarShortcutToolTip(
+            label, action: .protectNonSourceText
+        ), for: protectNonSourceTextButton)
+        protectNonSourceTextButton.setAccessibilityLabel(label)
+    }
+
     func setRefreshMode(_ mode: RefreshMode) {
         refreshMode = mode
         updateRefreshPresentation()
@@ -1760,6 +1791,7 @@ final class OverlayControlBarController: NSObject, NSMenuDelegate {
         )
         updateDisplayModePresentation()
         setTranslationDirection(translationDirection)
+        setProtectsNonSourceText(protectsNonSourceText)
         updateRefreshPresentation()
         updatePausePresentation()
         updateSelectionPresentation()
@@ -1890,6 +1922,7 @@ final class OverlayControlBarController: NSObject, NSMenuDelegate {
     func refreshShortcutToolTips() {
         updateDisplayModePresentation()
         setTranslationDirection(translationDirection)
+        setProtectsNonSourceText(protectsNonSourceText)
         updateRefreshPresentation()
         updatePausePresentation()
         updateSelectionPresentation()
@@ -2171,6 +2204,10 @@ final class OverlayControlBarController: NSObject, NSMenuDelegate {
         onTranslationDirectionChange?(translationDirection.toggled)
     }
 
+    @objc private func toggleNonSourceTextProtection() {
+        onNonSourceTextProtectionToggle?()
+    }
+
     @objc private func toggleRefreshMode() {
         onRefreshModeChange?(refreshMode == .automatic ? .manual : .automatic)
     }
@@ -2285,6 +2322,16 @@ final class OverlayControlBarController: NSObject, NSMenuDelegate {
                 "번역 방향: \(translationDirection.title)", symbol: "arrow.left.arrow.right",
                 action: #selector(toggleTranslationDirection)
             )
+        case .protectNonSourceTextAction:
+            let item = actionMenuItem(
+                protectsNonSourceText
+                    ? L10n.text("원문 외 텍스트 보호 끄기")
+                    : L10n.text("원문 외 텍스트 보호 켜기"),
+                symbol: "shield.lefthalf.filled",
+                action: #selector(toggleNonSourceTextProtection)
+            )
+            item.state = protectsNonSourceText ? .on : .off
+            return item
         case .refreshModeMenu:
             let refreshItem = menuItem(L10n.text("갱신 모드"), symbol: "arrow.clockwise")
             let refreshMenu = NSMenu(title: L10n.text("갱신 모드"))

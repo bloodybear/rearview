@@ -163,6 +163,7 @@ macOS 시작 시 자동 실행	Launch at Login	ログイン時に起動
 현재 번역 세션과 화면 캡처를 종료합니다.	Ends the current translation session and screen capture.	現在の翻訳セッションと画面キャプチャを終了します。
 현재 영역에서 캡처할 앱을 선택합니다.	Chooses the app to capture in the current area.	現在の範囲でキャプチャするアプリを選択します。
 일→한과 한→일 번역 방향을 전환합니다.	Switches between Japanese-to-Korean and Korean-to-Japanese translation.	日本語→韓国語と韓国語→日本語の翻訳方向を切り替えます。
+영어·반대 언어·숫자를 번역에서 제외하거나 혼합 문맥을 유지하도록 전환합니다.	Toggles whether English, the opposite language, and numbers are excluded from translation or kept in the mixed context.	英語・反対言語・数字を翻訳から除外するか、混在した文脈のまま翻訳するかを切り替えます。
 번역 결과를 별도 미러 창에 표시하거나 원래 영역 위에 오버레이로 표시합니다.	Shows translation results in a separate mirror window or as an overlay over the original area.	翻訳結果を別のミラーウィンドウに表示するか、元の範囲上にオーバーレイ表示します。
 화면 변화를 감지해 자동으로 갱신하거나, 사용자가 직접 번역을 실행하는 방식으로 전환합니다.	Switches between automatic updates when the screen changes and user-triggered translation.	画面の変化を検知して自動更新するか、ユーザーが手動で翻訳を実行するかを切り替えます。
 자동 갱신 모드에서는 번역을 일시정지하거나 재생하고, 수동 갱신 모드에서는 현재 영역을 즉시 번역합니다. 보조 키 없이 단일 키로 동작합니다.	In automatic refresh mode, pauses or resumes translation; in manual refresh mode, translates the current area immediately. Works as a single key without modifier keys.	自動更新モードでは翻訳を一時停止または再開し、手動更新モードでは現在の範囲をすぐに翻訳します。修飾キーなしの単一キーで動作します。
@@ -285,6 +286,7 @@ Text OCR · Accurate · Current. 보정 입력 배율과 언어 보정 설정입
 일→한	JA→KO	日→韓
 한→일	KO→JA	韓→日
 번역 방향 전환	Switch Translation Direction	翻訳方向を切り替え
+원문 외 텍스트 보호 전환	Toggle Non-Source Text Protection	原文以外のテキスト保護を切り替え
 미러/오버레이 모드 전환	Switch Mirror/Overlay Mode	ミラー／オーバーレイモードを切り替え
 자동/수동 갱신 전환	Switch Automatic/Manual Refresh	自動／手動更新を切り替え
 일시정지/재생/즉시 번역	Pause/Resume/Translate Now	一時停止／再開／今すぐ翻訳
@@ -347,6 +349,8 @@ CSV 다른 이름으로 저장…	Save CSV As…	CSVを別名で保存…
 오버레이 모드로 전환	Switch to Overlay Mode	オーバーレイモードに切り替え
 갱신 모드 전환	Switch Refresh Mode	更新モードを切り替え
 현재 영역 즉시 번역	Translate Current Area Now	現在の範囲を今すぐ翻訳
+원문 외 텍스트 보호 켜기	Turn On Non-Source Text Protection	原文以外のテキスト保護をオン
+원문 외 텍스트 보호 끄기	Turn Off Non-Source Text Protection	原文以外のテキスト保護をオフ
 번역 영역 이미지 복사	Copy Translation Area Image	翻訳範囲の画像をコピー
 텍스트 선택 모드	Text Selection Mode	テキスト選択モード
 선택 영역 마우스 무시 안 하기	Accept Mouse Events in Selection	選択範囲でマウス操作を受け付ける

@@ -36,7 +36,7 @@ struct SettingsAndShortcutTests {
     @Test func translationTextProtectionDefaultsAndRoundTrip() {
         withTestDefaults { defaults in
             #expect(TranslationTextProtection.load(from: defaults) == AppDefaults.protectNonSourceText)
-            #expect(AppDefaults.protectNonSourceText)
+            #expect(!AppDefaults.protectNonSourceText)
             TranslationTextProtection.save(false, to: defaults)
             #expect(!TranslationTextProtection.load(from: defaults))
             AppSettings.reset(to: defaults)
@@ -110,7 +110,10 @@ struct SettingsAndShortcutTests {
 
     @Test func toolbarShortcutDefaultsAndPresentation() {
         withTestDefaults { defaults in
-            #expect(ToolbarShortcutAction.allCases.count == 26)
+            #expect(ToolbarShortcutAction.allCases.count == 27)
+            #expect(ToolbarHotKey.defaultValue(for: .protectNonSourceText).keyCode == UInt32(kVK_ANSI_4))
+            #expect(ToolbarHotKey.defaultValue(for: .refreshMode).keyCode == UInt32(kVK_ANSI_5))
+            #expect(ToolbarHotKey.defaultValue(for: .modeSpecificDisplayControl).keyCode == UInt32(kVK_ANSI_6))
             #expect(ToolbarHotKey.defaultValue(for: .dockTop).keyCode == UInt32(kVK_UpArrow))
             #expect(ToolbarHotKey.defaultValue(for: .dockBottom).keyCode == UInt32(kVK_DownArrow))
             #expect(ToolbarHotKey.defaultValue(for: .dockLeft).keyCode == UInt32(kVK_LeftArrow))
@@ -286,6 +289,7 @@ struct SettingsAndShortcutTests {
         #expect(!AppSettings.defaultsKeys.contains("overlayControlBarCollapsed"))
         #expect(overlayControlBarShortcutSource(for: .pause) == .toolbar(.sessionControlSingleKey))
         #expect(overlayControlBarShortcutSource(for: .translate) == .immediateTranslation)
+        #expect(overlayControlBarShortcutSource(for: .protectNonSourceText) == .toolbar(.protectNonSourceText))
         #expect(overlayControlBarShortcutSource(for: .opacity) == nil)
         #expect(overlayControlBarShortcutSource(for: .zoomOut) == .toolbar(.zoomOut))
 
@@ -293,6 +297,8 @@ struct SettingsAndShortcutTests {
             displayMode: .overlay, debugFeaturesEnabled: true
         )
         let overlayIDs = overlay.map(\.id)
+        #expect(overlayIDs.firstIndex(of: .protectNonSourceText)
+            == overlayIDs.firstIndex(of: .translationDirection).map { $0 + 1 })
         #expect(overlay.contains(where: { $0.id == .search }))
         #expect(!overlay.contains(where: { $0.id == .zoomOut }))
         #expect(overlayControlBarResponsiveLayout(width: 800, items: overlay)

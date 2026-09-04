@@ -167,6 +167,7 @@ final class SessionCoordinator {
     var onOverlayPresentationChange: (() -> Void)?
     var onOpenSettings: (() -> Void)?
     var onTranslationDirectionChange: ((TranslationDirection) -> Void)?
+    var onNonSourceTextProtectionChange: ((Bool) -> Void)?
 
     init(
         broker: any SessionTranslationProvider,
@@ -306,6 +307,7 @@ final class SessionCoordinator {
     }
 
     var currentTranslationDirection: TranslationDirection { translationDirection }
+    var currentProtectsNonSourceText: Bool { protectsNonSourceText }
 
     func setTranslationDirection(_ direction: TranslationDirection) {
         guard translationDirection != direction else { return }
@@ -333,6 +335,8 @@ final class SessionCoordinator {
         delayedRefinementTask?.cancel(); delayedRefinementTask = nil
         lastRefinementEpoch = nil
         broker.setProtectsNonSourceText(enabled)
+        mirror?.setProtectsNonSourceText(enabled)
+        onNonSourceTextProtectionChange?(enabled)
         if let frame = latestCapturedFrame, acceptingFrames {
             lastRealtimeOCR = .now
             scheduleOCR(frame, mode: .realtime, roi: nil)
@@ -641,6 +645,9 @@ final class SessionCoordinator {
         window.onTranslationDirectionChange = { [weak self] direction in
             self?.setTranslationDirection(direction)
         }
+        window.onNonSourceTextProtectionChange = { [weak self] enabled in
+            self?.setProtectsNonSourceText(enabled)
+        }
         window.onUserClose = { [weak self] in
             Task { @MainActor [weak self] in await self?.stop() }
         }
@@ -667,6 +674,7 @@ final class SessionCoordinator {
         window.onPauseChange = { [weak self] paused in self?.setPaused(paused) }
         window.onImmediateTranslation = { [weak self] in self?.translateImmediately() }
         window.setTranslationDirection(translationDirection)
+        window.setProtectsNonSourceText(protectsNonSourceText)
         window.onOverlaySelectionDrag = { [weak self] rect, screen, change, finished in
             guard let self else { return }
             self.handleInteractiveSelectionChange(

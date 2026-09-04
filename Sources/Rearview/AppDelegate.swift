@@ -332,6 +332,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             coordinator.showApplicationCapturePopup()
         case .translationDirection:
             coordinator.setTranslationDirection(coordinator.currentTranslationDirection.toggled)
+        case .protectNonSourceText:
+            coordinator.setProtectsNonSourceText(!coordinator.currentProtectsNonSourceText)
         case .displayMode:
             coordinator.setDisplayMode(
                 TranslationDisplayMode.load() == .mirror ? .overlay : .mirror,
@@ -774,6 +776,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             coordinator.onDisplayModeChange = { [weak controller] _ in controller?.refresh() }
             coordinator.onTranslationDirectionChange = { [weak controller] _ in controller?.refresh() }
+            coordinator.onNonSourceTextProtectionChange = { [weak controller] _ in controller?.refresh() }
             coordinator.onOverlayPresentationChange = { [weak controller] in
                 controller?.refresh()
             }

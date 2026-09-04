@@ -1232,6 +1232,7 @@ final class TranslationMirrorWindow: NSPanel, NSWindowDelegate {
     var onOverlayPresentationChange: ((OverlayPresentationSettings) -> Void)?
     var onDisplayModeChange: ((TranslationDisplayMode) -> Void)?
     var onTranslationDirectionChange: ((TranslationDirection) -> Void)?
+    var onNonSourceTextProtectionChange: ((Bool) -> Void)?
     var onFollowSelectionSizeChange: ((Bool) -> Void)?
     var onApplicationCaptureChange: ((CaptureApplication?) -> Void)?
     var onApplicationListRequest: (() -> Void)?
@@ -1389,6 +1390,9 @@ final class TranslationMirrorWindow: NSPanel, NSWindowDelegate {
         }
         controlBar.onTranslationDirectionChange = { [weak self] direction in
             self?.translationDirectionDidChange(direction)
+        }
+        controlBar.onNonSourceTextProtectionToggle = { [weak self] in
+            self?.nonSourceTextProtectionDidChange()
         }
         controlBar.onApplicationCaptureChange = { [weak self] application in
             self?.applicationCaptureDidChange(application)
@@ -2298,6 +2302,15 @@ final class TranslationMirrorWindow: NSPanel, NSWindowDelegate {
     func translationDirectionDidChange(_ direction: TranslationDirection) {
         setTranslationDirection(direction)
         onTranslationDirectionChange?(direction)
+    }
+
+    func setProtectsNonSourceText(_ enabled: Bool) {
+        controlBars.forEach { $0.setProtectsNonSourceText(enabled) }
+    }
+
+    private func nonSourceTextProtectionDidChange() {
+        let enabled = !TranslationTextProtection.load()
+        onNonSourceTextProtectionChange?(enabled)
     }
 
     func displayModeDidChange(_ mode: TranslationDisplayMode) {

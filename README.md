@@ -7,6 +7,7 @@ Rearview is a macOS menu bar app that translates Japanese and Korean text from a
 - Japanese, Korean, and English screen text
 - Mirror and overlay display modes
 - Automatic or manual refresh
+- Optional protection for non-source text (off by default)
 - Selectable translated text
 - Window tracking
 - On-device processing
@@ -28,4 +29,4 @@ swift test
 
 ## Privacy
 
-Screen captures, OCR results, and translations are processed locally. Rearview does not send screen content to an external translation service.
+Screen captures, OCR results, and translations are processed locally. Rearview does not send screen content to an external translation service. By default, mixed text is translated as one unit to preserve context; the optional non-source text protection mode preserves English, Korean, and numeric text but may reduce translation context.
