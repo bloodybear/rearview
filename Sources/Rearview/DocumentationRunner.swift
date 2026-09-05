@@ -10,11 +10,26 @@ import SwiftUI
 enum DocumentationFixture {
     static let source = "新しいウィンドウを開いて、設定を確認してください。"
     static let imageSize = CGSize(width: 960, height: 540)
+    /// Documentation input is rendered at a fixed two-pixel-per-point scale.
+    /// This is intentionally not read from NSScreen.backingScaleFactor: the
+    /// same scenario must produce the same OCR input on 1x and Retina hosts.
+    static let captureScale = DocumentationCaptureSpec.pixelsPerPoint
     static let viewportSize = CGSize(width: 1440, height: 900)
 
     static func makeImage() -> CGImage? {
-        let image = NSImage(size: imageSize)
-        image.lockFocus()
+        let pixelSize = DocumentationCaptureSpec.pixelSize(for: imageSize)
+        let width = max(1, Int(pixelSize.width))
+        let height = max(1, Int(pixelSize.height))
+        guard let bitmap = NSBitmapImageRep(
+            bitmapDataPlanes: nil, pixelsWide: width, pixelsHigh: height,
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,
+            isPlanar: false, colorSpaceName: .deviceRGB, bitmapFormat: [],
+            bytesPerRow: 0, bitsPerPixel: 0
+        ), let context = NSGraphicsContext(bitmapImageRep: bitmap) else { return nil }
+
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = context
+        context.cgContext.scaleBy(x: captureScale, y: captureScale)
         NSColor(calibratedWhite: 0.12, alpha: 1).setFill()
         NSBezierPath(rect: CGRect(origin: .zero, size: imageSize)).fill()
         let heading: [NSAttributedString.Key: Any] = [
@@ -33,8 +48,8 @@ enum DocumentationFixture {
         (source as NSString).draw(
             at: CGPoint(x: 56, y: imageSize.height - 150), withAttributes: body
         )
-        image.unlockFocus()
-        return image.cgImage(forProposedRect: nil, context: nil, hints: nil)
+        NSGraphicsContext.restoreGraphicsState()
+        return bitmap.cgImage
     }
 }
 
@@ -106,25 +121,24 @@ private final class DocumentationBackdropView: NSView {
     }
 }
 
-/// Captures the fixture window with ScreenCaptureKit. The provider is a
+/// Supplies a fixed-pixel crop of the public fixture. The provider is a
 /// one-frame source: SessionCoordinator, OCRService and TranslationBroker
-/// still execute their normal asynchronous code paths.
+/// still execute their normal asynchronous code paths, but the input frame
+/// does not depend on ScreenCaptureKit, the host display, or its Retina scale.
 @MainActor
-private final class DocumentationScreenCaptureProvider: SessionCaptureProvider {
+private final class DocumentationCaptureProvider: SessionCaptureProvider {
     private let fixtureWindow: DocumentationFixtureWindow
-    private let documentationDisplayID: CGDirectDisplayID
+    private let fixtureImage: CGImage
     private var selection = CGRect.zero
-    private var screenFrame = CGRect.zero
-    private var backingScale: CGFloat = 1
     private var callback: (@Sendable (CGImage, UInt64, UInt64) -> Void)?
     private var nextFrameID: UInt64 = 0
 #if DEBUG || REARVIEW_DOCUMENTATION
     private(set) var lastImage: CGImage?
 #endif
 
-    init(fixtureWindow: DocumentationFixtureWindow, displayID: CGDirectDisplayID) {
+    init(fixtureWindow: DocumentationFixtureWindow, image: CGImage) {
         self.fixtureWindow = fixtureWindow
-        documentationDisplayID = displayID
+        fixtureImage = image
     }
 
     func start(
@@ -132,38 +146,17 @@ private final class DocumentationScreenCaptureProvider: SessionCaptureProvider {
         selection: CGRect, target: CaptureTarget, policy: CapturePolicy,
         onFrame: @escaping @Sendable (CGImage, UInt64, UInt64) -> Void
     ) async throws {
-        guard displayID == documentationDisplayID else { throw TranslatorError.noDisplay }
+        // The display arguments are part of the SessionCaptureProvider
+        // contract. Documentation input pixels are derived only from the
+        // fixed fixture scale below.
         self.selection = selection
-        self.screenFrame = screenFrame
-        self.backingScale = backingScale
         callback = onFrame
         try await emit()
     }
 
     func emit() async throws {
         fixtureWindow.orderFrontRegardless()
-        var content = try await DocumentationRunner.shareableContent()
-        var source = content.windows.first { $0.windowID == CGWindowID(fixtureWindow.windowNumber) }
-        var display = content.displays.first { $0.displayID == documentationDisplayID }
-        for _ in 0..<20 where source == nil || display == nil {
-            try? await Task.sleep(for: .milliseconds(100))
-            content = try await DocumentationRunner.shareableContent()
-            source = content.windows.first { $0.windowID == CGWindowID(fixtureWindow.windowNumber) }
-            display = content.displays.first { $0.displayID == documentationDisplayID }
-        }
-        guard let display, let source else {
-            throw DocumentationError.captureFailed("fixture window is not visible to ScreenCaptureKit")
-        }
-        let filter = SCContentFilter(display: display, including: [source])
-        let configuration = SCStreamConfiguration()
-        configuration.sourceRect = pixelAlignedCaptureRect(
-            selection: selection, screenFrame: screenFrame, backingScale: backingScale
-        )
-        configuration.width = max(1, Int((selection.width * backingScale).rounded()))
-        configuration.height = max(1, Int((selection.height * backingScale).rounded()))
-        configuration.pixelFormat = kCVPixelFormatType_32BGRA
-        configuration.showsCursor = false
-        let image = try await Self.captureImage(filter: filter, configuration: configuration)
+        let image = try captureFixtureSelection()
         #if DEBUG || REARVIEW_DOCUMENTATION
         lastImage = image
         #endif
@@ -174,13 +167,49 @@ private final class DocumentationScreenCaptureProvider: SessionCaptureProvider {
     func update(policy: CapturePolicy) async throws {}
     func updateRegion(selection: CGRect, screenFrame: CGRect, backingScale: CGFloat, displayID: CGDirectDisplayID?) async throws {
         self.selection = selection
-        self.screenFrame = screenFrame
-        self.backingScale = backingScale
     }
     func updateTarget(displayID: CGDirectDisplayID, target: CaptureTarget) async throws {}
     func stop() async { callback = nil }
 
-    fileprivate static func captureImage(
+    private func captureFixtureSelection() throws -> CGImage {
+        guard let contentView = fixtureWindow.contentView else {
+            throw DocumentationError.captureFailed("fixture window has no content view")
+        }
+
+        // Both selection and the converted content frame use AppKit's global
+        // point coordinates. Convert the selected rectangle into fixture
+        // coordinates, then map points directly to the fixture's fixed pixel
+        // grid. No 4000x4000 intermediate and no host-dependent resize is
+        // involved.
+        let contentFrame = fixtureWindow.convertToScreen(contentView.bounds)
+        let local = selection.offsetBy(dx: -contentFrame.minX, dy: -contentFrame.minY)
+        let logicalBounds = CGRect(origin: .zero, size: DocumentationFixture.imageSize)
+        guard logicalBounds.contains(local) else {
+            throw DocumentationError.captureFailed(
+                "documentation selection \(selection) is outside the fixture content \(contentFrame)"
+            )
+        }
+
+        let scale = DocumentationFixture.captureScale
+        // CGImage crop rectangles have their origin at the top-left of the
+        // bitmap, while AppKit content coordinates grow upward.
+        let pixelRect = CGRect(
+            x: local.minX * scale,
+            y: (logicalBounds.height - local.maxY) * scale,
+            width: local.width * scale,
+            height: local.height * scale
+        ).integral
+        let imageBounds = CGRect(x: 0, y: 0, width: fixtureImage.width, height: fixtureImage.height)
+        guard imageBounds.contains(pixelRect), let cropped = fixtureImage.cropping(to: pixelRect) else {
+            throw DocumentationError.captureFailed("could not crop fixed fixture image")
+        }
+        return cropped
+    }
+
+}
+
+private enum DocumentationScreenCapture {
+    static func captureImage(
         filter: SCContentFilter, configuration: SCStreamConfiguration
     ) async throws -> CGImage {
         try await withCheckedThrowingContinuation { continuation in
@@ -257,7 +286,7 @@ private final class DocumentationSystemScreenshotter {
         configuration.height = max(1, Int((screenFrame.height * scale).rounded()))
         configuration.pixelFormat = kCVPixelFormatType_32BGRA
         configuration.showsCursor = false
-        return try await DocumentationScreenCaptureProvider.captureImage(filter: filter, configuration: configuration)
+        return try await DocumentationScreenCapture.captureImage(filter: filter, configuration: configuration)
     }
 }
 
@@ -286,6 +315,7 @@ enum DocumentationRunner {
               let scenariosPath = value("--documentation-scenarios=", arguments: arguments) else {
             throw DocumentationError.invalidInput("--documentation-output and --documentation-scenarios are required")
         }
+        let appearance = try documentationAppearance(arguments: arguments)
         let scenarios = try DocumentationJSON.loadScenarios(from: URL(fileURLWithPath: scenariosPath))
         let selectedID = value("--documentation-scenario=", arguments: arguments)
         if selectedID == nil { try validateCoverage(scenarios) }
@@ -300,6 +330,13 @@ enum DocumentationRunner {
         }
 
         let application = NSApplication.shared
+        guard let appAppearance = NSAppearance(named: appearance == .dark ? .darkAqua : .aqua) else {
+            throw DocumentationError.invalidInput("could not create \(appearance.rawValue) documentation appearance")
+        }
+        // Set this before finishLaunching and before constructing any window
+        // or SwiftUI hosting view. The docs process therefore never inherits
+        // the host user's current appearance by accident.
+        application.appearance = appAppearance
         application.setActivationPolicy(.regular)
         application.finishLaunching()
         // Launch Services starts the docs bundle in the background in some
@@ -358,7 +395,7 @@ enum DocumentationRunner {
         await settleAsync(seconds: 0.25)
         try await waitForTranslationSession(broker)
 
-        let capture = DocumentationScreenCaptureProvider(fixtureWindow: fixture, displayID: displayID)
+        let capture = DocumentationCaptureProvider(fixtureWindow: fixture, image: fixtureImage)
         let targetResolver = DocumentationTargetResolver()
         let coordinator = SessionCoordinator(
             broker: broker, capture: capture, targetResolver: targetResolver,
@@ -507,7 +544,9 @@ enum DocumentationRunner {
             schemaVersion: 1,
             appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown",
             scenarios: records,
-            coveredUIItems: OverlayControlBarCatalog.items.map { $0.id.rawValue }
+            coveredUIItems: OverlayControlBarCatalog.items.map { $0.id.rawValue },
+            appearance: appearance,
+            captureScale: Int(DocumentationFixture.captureScale)
         )
         try DocumentationJSON.write(manifest, to: outputURL.appendingPathComponent("manifest.json"))
     }
@@ -602,6 +641,19 @@ enum DocumentationRunner {
 
     private static func value(_ prefix: String, arguments: [String]) -> String? {
         arguments.first(where: { $0.hasPrefix(prefix) }).map { String($0.dropFirst(prefix.count)) }
+    }
+
+    private static func documentationAppearance(arguments: [String]) throws -> DocumentationAppearance {
+        let raw = value("--documentation-appearance=", arguments: arguments)
+            ?? value("--appearance=", arguments: arguments)
+            ?? ProcessInfo.processInfo.environment["REARVIEW_DOCUMENTATION_APPEARANCE"]
+            ?? DocumentationAppearance.light.rawValue
+        guard let appearance = DocumentationAppearance(rawValue: raw.lowercased()) else {
+            throw DocumentationError.invalidInput(
+                "appearance must be light or dark (received: \(raw))"
+            )
+        }
+        return appearance
     }
 
     private static func validateCoverage(_ file: DocumentationScenarioFile) throws {

@@ -1,0 +1,131 @@
+{
+  "schemaVersion": 1,
+  "scenarios": [
+    {
+      "id": "permission",
+      "title": "화면 기록 권한 안내",
+      "actions": [
+        { "type": "showPermissionPreview" },
+        { "type": "capture", "name": "01-permission" }
+      ],
+      "captionKey": "permission.caption"
+    },
+    {
+      "id": "select-region",
+      "title": "번역 영역 선택하기",
+      "actions": [
+        { "type": "showSelectionPreview" },
+        { "type": "setSelection", "rect": [180, 160, 720, 320] },
+        { "type": "capture", "name": "02-select-region" }
+      ],
+      "captionKey": "select-region.caption"
+    },
+    {
+      "id": "mirror-result",
+      "title": "미러 창에서 번역 결과 보기",
+      "actions": [
+        { "type": "setSelection", "rect": [180, 160, 720, 320] },
+        { "type": "startSession", "mode": "mirror" },
+        { "type": "wait", "number": 500 },
+        { "type": "capture", "name": "03-mirror-result" },
+        { "type": "stopSession" }
+      ],
+      "captionKey": "mirror-result.caption"
+    },
+    {
+      "id": "overlay-result",
+      "title": "오버레이로 번역 결과 보기",
+      "actions": [
+        { "type": "setSelection", "rect": [180, 160, 720, 320] },
+        { "type": "startSession", "mode": "overlay" },
+        { "type": "wait", "number": 500 },
+        { "type": "capture", "name": "04-overlay-result" },
+        { "type": "stopSession" }
+      ],
+      "captionKey": "overlay-result.caption"
+    },
+    {
+      "id": "toolbar",
+      "title": "툴바와 오버플로 메뉴",
+      "actions": [
+        { "type": "startSession", "mode": "mirror" },
+        { "type": "showToolbarOverflow" },
+        { "type": "capture", "name": "05-toolbar" },
+        { "type": "stopSession" }
+      ],
+      "captionKey": "toolbar.caption"
+    },
+    {
+      "id": "refresh-and-pause",
+      "title": "갱신 방식과 일시정지",
+      "actions": [
+        { "type": "startSession", "mode": "mirror" },
+        { "type": "setRefreshMode", "mode": "manual" },
+        { "type": "setPaused", "value": "true" },
+        { "type": "capture", "name": "06-refresh-and-pause" },
+        { "type": "stopSession" }
+      ],
+      "captionKey": "refresh-and-pause.caption"
+    },
+    {
+      "id": "search-and-copy",
+      "title": "검색과 텍스트 복사",
+      "actions": [
+        { "type": "startSession", "mode": "mirror" },
+        { "type": "showSearch" },
+        { "type": "showTextSelection" },
+        { "type": "copyText" },
+        { "type": "capture", "name": "07-search-and-copy" },
+        { "type": "stopSession" }
+      ],
+      "captionKey": "search-and-copy.caption"
+    },
+    {
+      "id": "settings-general",
+      "title": "일반 설정",
+      "actions": [
+        { "type": "showSettings", "category": "general" },
+        { "type": "capture", "name": "08-settings-general" }
+      ],
+      "captionKey": "settings-general.caption"
+    },
+    {
+      "id": "settings-shortcuts",
+      "title": "단축키 설정",
+      "actions": [
+        { "type": "showSettings", "category": "shortcuts" },
+        { "type": "capture", "name": "09-settings-shortcuts" }
+      ],
+      "captionKey": "settings-shortcuts.caption"
+    },
+    {
+      "id": "settings-display",
+      "title": "화면 표시 설정",
+      "actions": [
+        { "type": "showSettings", "category": "display" },
+        { "type": "capture", "name": "10-settings-display" }
+      ],
+      "captionKey": "settings-display.caption"
+    },
+    {
+      "id": "settings-capture-ocr",
+      "title": "캡처 및 OCR 설정",
+      "actions": [
+        { "type": "showSettings", "category": "captureOCR" },
+        { "type": "capture", "name": "11-settings-capture-ocr" }
+      ],
+      "captionKey": "settings-capture-ocr.caption"
+    },
+    {
+      "id": "text-protection",
+      "title": "원문 외 텍스트 보호",
+      "actions": [
+        { "type": "startSession", "mode": "mirror" },
+        { "type": "setSetting", "name": "protectNonSourceText", "value": "true" },
+        { "type": "capture", "name": "12-text-protection" },
+        { "type": "stopSession" }
+      ],
+      "captionKey": "text-protection.caption"
+    }
+  ]
+}

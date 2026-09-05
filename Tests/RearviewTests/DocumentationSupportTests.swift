@@ -3,6 +3,18 @@ import Testing
 @testable import Rearview
 
 struct DocumentationSupportTests {
+    @Test func documentationAppearanceAndCaptureScaleAreExplicit() {
+        #expect(DocumentationAppearance.allCases == [.light, .dark])
+        #expect(DocumentationCaptureSpec.pixelSize(for: CGSize(width: 720, height: 320)) == CGSize(width: 1440, height: 640))
+    }
+
+    @Test func documentationManifestDecodesOptionalMetadata() throws {
+        let data = Data(#"{"schemaVersion":1,"appVersion":"1.0","scenarios":[],"coveredUIItems":[],"appearance":"dark","captureScale":2}"#.utf8)
+        let manifest = try JSONDecoder().decode(DocumentationManifest.self, from: data)
+        #expect(manifest.appearance == .dark)
+        #expect(manifest.captureScale == 2)
+    }
+
     @Test func decodesAndValidatesCheckedInScenarios() throws {
         let root = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()

@@ -1,5 +1,27 @@
 import Foundation
 
+/// The appearance used by the documentation renderer.  This is deliberately
+/// separate from the user's saved appearance: documentation builds must not
+/// change when the host Mac switches between light and dark mode.
+enum DocumentationAppearance: String, Codable, CaseIterable, Equatable, Sendable {
+    case light
+    case dark
+}
+
+/// Pixel contract for documentation input frames. AppKit scenario rectangles
+/// are expressed in points; this fixed scale converts them to fixture pixels
+/// without consulting the host display's backing scale.
+enum DocumentationCaptureSpec {
+    static let pixelsPerPoint: CGFloat = 2
+
+    static func pixelSize(for logicalSize: CGSize) -> CGSize {
+        CGSize(
+            width: max(1, (logicalSize.width * pixelsPerPoint).rounded()),
+            height: max(1, (logicalSize.height * pixelsPerPoint).rounded())
+        )
+    }
+}
+
 /// The input contract for the repeatable user-guide build.  This type is kept
 /// independent from AppKit so the scenario file can be validated in ordinary
 /// Swift tests and by the command-line build script before launching a GUI.
@@ -95,6 +117,10 @@ struct DocumentationManifest: Codable, Equatable, Sendable {
     let appVersion: String
     let scenarios: [DocumentationScreenshotRecord]
     let coveredUIItems: [String]
+    /// Optional for backwards compatibility with manifests created before
+    /// appearance and fixed-input metadata were recorded.
+    var appearance: DocumentationAppearance?
+    var captureScale: Int?
 }
 
 enum DocumentationError: LocalizedError, Equatable {
