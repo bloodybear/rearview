@@ -485,6 +485,41 @@ final class SessionCoordinator {
     func saveImage() { mirror?.saveImage() }
     func showSearch() { mirror?.showSearch(selectQuery: true) }
     func showApplicationCapturePopup() { mirror?.showApplicationCapturePopup() }
+#if REARVIEW_DOCUMENTATION
+    func toggleDocumentationTextSelection() {
+        _ = mirror?.toggleSelectionMode()
+    }
+
+    func copyDocumentationText() {
+        mirror?.copyAllText()
+    }
+
+    func showDocumentationOverflowMenu() {
+        mirror?.showDocumentationOverflowMenu()
+    }
+
+    func dismissDocumentationOverflowMenu() {
+        mirror?.dismissDocumentationOverflowMenu()
+    }
+
+    /// Returns the actual AppKit windows that make up the running session.
+    /// The documentation bundle uses this list to ask ScreenCaptureKit for
+    /// the same compositor output a user sees on screen.
+    func documentationWindowsForCapture() -> [NSWindow] {
+        var windows = mirror?.documentationWindowsForCapture() ?? []
+        windows.append(contentsOf: regionBorder?.documentationWindowsForCapture() ?? [])
+        return windows
+    }
+
+    func documentationHasTranslatedFrame() -> Bool {
+        mirror?.documentationHasTranslatedFrame ?? false
+    }
+
+    func documentationProcessingSummary() -> String {
+        let mirrorState = mirror == nil ? "no-mirror" : "mirror"
+        return "\(mirrorState), captured=\(latestCapturedFrame != nil), ocr=\(lastRealtimeObservationCount), sourceLines=\(lastRealtimeLines.count), ocrTask=\(ocrTask != nil)"
+    }
+#endif
     func isTranslationSessionKeyWindow(_ window: NSWindow?) -> Bool {
         (mirror?.ownsTranslationSessionWindow(window) ?? false)
             || (regionBorder?.ownsInteractionWindow(window) ?? false)

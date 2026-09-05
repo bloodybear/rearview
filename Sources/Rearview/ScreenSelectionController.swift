@@ -229,6 +229,35 @@ final class ScreenSelectionController {
         finish(.failure(CancellationError()))
     }
 
+#if REARVIEW_DOCUMENTATION
+    /// Shows the production selection UI with a deterministic rectangle. The
+    /// rectangle is injected into SelectionView state instead of synthesizing
+    /// mouse events, so the same dimming, border, badges and mirror ghost are
+    /// captured by the documentation runner.
+    func showDocumentationPreview(on screen: NSScreen, selection: CGRect) {
+        let dockingShortcuts = Dictionary(uniqueKeysWithValues: MirrorDockingState.allCases.compactMap {
+            state in state.selectionShortcutAction.map { (state, ToolbarHotKey.load(selectionAction: $0)) }
+        })
+        let displayModeShortcut = ToolbarHotKey.load(selectionAction: .displayMode)
+        let presentationState: RegionBorderController.PresentationState =
+            RefreshMode.load() == .manual ? .manual : .automatic
+        _ = select(
+            displayMode: TranslationDisplayMode.load(), dockingShortcuts: dockingShortcuts,
+            displayModeShortcut: displayModeShortcut, presentationState: presentationState,
+            regionBorderOpacity: RegionBorderOpacity.load()
+        ) { _ in }
+        panels.first(where: { $0.targetDisplayID == displayID(for: screen) })?.setDocumentationSelection(selection)
+    }
+
+    func documentationWindowsForCapture() -> [NSWindow] { panels }
+
+    func updateDocumentationSelection(_ selection: CGRect, on screen: NSScreen) {
+        panels.first(where: { $0.targetDisplayID == displayID(for: screen) })?.setDocumentationSelection(selection)
+    }
+
+    func closeDocumentationPreview() { cancel() }
+#endif
+
     private func installObservers() {
         let workspaceCenter = NSWorkspace.shared.notificationCenter
         let spaceObserver = workspaceCenter.addObserver(
@@ -393,6 +422,13 @@ private final class SelectionPanel: NSPanel {
         makeKeyAndOrderFront(nil)
         makeFirstResponder(contentView)
     }
+
+#if REARVIEW_DOCUMENTATION
+    func setDocumentationSelection(_ selection: CGRect) {
+        (contentView as? SelectionView)?.setDocumentationSelection(selection, panelFrame: frame)
+        orderFrontRegardless()
+    }
+#endif
 }
 
 @MainActor
@@ -432,6 +468,20 @@ private final class SelectionView: NSView {
     private var lastDisplayedTargetPreviewRequestID: UInt64 = 0
     private var targetPreviewDragGeneration: UInt64 = 0
     private var lastTargetPreviewStart: ContinuousClock.Instant?
+
+#if REARVIEW_DOCUMENTATION
+    func setDocumentationSelection(_ globalSelection: CGRect, panelFrame: CGRect) {
+        let local = globalSelection.offsetBy(dx: -panelFrame.minX, dy: -panelFrame.minY)
+        start = local.origin
+        current = CGPoint(x: local.maxX, y: local.maxY)
+        targetPreviewState = .allContent
+        cachedTargetPreviewState = .allContent
+        cachedTargetPreviewIcon = NSImage(
+            systemSymbolName: "square.stack.3d.up", accessibilityDescription: L10n.text("모든 앱")
+        )
+        needsDisplay = true
+    }
+#endif
 
     init(
         frame frameRect: NSRect, safeTopY: CGFloat,

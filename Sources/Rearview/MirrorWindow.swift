@@ -1572,6 +1572,20 @@ final class TranslationMirrorWindow: NSPanel, NSWindowDelegate {
         close()
     }
 
+#if REARVIEW_DOCUMENTATION
+    func documentationWindowsForCapture() -> [NSWindow] {
+        [
+            self, overlayPanel, overlaySearchPanel,
+            overlayControlBar.documentationWindowForCapture(),
+            mirrorControlBar.documentationWindowForCapture()
+        ].compactMap { $0 }
+    }
+
+    var documentationHasTranslatedFrame: Bool {
+        mirrorView.frameSnapshot?.translatedItems.contains(where: { $0.isTranslated }) ?? false
+    }
+#endif
+
     private func closeAuxiliaryWindows() {
         guard !auxiliaryWindowsClosed else { return }
         auxiliaryWindowsClosed = true
@@ -2323,6 +2337,18 @@ final class TranslationMirrorWindow: NSPanel, NSWindowDelegate {
         setSelectionModeActive(!selectionModeActive, notifySelectionBegin: true)
         return selectionModeActive
     }
+
+#if REARVIEW_DOCUMENTATION
+    func showDocumentationOverflowMenu() {
+        let controlBar = displayMode == .overlay ? overlayControlBar : mirrorControlBar
+        controlBar.showDocumentationOverflowMenu()
+    }
+
+    func dismissDocumentationOverflowMenu() {
+        overlayControlBar.dismissDocumentationOverflowMenu()
+        mirrorControlBar.dismissDocumentationOverflowMenu()
+    }
+#endif
 
     private func selectionSessionDidBegin() {
         setSelectionModeActive(true, notifySelectionBegin: true)

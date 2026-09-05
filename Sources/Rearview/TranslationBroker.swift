@@ -30,6 +30,13 @@ final class TranslationBroker: ObservableObject {
         protectsNonSourceText = TranslationTextProtection.load()
     }
 
+#if REARVIEW_DOCUMENTATION
+    /// Exposes readiness only to the documentation runner so that a guide
+    /// build cannot silently fall back to canned translation text.
+    var documentationSessionReady: Bool { sessionReady }
+    private(set) var documentationLastError: String?
+#endif
+
     func setDirection(_ direction: TranslationDirection) {
         guard self.direction != direction else { return }
         self.direction = direction
@@ -82,6 +89,9 @@ final class TranslationBroker: ObservableObject {
         do {
             try await session.prepareTranslation()
         } catch {
+#if REARVIEW_DOCUMENTATION
+            documentationLastError = error.localizedDescription
+#endif
             failPending(error)
             return
         }
@@ -149,6 +159,9 @@ final class TranslationBroker: ObservableObject {
                         ) else { return }
                         guard activePolicyGeneration == policyGeneration else { continue }
                     } catch {
+#if REARVIEW_DOCUMENTATION
+                        documentationLastError = error.localizedDescription
+#endif
                         PerformanceProfiler.shared.end(modelToken)
                         guard Self.canCommitResults(
                             activeGeneration: activeGeneration,

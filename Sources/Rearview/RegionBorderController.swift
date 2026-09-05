@@ -513,6 +513,13 @@ final class RegionBorderController: NSObject {
         panels.removeAll()
     }
 
+#if REARVIEW_DOCUMENTATION
+    func documentationWindowsForCapture() -> [NSWindow] {
+        [visualBorder, dockingSeam, moveHandle, endButton]
+            + panels.values.map { $0 as NSWindow }
+    }
+#endif
+
     private func installActivationObservers() {
         for name in [NSApplication.didBecomeActiveNotification, NSApplication.didResignActiveNotification] {
             let observer = NotificationCenter.default.addObserver(

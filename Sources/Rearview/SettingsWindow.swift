@@ -332,6 +332,20 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
 #endif
     }
 
+#if REARVIEW_DOCUMENTATION
+    /// Selects a settings page without synthesizing mouse events.  The
+    /// documentation runner uses this hook to render deterministic screenshots
+    /// while continuing to exercise the real settings view hierarchy.
+    func showDocumentationCategory(_ identifier: String?) {
+        guard let identifier,
+              let index = settingsPages.firstIndex(where: { $0.identifier == identifier })
+        else { return }
+        showSettingsCategory(at: index)
+        window?.contentView?.layoutSubtreeIfNeeded()
+        settingsPages[index].documentView.layoutSubtreeIfNeeded()
+    }
+#endif
+
     private func buildContent() {
         configureControls()
         let scrollView = NSScrollView()
