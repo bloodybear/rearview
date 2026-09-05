@@ -1,0 +1,121 @@
+{
+  "schemaVersion": 1,
+  "scenarios": [
+    {
+      "id": "permission",
+      "title": "화면 캡처 권한 안내",
+      "actions": [
+        { "type": "showPermissionPreview" },
+        { "type": "capture", "name": "01-permission" }
+      ],
+      "captionKey": "permission.caption"
+    },
+    {
+      "id": "select-region",
+      "title": "번역 영역 선택하기",
+      "actions": [
+        { "type": "showSelectionPreview" },
+        { "type": "setSelection", "rect": [180, 160, 720, 320] },
+        { "type": "capture", "name": "02-select-region" }
+      ],
+      "captionKey": "select-region.caption"
+    },
+    {
+      "id": "mirror-result",
+      "title": "미러 번역 결과",
+      "actions": [
+        { "type": "startSession", "mode": "mirror" },
+        { "type": "capture", "name": "03-mirror-result" }
+      ],
+      "captionKey": "mirror-result.caption"
+    },
+    {
+      "id": "overlay-result",
+      "title": "오버레이 번역 결과",
+      "actions": [
+        { "type": "startSession", "mode": "overlay" },
+        { "type": "capture", "name": "04-overlay-result" }
+      ],
+      "captionKey": "overlay-result.caption"
+    },
+    {
+      "id": "toolbar-overflow",
+      "title": "툴바와 오버플로 메뉴",
+      "actions": [
+        { "type": "startSession", "mode": "mirror" },
+        { "type": "showToolbarOverflow" },
+        { "type": "capture", "name": "05-toolbar-overflow" }
+      ],
+      "captionKey": "toolbar-overflow.caption"
+    },
+    {
+      "id": "pause-refresh",
+      "title": "일시정지와 갱신 방식",
+      "actions": [
+        { "type": "startSession", "mode": "mirror" },
+        { "type": "setRefreshMode", "mode": "manual" },
+        { "type": "setPaused", "value": "true" },
+        { "type": "capture", "name": "06-pause-refresh" }
+      ],
+      "captionKey": "pause-refresh.caption"
+    },
+    {
+      "id": "search-select-copy",
+      "title": "검색·선택·복사",
+      "actions": [
+        { "type": "startSession", "mode": "mirror" },
+        { "type": "showSearch" },
+        { "type": "showTextSelection" },
+        { "type": "copyText" },
+        { "type": "capture", "name": "07-search-select-copy" }
+      ],
+      "captionKey": "search-select-copy.caption"
+    },
+    {
+      "id": "general-settings",
+      "title": "일반 설정",
+      "actions": [
+        { "type": "showSettings", "category": "general" },
+        { "type": "capture", "name": "08-general-settings" }
+      ],
+      "captionKey": "general-settings.caption"
+    },
+    {
+      "id": "shortcuts-settings",
+      "title": "단축키 설정",
+      "actions": [
+        { "type": "showSettings", "category": "shortcuts" },
+        { "type": "capture", "name": "09-shortcuts-settings" }
+      ],
+      "captionKey": "shortcuts-settings.caption"
+    },
+    {
+      "id": "display-settings",
+      "title": "화면 표시 설정",
+      "actions": [
+        { "type": "showSettings", "category": "display" },
+        { "type": "capture", "name": "10-display-settings" }
+      ],
+      "captionKey": "display-settings.caption"
+    },
+    {
+      "id": "capture-ocr-settings",
+      "title": "캡처 및 OCR 설정",
+      "actions": [
+        { "type": "showSettings", "category": "captureOCR" },
+        { "type": "capture", "name": "11-capture-ocr-settings" }
+      ],
+      "captionKey": "capture-ocr-settings.caption"
+    },
+    {
+      "id": "protect-non-source-text",
+      "title": "원문 외 텍스트 보호",
+      "actions": [
+        { "type": "startSession", "mode": "mirror" },
+        { "type": "setSetting", "name": "protectNonSourceText", "value": "true" },
+        { "type": "capture", "name": "12-protect-non-source-text" }
+      ],
+      "captionKey": "protect-non-source-text.caption"
+    }
+  ]
+}
