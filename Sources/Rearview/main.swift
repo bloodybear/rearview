@@ -1,29 +1,84 @@
 import AppKit
 import ScreenCaptureKit
 
-if CommandLine.arguments.contains("--self-test") {
-    await SelfTest.run()
-    exit(EXIT_SUCCESS)
-}
-
-if CommandLine.arguments.contains("--check-screen-permission") {
+private func screenCapturePermissionIsGranted() async -> Bool {
     if CGPreflightScreenCaptureAccess() {
-        print("Screen capture permission: granted")
-        exit(EXIT_SUCCESS)
+        return true
     }
     do {
         _ = try await SCShareableContent.excludingDesktopWindows(
             true, onScreenWindowsOnly: true
         )
-        print("Screen capture permission: granted (ScreenCaptureKit probe)")
+        return true
+    } catch {
+        return false
+    }
+}
+
+private func screenIsLocked() -> Bool {
+    (CGSessionCopyCurrentDictionary() as? [String: Any])?["CGSSessionScreenIsLocked"] as? Bool ?? false
+}
+
+if CommandLine.arguments.contains("--self-test") {
+    await SelfTest.run()
+    exit(EXIT_SUCCESS)
+}
+
+#if REARVIEW_DOCUMENTATION
+if CommandLine.arguments.contains("--documentation") {
+    let statusPath = CommandLine.arguments.first(where: {
+        $0.hasPrefix("--documentation-status-file=")
+    }).map { String($0.dropFirst("--documentation-status-file=".count)) }
+    func writeDocumentationStatus(_ message: String) {
+        guard let statusPath else { return }
+        try? message.write(
+            to: URL(fileURLWithPath: statusPath), atomically: true, encoding: .utf8
+        )
+    }
+    do {
+        try await DocumentationRunner.run(arguments: CommandLine.arguments)
+        writeDocumentationStatus("success\n")
         exit(EXIT_SUCCESS)
     } catch {
+        let message = "Documentation build failed: \(error.localizedDescription)"
+        writeDocumentationStatus(message + "\n")
+        fputs("\(message)\n", stderr)
+        exit(EXIT_FAILURE)
+    }
+}
+#endif
+
+if CommandLine.arguments.contains("--check-screen-permission") {
+    if screenIsLocked() {
+        if let outputPath = CommandLine.arguments.first(where: {
+            $0.hasPrefix("--screen-permission-output=")
+        }) {
+            let path = String(outputPath.dropFirst("--screen-permission-output=".count))
+            try? "locked\n".write(to: URL(fileURLWithPath: path), atomically: true, encoding: .utf8)
+        }
         fputs(
-            "Screen capture permission: denied. 시스템 설정 > 개인정보 보호 및 보안 > 화면 및 시스템 오디오 녹음에서 Rearview를 허용한 뒤 앱을 다시 실행하세요.\n",
+            "Screen capture is unavailable while the macOS screen is locked. Unlock the session and retry.\n",
             stderr
         )
-        exit(2)
+        exit(3)
     }
+    let granted = await screenCapturePermissionIsGranted()
+    if let outputPath = CommandLine.arguments.first(where: {
+        $0.hasPrefix("--screen-permission-output=")
+    }) {
+        let path = String(outputPath.dropFirst("--screen-permission-output=".count))
+        let value = granted ? "granted\n" : "denied\n"
+        try? value.write(to: URL(fileURLWithPath: path), atomically: true, encoding: .utf8)
+    }
+    if granted {
+        print("Screen capture permission: granted (ScreenCaptureKit probe)")
+        exit(EXIT_SUCCESS)
+    }
+    fputs(
+        "Screen capture permission: denied. 시스템 설정 > 개인정보 보호 및 보안 > 화면 및 시스템 오디오 녹음에서 Rearview를 허용한 뒤 앱을 다시 실행하세요.\n",
+        stderr
+    )
+    exit(2)
 }
 
 if CommandLine.arguments.contains("--layout-benchmark") {

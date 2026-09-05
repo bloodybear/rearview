@@ -6,7 +6,7 @@ ROOT="${0:A:h:h}"
 cd "$ROOT"
 
 usage() {
-  print -u2 -- "usage: $SCRIPT_PATH [dev] [zip] [dmg]"
+  print -u2 -- "usage: $SCRIPT_PATH [dev|docs] [zip] [dmg]"
   exit 2
 }
 
@@ -23,6 +23,7 @@ BUILD_DMG=0
 for argument in "$@"; do
   case "$argument" in
     dev) PACKAGE_MODE="dev" ;;
+    docs) PACKAGE_MODE="docs" ;;
     zip) BUILD_ZIP=1 ;;
     dmg) BUILD_DMG=1 ;;
     *)
@@ -50,6 +51,16 @@ if [[ "$PACKAGE_MODE" == "dev" ]]; then
   DMG="$ROOT/dist/Rearview-dev.dmg"
   DMG_VOLUME_NAME="Rearview Dev"
   DEBUG_FEATURE_STATUS="included"
+elif [[ "$PACKAGE_MODE" == "docs" ]]; then
+  APP="$ROOT/dist/Rearview-docs.app"
+  ZIP="$ROOT/dist/Rearview-docs.zip"
+  DMG="$ROOT/dist/Rearview-docs.dmg"
+  DMG_VOLUME_NAME="Rearview Docs"
+  DEBUG_FEATURE_STATUS="documentation"
+  FEATURE_BUILD_ARGUMENTS=(
+    --product Rearview
+    -Xswiftc -DREARVIEW_DOCUMENTATION
+  )
 else
   APP="$ROOT/dist/Rearview.app"
   ZIP="$ROOT/dist/Rearview.zip"
@@ -133,6 +144,15 @@ fi
   "$APP/Contents/MacOS/Rearview"
 if [[ "$PACKAGE_MODE" == "dev" ]]; then
   /usr/libexec/PlistBuddy -c 'Set :CFBundleIdentifier io.github.bloodybear.rearview.dev' \
+    "$APP/Contents/Info.plist"
+elif [[ "$PACKAGE_MODE" == "docs" ]]; then
+  /usr/libexec/PlistBuddy -c 'Set :CFBundleIdentifier io.github.bloodybear.rearview.docs' \
+    "$APP/Contents/Info.plist"
+  # Documentation capture needs a frontmost, composited window scene so that
+  # WindowServer exposes its display to ScreenCaptureKit.  The product app is
+  # a menu-bar accessory, but the docs-only bundle is intentionally a regular
+  # windowed app and is never shipped to users.
+  /usr/libexec/PlistBuddy -c 'Set :LSUIElement false' \
     "$APP/Contents/Info.plist"
 fi
 for localization in "$ROOT"/Resources/*.lproj; do

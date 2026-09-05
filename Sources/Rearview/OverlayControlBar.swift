@@ -861,6 +861,9 @@ final class OverlayControlBarController: NSObject, NSMenuDelegate {
     private weak var visibleHoverToolTipView: NSView?
     private var hoverToolTipPanel: OverlayControlBarHintPanel?
     private var tooltipTextByView: [ObjectIdentifier: String] = [:]
+#if REARVIEW_DOCUMENTATION
+    private var documentationMenu: NSMenu?
+#endif
 
     private let container = OverlayControlBarContainerView()
     private let backgroundView = NSVisualEffectView()
@@ -1685,6 +1688,12 @@ final class OverlayControlBarController: NSObject, NSMenuDelegate {
         return container
     }
 
+#if REARVIEW_DOCUMENTATION
+    func documentationWindowForCapture() -> NSWindow? {
+        panel
+    }
+#endif
+
     func releaseContentViewFromMirrorToolbar() {
         precondition(hosting == .mirrorToolbar)
         embeddedInMirrorToolbar = false
@@ -1695,10 +1704,10 @@ final class OverlayControlBarController: NSObject, NSMenuDelegate {
     func updateMirrorToolbarWidth(_ width: CGFloat) {
         guard embeddedInMirrorToolbar else { return }
         dismissHoverToolTip()
-        container.setFrameSize(CGSize(
-            width: max(1, width), height: OverlayControlBarMetrics.height
-        ))
-        updateResponsivePresentation(for: container.frame.width)
+        // The titlebar accessory controller owns the root view's frame and
+        // observes origin changes as a contract violation. Its width
+        // constraint and preferredContentSize are updated by the caller.
+        updateResponsivePresentation(for: max(1, width))
     }
 
     func closeForSessionStop() {
@@ -2393,6 +2402,35 @@ final class OverlayControlBarController: NSObject, NSMenuDelegate {
         let menu = makeOverflowMenu()
         menu.popUp(positioning: nil, at: CGPoint(x: 0, y: sender.bounds.maxY + 4), in: sender)
     }
+
+#if REARVIEW_DOCUMENTATION
+    func showDocumentationOverflowMenu() {
+        // NSMenu is the production menu.  It is intentionally shown here so
+        // ScreenCaptureKit captures the same menu window that users see.
+        onApplicationListRequest?()
+        let menu = makeOverflowMenu()
+        documentationMenu = menu
+        DispatchQueue.main.async { [weak self, weak menu] in
+            guard let self, let menu else { return }
+            // `NSMenu.popUp` runs an AppKit event-tracking loop.  A dispatch
+            // queue timer is not guaranteed to run in that mode, so schedule
+            // the safety dismissal on the run loop's common modes instead.
+            let timer = Timer(timeInterval: 5, repeats: false) { [weak menu] _ in
+                menu?.cancelTrackingWithoutAnimation()
+            }
+            RunLoop.main.add(timer, forMode: .common)
+            menu.popUp(positioning: nil, at: CGPoint(x: 0, y: self.overflowButton.bounds.maxY + 4), in: self.overflowButton)
+        }
+        // `popUp` owns a nested event loop. The runner captures while that
+        // loop is active and the common-mode timer above prevents a failed
+        // capture from leaving the documentation process stuck forever.
+    }
+
+    func dismissDocumentationOverflowMenu() {
+        documentationMenu?.cancelTrackingWithoutAnimation()
+        documentationMenu = nil
+    }
+#endif
 
     private func makeOverflowMenu() -> NSMenu {
         let menu = NSMenu(title: L10n.text("번역 세션 제어"))
