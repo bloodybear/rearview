@@ -141,7 +141,7 @@ struct SettingsAndShortcutTests {
             #expect(tooltip.hasPrefix("표시 모드\n"))
             #expect(tooltip.contains(shortcut.title))
             #expect(immediateTranslationHotKeyToolTip("즉시 번역", defaults: defaults)
-                == "즉시 번역\n⌥⌘2")
+                == "즉시 번역\n⌃⌥1")
 
             let immediate = ImmediateTranslationHotKey(
                 keyCode: UInt32(kVK_ANSI_N), modifiers: UInt32(controlKey | optionKey), keyLabel: "N"
@@ -155,12 +155,12 @@ struct SettingsAndShortcutTests {
             activation.save(to: defaults)
             #expect(MirrorActivationHotKey.load(from: defaults) == activation)
             #expect(ImmediateTranslationHotKey(
-                keyCode: UInt32(kVK_ANSI_2), modifiers: UInt32(cmdKey | optionKey),
-                keyLabel: "2", isEnabled: false
+                keyCode: UInt32(kVK_ANSI_1), modifiers: UInt32(cmdKey | optionKey),
+                keyLabel: "1", isEnabled: false
             ).title == L10n.text("사용 안 함"))
             #expect(MirrorActivationHotKey(
-                keyCode: UInt32(kVK_ANSI_3), modifiers: UInt32(cmdKey | optionKey),
-                keyLabel: "3", isEnabled: false
+                keyCode: UInt32(kVK_ANSI_1), modifiers: UInt32(controlKey | optionKey),
+                keyLabel: "1", isEnabled: false
             ).title == L10n.text("사용 안 함"))
         }
     }
