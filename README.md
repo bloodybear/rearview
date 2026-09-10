@@ -2,6 +2,8 @@
 
 Rearview is a macOS menu bar app that translates Japanese and Korean text from a selected screen region. It uses Apple Vision for OCR and Apple Translation for on-device translation, then displays the result in a mirror or overlay.
 
+See the [user guide](user-guide/README.md) for detailed instructions in Korean, English, and Japanese.
+
 ## Features
 
 - Japanese, Korean, and English screen text

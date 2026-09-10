@@ -547,8 +547,7 @@ final class SessionCoordinator {
     func restoreMirrorContentSize() { mirror?.restoreOriginalSize() }
     func fitMirrorWindowToContent() { mirror?.fitWindowToDisplayedContent() }
     func toggleMirrorDocking(_ state: MirrorDockingState) {
-        guard displayMode == .mirror else { return }
-        mirror?.toggleDocking(state)
+        mirror?.performDockingShortcut(state)
     }
 
     private func updateRegionBorderPresentation() {

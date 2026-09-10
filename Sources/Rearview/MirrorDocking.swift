@@ -93,6 +93,26 @@ enum MirrorDockingState: String, CaseIterable, Sendable {
     }
 }
 
+struct MirrorDockingShortcutTransition: Equatable {
+    let displayMode: TranslationDisplayMode
+    let dockingState: MirrorDockingState
+}
+
+func mirrorDockingShortcutTransition(
+    displayMode: TranslationDisplayMode,
+    dockingState: MirrorDockingState,
+    requested: MirrorDockingState
+) -> MirrorDockingShortcutTransition {
+    if displayMode == .overlay {
+        return MirrorDockingShortcutTransition(
+            displayMode: .mirror, dockingState: requested
+        )
+    }
+    return MirrorDockingShortcutTransition(
+        displayMode: .mirror, dockingState: dockingState.toggled(with: requested)
+    )
+}
+
 enum MirrorDockPreviewInteraction {
     case move
     case resize(placementMatchesCurrentFrame: Bool)

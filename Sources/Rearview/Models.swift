@@ -27,10 +27,10 @@ enum AppDefaults {
         keyCode: UInt32(kVK_ANSI_1), modifiers: UInt32(cmdKey | shiftKey), keyLabel: "1"
     )
     static let immediateTranslationHotKey = ImmediateTranslationHotKey(
-        keyCode: UInt32(kVK_ANSI_2), modifiers: UInt32(cmdKey | optionKey), keyLabel: "2"
+        keyCode: UInt32(kVK_ANSI_1), modifiers: UInt32(cmdKey | optionKey), keyLabel: "1"
     )
     static let mirrorActivationHotKey = MirrorActivationHotKey(
-        keyCode: UInt32(kVK_ANSI_3), modifiers: UInt32(cmdKey | optionKey), keyLabel: "3"
+        keyCode: UInt32(kVK_ANSI_1), modifiers: UInt32(controlKey | optionKey), keyLabel: "1"
     )
 
     // Region-selection single-key docking shortcuts
