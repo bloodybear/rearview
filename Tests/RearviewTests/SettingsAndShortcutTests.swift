@@ -297,6 +297,7 @@ struct SettingsAndShortcutTests {
             displayMode: .overlay, debugFeaturesEnabled: true
         )
         let overlayIDs = overlay.map(\.id)
+        #expect(!overlayIDs.contains(.docking))
         #expect(OverlayControlBarCatalog.compactOrder == [
             .refreshMode, .translationDirection, .displayMode, .application
         ])
