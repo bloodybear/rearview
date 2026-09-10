@@ -2679,6 +2679,20 @@ final class TranslationMirrorWindow: NSPanel, NSWindowDelegate {
         setDocking(target, restoreUndockedFrame: target == .undocked, notify: true)
     }
 
+    func performDockingShortcut(_ requested: MirrorDockingState) {
+        let transition = mirrorDockingShortcutTransition(
+            displayMode: displayMode, dockingState: dockingState, requested: requested
+        )
+        if transition.displayMode != displayMode {
+            displayModeDidChange(transition.displayMode)
+        }
+        setDocking(
+            transition.dockingState,
+            restoreUndockedFrame: transition.dockingState == .undocked,
+            notify: true
+        )
+    }
+
     private func setDocking(
         _ state: MirrorDockingState, restoreUndockedFrame: Bool, notify: Bool
     ) {

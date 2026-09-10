@@ -599,13 +599,19 @@ private final class SelectionView: NSView {
             needsDisplay = true
             return
         }
-        if displayMode == .mirror,
-           let requested = dockingShortcuts.first(where: { _, shortcut in
-               shortcut.isEnabled && UInt32(event.keyCode) == shortcut.keyCode
-           })?.key {
-            let previous = dockingState
-            dockingState = dockingState.toggled(with: requested)
-            if dockingState != previous { startSeamFlash() }
+        if let requested = dockingShortcuts.first(where: { _, shortcut in
+            shortcut.isEnabled && UInt32(event.keyCode) == shortcut.keyCode
+        })?.key {
+            let previousMode = displayMode
+            let previousState = dockingState
+            let transition = mirrorDockingShortcutTransition(
+                displayMode: displayMode, dockingState: dockingState, requested: requested
+            )
+            displayMode = transition.displayMode
+            dockingState = transition.dockingState
+            if displayMode != previousMode || dockingState != previousState {
+                startSeamFlash()
+            }
             needsDisplay = true
             return
         }
@@ -910,26 +916,26 @@ private final class SelectionView: NSView {
             let text = "\(SelectionShortcutAction.displayMode.title): \(displayModeShortcut.keyLabel)" as NSString
             details.append((text, text.size(withAttributes: detailAttributes)))
         }
-        // Docking keys only work in mirror mode, so both docking lines appear
-        // and disappear dynamically with the current display mode.
-        if displayMode == .mirror {
-            let dockLabels = [MirrorDockingState.top, .bottom, .left, .right].compactMap { state in
-                guard let shortcut = dockingShortcuts[state], shortcut.isEnabled else { return nil }
-                return shortcut.keyLabel
-            }.joined()
-            if !dockLabels.isEmpty {
-                let text = "\(L10n.text("미러 도킹")): \(dockLabels)" as NSString
-                details.append((text, text.size(withAttributes: detailAttributes)))
-            }
-            // When the mirror is docked, pressing the same direction again
-            // undocks: surface that with a dynamic line showing the docked
-            // direction's key.
-            if dockingState != .undocked,
-               let dockedShortcut = dockingShortcuts[dockingState],
-               dockedShortcut.isEnabled {
-                let text = "\(L10n.text("미러 도킹 해제")): \(dockedShortcut.keyLabel)" as NSString
-                details.append((text, text.size(withAttributes: detailAttributes)))
-            }
+        // Docking keys are also the bridge from overlay preview to mirror
+        // preview, so keep the available direction keys visible in either
+        // mode. Same-direction undocking remains mirror-only.
+        let dockLabels = [MirrorDockingState.top, .bottom, .left, .right].compactMap { state in
+            guard let shortcut = dockingShortcuts[state], shortcut.isEnabled else { return nil }
+            return shortcut.keyLabel
+        }.joined()
+        if !dockLabels.isEmpty {
+            let text = "\(L10n.text("미러 도킹")): \(dockLabels)" as NSString
+            details.append((text, text.size(withAttributes: detailAttributes)))
+        }
+        // When the mirror is docked, pressing the same direction again
+        // undocks: surface that with a dynamic line showing the docked
+        // direction's key.
+        if displayMode == .mirror,
+           dockingState != .undocked,
+           let dockedShortcut = dockingShortcuts[dockingState],
+           dockedShortcut.isEnabled {
+            let text = "\(L10n.text("미러 도킹 해제")): \(dockedShortcut.keyLabel)" as NSString
+            details.append((text, text.size(withAttributes: detailAttributes)))
         }
 
         let padding = CGSize(width: 28, height: 16)

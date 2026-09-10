@@ -401,20 +401,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             coordinator.setMirrorFollowsSelectionSize(enabled)
             MirrorFollowsSelectionSize.save(enabled)
         case .dockTop:
-            guard coordinator.isTranslationSessionKeyWindow(NSApp.keyWindow),
-                  TranslationDisplayMode.load() == .mirror else { return false }
+            guard coordinator.isTranslationSessionKeyWindow(NSApp.keyWindow) else { return false }
             coordinator.toggleMirrorDocking(.top)
         case .dockBottom:
-            guard coordinator.isTranslationSessionKeyWindow(NSApp.keyWindow),
-                  TranslationDisplayMode.load() == .mirror else { return false }
+            guard coordinator.isTranslationSessionKeyWindow(NSApp.keyWindow) else { return false }
             coordinator.toggleMirrorDocking(.bottom)
         case .dockLeft:
-            guard coordinator.isTranslationSessionKeyWindow(NSApp.keyWindow),
-                  TranslationDisplayMode.load() == .mirror else { return false }
+            guard coordinator.isTranslationSessionKeyWindow(NSApp.keyWindow) else { return false }
             coordinator.toggleMirrorDocking(.left)
         case .dockRight:
-            guard coordinator.isTranslationSessionKeyWindow(NSApp.keyWindow),
-                  TranslationDisplayMode.load() == .mirror else { return false }
+            guard coordinator.isTranslationSessionKeyWindow(NSApp.keyWindow) else { return false }
             coordinator.toggleMirrorDocking(.right)
         case .debugOverlay:
             coordinator.toggleOCRDebugOverlay()

@@ -141,7 +141,7 @@ struct SettingsAndShortcutTests {
             #expect(tooltip.hasPrefix("표시 모드\n"))
             #expect(tooltip.contains(shortcut.title))
             #expect(immediateTranslationHotKeyToolTip("즉시 번역", defaults: defaults)
-                == "즉시 번역\n⌃⌥1")
+                == "즉시 번역\n⌥⌘1")
 
             let immediate = ImmediateTranslationHotKey(
                 keyCode: UInt32(kVK_ANSI_N), modifiers: UInt32(controlKey | optionKey), keyLabel: "N"
@@ -297,6 +297,7 @@ struct SettingsAndShortcutTests {
             displayMode: .overlay, debugFeaturesEnabled: true
         )
         let overlayIDs = overlay.map(\.id)
+        #expect(!overlayIDs.contains(.docking))
         #expect(OverlayControlBarCatalog.compactOrder == [
             .refreshMode, .translationDirection, .displayMode, .application
         ])

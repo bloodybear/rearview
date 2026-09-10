@@ -4,6 +4,39 @@ import Testing
 
 @Suite
 struct MirrorDockingTests {
+    @Test func dockingShortcutTransitionPreservesModeSpecificSemantics() {
+        let directions: [MirrorDockingState] = [.top, .bottom, .left, .right]
+
+        for requested in directions {
+            #expect(mirrorDockingShortcutTransition(
+                displayMode: .overlay, dockingState: .undocked, requested: requested
+            ) == MirrorDockingShortcutTransition(
+                displayMode: .mirror, dockingState: requested
+            ))
+            #expect(mirrorDockingShortcutTransition(
+                displayMode: .overlay, dockingState: requested, requested: requested
+            ) == MirrorDockingShortcutTransition(
+                displayMode: .mirror, dockingState: requested
+            ))
+            #expect(mirrorDockingShortcutTransition(
+                displayMode: .mirror, dockingState: .undocked, requested: requested
+            ) == MirrorDockingShortcutTransition(
+                displayMode: .mirror, dockingState: requested
+            ))
+            #expect(mirrorDockingShortcutTransition(
+                displayMode: .mirror, dockingState: requested, requested: requested
+            ) == MirrorDockingShortcutTransition(
+                displayMode: .mirror, dockingState: .undocked
+            ))
+        }
+
+        #expect(mirrorDockingShortcutTransition(
+            displayMode: .mirror, dockingState: .left, requested: .right
+        ) == MirrorDockingShortcutTransition(
+            displayMode: .mirror, dockingState: .right
+        ))
+    }
+
     @Test func movePreviewKeepsGhostWhenPlacementMatches() {
         #expect(mirrorDockPreviewPresentation(
             for: .move
