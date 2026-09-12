@@ -3,6 +3,16 @@
     <channel>
         <title>Rearview</title>
         <item>
+            <title>26.9.3</title>
+            <pubDate>Sat, 12 Sep 2026 10:04:40 +0900</pubDate>
+            <link>https://github.com/bloodybear/rearview</link>
+            <sparkle:version>260912.39</sparkle:version>
+            <sparkle:shortVersionString>26.9.3</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/bloodybear/rearview/releases/download/v26.9.3/Rearview-26.9.3.zip" length="3830434" type="application/octet-stream" sparkle:edSignature="oO017mUFcJl9PFL/8fR5HUBV74J6wxAt9CXxDaq1ofS8f3YcMHVtOXrmBJMtmI9KqdPkuFuNRtPJ0ZszWQfQCw=="/>
+        </item>
+        <item>
             <title>26.9.2</title>
             <pubDate>Sat, 05 Sep 2026 05:42:38 +0900</pubDate>
             <link>https://github.com/bloodybear/rearview</link>
@@ -21,16 +31,6 @@
             <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
             <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
             <enclosure url="https://github.com/bloodybear/rearview/releases/download/v26.9.1/Rearview-26.9.1.zip" length="3811919" type="application/octet-stream" sparkle:edSignature="bD6T22d/+9JvbFmCTUMG/3NHDY7MkwKgTVzJ4PvUJwVzS8uDWFpAIZJlwYytkP71mRQ868i37C74xOszCm4WDw=="/>
-        </item>
-        <item>
-            <title>26.9.0</title>
-            <pubDate>Wed, 02 Sep 2026 09:55:28 +0900</pubDate>
-            <link>https://github.com/bloodybear/rearview</link>
-            <sparkle:version>260902.13</sparkle:version>
-            <sparkle:shortVersionString>26.9.0</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
-            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <enclosure url="https://github.com/bloodybear/rearview/releases/download/v26.9.0/Rearview-26.9.0.zip" length="3811916" type="application/octet-stream" sparkle:edSignature="9+VOX0gIVmBEhcjjKp0WIgWX3GseLSQC0CV6Srd8bAt1KQJUR3QrMFAJdLaN4dYyvqH/Zg3buKjuiHf/6cK6BA=="/>
         </item>
     </channel>
 </rss>
