@@ -25,9 +25,12 @@ final class TranslationBroker: ObservableObject {
         !isCancelled && activeGeneration == currentGeneration
     }
 
-    init() {
-        direction = TranslationDirection.load()
-        protectsNonSourceText = TranslationTextProtection.load()
+    var isReadyForTranslation: Bool { sessionReady }
+
+    init(direction: TranslationDirection = TranslationDirection.load(),
+         protectsNonSourceText: Bool = TranslationTextProtection.load()) {
+        self.direction = direction
+        self.protectsNonSourceText = protectsNonSourceText
     }
 
     func setDirection(_ direction: TranslationDirection) {

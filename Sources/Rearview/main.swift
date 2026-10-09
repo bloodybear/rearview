@@ -6,6 +6,12 @@ if CommandLine.arguments.contains("--self-test") {
     exit(EXIT_SUCCESS)
 }
 
+#if !LST_EXCLUDE_DEBUG_FEATURES
+if CommandLine.arguments.contains("--translation-provider-smoke") {
+    exit(await TranslationProviderSmokeRunner.run())
+}
+#endif
+
 if CommandLine.arguments.contains("--check-screen-permission") {
     if CGPreflightScreenCaptureAccess() {
         print("Screen capture permission: granted")
