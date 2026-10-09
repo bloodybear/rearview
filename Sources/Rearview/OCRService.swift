@@ -6,6 +6,26 @@ enum OCRMode: String, Codable, Sendable {
     case refinement
 }
 
+func ocrScaledImage(_ image: CGImage, by scale: Float) -> CGImage {
+    guard scale > 1.001 else { return image }
+    let width = max(1, Int((CGFloat(image.width) * CGFloat(scale)).rounded()))
+    let height = max(1, Int((CGFloat(image.height) * CGFloat(scale)).rounded()))
+    let space: CGColorSpace
+    if let originalSpace = image.colorSpace, originalSpace.model == .rgb {
+        space = originalSpace
+    } else {
+        space = CGColorSpaceCreateDeviceRGB()
+    }
+    // CGImage accepts unpremultiplied alpha; CGContext does not. Never copy
+    // an arbitrary input bitmapInfo into a drawing destination.
+    guard let context = CGContext(data: nil, width: width, height: height,
+        bitsPerComponent: 8, bytesPerRow: 0, space: space,
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return image }
+    context.interpolationQuality = .high
+    context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+    return context.makeImage() ?? image
+}
+
 enum OCRRecognitionPolicy {
     static let minimumConfidenceKey = "ocr.filter.minimumConfidence"
     static let defaultMinimumConfidence = AppDefaults.ocrMinimumConfidence
@@ -105,7 +125,7 @@ final class OCRService: @unchecked Sendable {
         try await withCheckedThrowingContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
                 autoreleasepool {
-                let preparedImage = self.scaledImage(image, by: settings.imageScale)
+                let preparedImage = ocrScaledImage(image, by: settings.imageScale)
                 let request = VNRecognizeTextRequest { request, error in
                     if let error {
                         continuation.resume(throwing: error)
@@ -159,7 +179,7 @@ final class OCRService: @unchecked Sendable {
         includeRejectedAlternatives: Bool, settings: OCRSettings,
         direction: TranslationDirection
     ) async throws -> RecognitionBatch {
-        let preparedImage = scaledImage(image, by: settings.imageScale)
+        let preparedImage = ocrScaledImage(image, by: settings.imageScale)
         var request = RecognizeDocumentsRequest()
         request.textRecognitionOptions.minimumTextHeightFraction = settings.minimumTextHeight
         request.textRecognitionOptions.automaticallyDetectLanguage =
@@ -278,20 +298,6 @@ final class OCRService: @unchecked Sendable {
     private func recognizedLanguages(for observation: VNRecognizedTextObservation) -> [Locale.Language] {
         guard #available(macOS 26.0, *) else { return [] }
         return RecognizedTextObservation(observation).recognitionLanguages
-    }
-
-    private func scaledImage(_ image: CGImage, by scale: Float) -> CGImage {
-        guard scale > 1.001 else { return image }
-        let width = max(1, Int((CGFloat(image.width) * CGFloat(scale)).rounded()))
-        let height = max(1, Int((CGFloat(image.height) * CGFloat(scale)).rounded()))
-        guard let colorSpace = image.colorSpace,
-              let context = CGContext(data: nil, width: width, height: height,
-                                      bitsPerComponent: image.bitsPerComponent,
-                                      bytesPerRow: 0, space: colorSpace,
-                                      bitmapInfo: image.bitmapInfo.rawValue) else { return image }
-        context.interpolationQuality = .high
-        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
-        return context.makeImage() ?? image
     }
 
 }
