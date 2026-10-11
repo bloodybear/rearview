@@ -29,6 +29,8 @@ See the [user guide](user-guide/README.md) for detailed instructions in Korean, 
 2. Open the DMG and drag `Rearview.app` to the `Applications` folder.
 3. Open Rearview from the `Applications` folder.
 
+Opening Rearview again when no translation session or user window is open brings up Settings. The configured region-selection shortcut works both globally and while Rearview is active.
+
 Because Rearview is currently distributed without Apple notarization, macOS may block the first launch.
 
 If macOS shows a security warning:

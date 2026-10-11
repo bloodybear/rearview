@@ -3,6 +3,7 @@ import Carbon
 import SwiftUI
 import ServiceManagement
 @preconcurrency import ScreenCaptureKit
+import os
 
 @MainActor
 struct ScreenCapturePermissionClient {
@@ -40,6 +41,7 @@ enum ScreenCapturePermissionConfirmation {
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    private let shortcutLogger = Logger(subsystem: "io.github.bloodybear.rearview", category: "shortcuts")
     private let permissionClient: ScreenCapturePermissionClient
     private let defaults: UserDefaults
     private let broker = TranslationBroker()
@@ -114,9 +116,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         _ sender: NSApplication,
         hasVisibleWindows flag: Bool
     ) -> Bool {
-        guard !screenCapturePermissionGranted else { return true }
+        #if !LST_EXCLUDE_DEBUG_FEATURES
+        shortcutLogger.debug("Selection lifecycle: reopen ready=\(self.screenCapturePermissionGranted)")
+        #endif
+        if screenCapturePermissionGranted {
+            presentSelectionCommandSurfaceIfNeeded(isActive: true)
+            return true
+        }
         presentCurrentPermissionGate()
         return true
+    }
+
+    private func presentSelectionCommandSurfaceIfNeeded(isActive: Bool) {
+        // The offscreen SwiftUI translation host is deliberately not a user
+        // command surface. Explicit activation/reopen should not strand an
+        // otherwise windowless menu-bar app on that internal panel.
+        let hasUserWindow = NSApp.windows.contains {
+            isSelectionCommandSurfaceWindow($0, excluding: translationHost)
+        }
+        #if !LST_EXCLUDE_DEBUG_FEATURES
+        let anyVisibleNonHost = NSApp.windows.contains { $0 !== translationHost && $0.isVisible }
+        shortcutLogger.debug("Selection command surface: active=\(isActive), ready=\(self.screenCapturePermissionGranted), anyVisibleNonHost=\(anyVisibleNonHost), hasUserWindow=\(hasUserWindow)")
+        #endif
+        guard shouldPresentSelectionCommandSurface(isActive: isActive,
+            permissionReady: screenCapturePermissionGranted,
+            isSelecting: selector.isSelecting, sessionActive: coordinator.isSessionActive,
+            hasUserWindow: hasUserWindow,
+            isBenchmark: CommandLine.arguments.contains("--benchmark")) else { return }
+        showSettings()
     }
 
     private func installApplicationServices() {
@@ -256,7 +283,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     delegate.presentCurrentPermissionGate()
                     return
                 }
-                if hotKeyID.id == 1 { delegate.beginSelection() }
+                if hotKeyID.id == 1 {
+                    #if !LST_EXCLUDE_DEBUG_FEATURES
+                    delegate.shortcutLogger.debug("Selection shortcut delivery: global")
+                    #endif
+                    delegate.beginSelection()
+                }
                 if hotKeyID.id == 2, DebugFeatures.load() { delegate.runBenchmark() }
                 if hotKeyID.id == 3 { delegate.coordinator.translateImmediately() }
                 if hotKeyID.id == 4 { delegate.coordinator.activateMirrorWindow() }
@@ -281,6 +313,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self, NSApp.isActive, !self.hotKeyRecording, !self.selector.isSelecting
             else { return event }
             if self.handleFixedShortcut(event) { return nil }
+            if handleLocalSelectionShortcut(event, hotKey: self.selectionHotKey,
+                isActive: NSApp.isActive, isRecording: self.hotKeyRecording,
+                isSelecting: self.selector.isSelecting, perform: {
+                    #if !LST_EXCLUDE_DEBUG_FEATURES
+                    self.shortcutLogger.debug("Selection shortcut delivery: local")
+                    #endif
+                    self.beginSelection()
+                }) { return nil }
             if self.handleToolbarShortcut(event) { return nil }
             return event
         }
@@ -454,6 +494,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             hotKey.keyCode, hotKey.modifiers, hotKeyID,
             GetApplicationEventTarget(), 0, &newReference
         )
+        #if !LST_EXCLUDE_DEBUG_FEATURES
+        shortcutLogger.debug("Selection hotkey registration: status=\(status), hasReference=\(newReference != nil)")
+        #endif
         guard status == noErr, let newReference else { return false }
         if let hotKeyRef { UnregisterEventHotKey(hotKeyRef) }
         hotKeyRef = newReference
