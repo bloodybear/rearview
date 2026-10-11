@@ -129,7 +129,7 @@ Rearview 정보…	About Rearview…	Rearviewについて…
 프로파일링 시작	Start Profiling	プロファイリングを開始
 프로파일링 종료 및 결과 보기	Stop Profiling and View Results	プロファイリングを終了して結果を表示
 최근 프로파일 결과 보기	View Latest Profile	最新のプロファイル結果を表示
-내장 벤치마크 실행 (30초)	Run Built-in Benchmark (30 sec)	内蔵ベンチマークを実行（30秒）
+내장 벤치마크 실행 (60초)	Run Built-in Benchmark (60 sec)	内蔵ベンチマークを実行（60秒）
 설정	Settings	設定
 Rearview 설정	Rearview Settings	Rearview設定
 일반	General	一般
@@ -306,7 +306,7 @@ OCR 디버그 오버레이	OCR Debug Overlay	OCRデバッグオーバーレイ
 활성 프로파일링 세션이 없습니다.	There is no active profiling session.	アクティブなプロファイリングセッションがありません。
 아직 생성된 프로파일 결과가 없습니다.	No profile results have been created yet.	プロファイル結果はまだ作成されていません。
 벤치마크 실행 중	Benchmark Running	ベンチマーク実行中
-정적 화면, 스크롤, 장면 전환을 30초 동안 측정합니다.	Measuring static screens, scrolling, and scene changes for 30 seconds.	静止画面、スクロール、シーン切り替えを30秒間測定します。
+정적 화면, 스크롤, 장면 전환을 60초 동안 측정합니다.	Measuring static screens, scrolling, and scene changes for 60 seconds.	静止画面、スクロール、シーン切り替えを60秒間測定します。
 실시간 번역을 시작할 수 없습니다	Could Not Start Live Translation	リアルタイム翻訳を開始できませんでした
 화면 기록 권한이 필요합니다	Screen Recording Permission Required	画面収録の権限が必要です
 Rearview는 선택한 화면 영역의 텍스트를 인식하고 번역합니다. 계속하려면 화면 기록 권한이 필요합니다.	Rearview recognizes and translates text in the selected screen area. Screen Recording permission is required to continue.	Rearviewは選択した画面範囲のテキストを認識して翻訳します。続けるには画面収録の権限が必要です。

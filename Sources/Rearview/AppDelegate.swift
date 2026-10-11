@@ -253,7 +253,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             menu.addItem(withTitle: L10n.text("프로파일링 시작"), action: #selector(startProfiling), keyEquivalent: ""),
             menu.addItem(withTitle: L10n.text("프로파일링 종료 및 결과 보기"), action: #selector(stopProfiling), keyEquivalent: ""),
             menu.addItem(withTitle: L10n.text("최근 프로파일 결과 보기"), action: #selector(showRecentProfile), keyEquivalent: ""),
-            menu.addItem(withTitle: L10n.text("내장 벤치마크 실행 (30초)"), action: #selector(runBenchmark), keyEquivalent: "")
+            menu.addItem(withTitle: L10n.text("내장 벤치마크 실행 (60초)"), action: #selector(runBenchmark), keyEquivalent: "")
         ]
         setDebugMenuItemsVisible(DebugFeatures.load())
 #endif
@@ -1023,9 +1023,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             )
             showNotification(
                 title: L10n.text("벤치마크 실행 중"),
-                body: L10n.text("정적 화면, 스크롤, 장면 전환을 30초 동안 측정합니다.")
+                body: L10n.text("정적 화면, 스크롤, 장면 전환을 60초 동안 측정합니다.")
             )
-            try? await Task.sleep(for: .seconds(30))
+            try? await Task.sleep(for: .seconds(60))
             await coordinator.stop()
             process.terminate()
             benchmarkProcess = nil
