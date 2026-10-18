@@ -237,7 +237,9 @@ private final class NativeMirrorRenderer {
             reservedCollisionRects.append(contentsOf:
                 mirrorTextCollisionRects(for: layout.frame, sourceRect: sourceRect)
             )
-            backgroundContext.setFillColor(item.background.nsColor.cgColor)
+            backgroundContext.setFillColor(
+                item.background.nsColor.withAlphaComponent(1).cgColor
+            )
             backgroundContext.fill(layout.frame)
             textRects[item.id] = layout.frame
             layouts[item.id] = layout
