@@ -211,7 +211,7 @@ func mirrorWindowFrameAsStoredByAppKit(_ frame: CGRect) -> CGRect {
 enum MirrorTextLayoutTuning {
     static let maximumTextVerticalScale: CGFloat = 0.98
     static let backgroundVerticalExpansionFactor: CGFloat = 1.03
-    static let minimumHorizontalTextScale: CGFloat = 0.75
+    static let minimumHorizontalTextScale: CGFloat = 0.65
     static let minimumFontScale: CGFloat = 0.85
     static let fontScaleSearchCount = 2
     static let horizontalExpansionHeightMultiplier: CGFloat = 2

@@ -61,10 +61,32 @@ private struct NativeMirrorArtwork {
 
 @MainActor
 private final class NativeMirrorRenderer {
+    private struct SingleLineExpansionContext {
+        let bounds: CGRect
+        let otherRects: [CGRect]
+        let reservedCollisionRects: [CGRect]
+        let sourceIndex: Int
+    }
+
+    private struct SingleLineExpansionKey: Hashable {
+        let bounds: NativeMirrorRectKey
+        let otherRects: [NativeMirrorRectKey]
+        let reservedCollisionRects: [NativeMirrorRectKey]
+        let sourceIndex: Int
+
+        init(_ context: SingleLineExpansionContext) {
+            bounds = NativeMirrorRectKey(context.bounds)
+            otherRects = context.otherRects.map(NativeMirrorRectKey.init)
+            reservedCollisionRects = context.reservedCollisionRects.map(NativeMirrorRectKey.init)
+            sourceIndex = context.sourceIndex
+        }
+    }
+
     private struct LayoutKey: Hashable {
         let text: String
         let sourceRect: NativeMirrorRectKey
         let oneLineRect: NativeMirrorRectKey
+        let expansion: SingleLineExpansionKey
     }
 
     private var layoutCache: [LayoutKey: NativeMirrorTextLayout] = [:]
@@ -199,27 +221,18 @@ private final class NativeMirrorRenderer {
             let item = frame.translatedItems[index]
             guard item.isTranslated else { continue }
             let sourceRect = sourceRects[index]
-            let referenceFontSize = referenceFontSize(
-                for: mirrorMaximumTextHeight(for: sourceRect.height)
-            )
-            let requiredWidth = measuredTextSize(
-                item.translatedText,
-                fontSize: referenceFontSize,
-                width: .greatestFiniteMagnitude,
-                lineCount: 1
-            ).width
-            let oneLineRect = mirrorOneLineTextRect(
-                sourceRect: sourceRect,
-                requiredWidth: requiredWidth,
+            let oneLineRect = mirrorInitialTextRect(sourceRect: sourceRect, inside: pixelRect)
+            let expansion = SingleLineExpansionContext(
+                bounds: pixelRect,
                 otherRects: sourceRects,
                 reservedCollisionRects: reservedCollisionRects,
-                inside: pixelRect,
                 sourceIndex: index
             )
             let layout = layout(
                 for: item,
                 sourceRect: sourceRect,
-                oneLineRect: oneLineRect
+                oneLineRect: oneLineRect,
+                expansion: expansion
             )
             reservedCollisionRects.append(contentsOf:
                 mirrorTextCollisionRects(for: layout.frame, sourceRect: sourceRect)
@@ -264,12 +277,14 @@ private final class NativeMirrorRenderer {
     }
 
     private func layout(
-        for item: MirrorItem, sourceRect: CGRect, oneLineRect: CGRect
+        for item: MirrorItem, sourceRect: CGRect, oneLineRect: CGRect,
+        expansion: SingleLineExpansionContext
     ) -> NativeMirrorTextLayout {
         let key = LayoutKey(
             text: item.translatedText,
             sourceRect: NativeMirrorRectKey(sourceRect),
-            oneLineRect: NativeMirrorRectKey(oneLineRect)
+            oneLineRect: NativeMirrorRectKey(oneLineRect),
+            expansion: SingleLineExpansionKey(expansion)
         )
         if let cached = layoutCache[key] {
             layoutCacheHits += 1
@@ -348,26 +363,73 @@ private final class NativeMirrorRenderer {
             return result
         }
 
+        let minimumFontSize = referenceFontSize * MirrorTextLayoutTuning.minimumFontScale
+        var frame = oneLineRect
+        let requiredWidth = measuredTextSize(
+            item.translatedText,
+            fontSize: minimumFontSize,
+            width: .greatestFiniteMagnitude,
+            lineCount: 1
+        ).width * horizontalScale
+        if requiredWidth > frame.width + 0.5 {
+            frame = mirrorOneLineTextRect(
+                sourceRect: sourceRect,
+                requiredWidth: requiredWidth,
+                otherRects: expansion.otherRects,
+                reservedCollisionRects: expansion.reservedCollisionRects,
+                inside: expansion.bounds,
+                sourceIndex: expansion.sourceIndex
+            )
+        }
+
+        if fits(
+            item.translatedText,
+            fontSize: minimumFontSize,
+            size: frame.size,
+            lineCount: 1,
+            horizontalScale: horizontalScale
+        ) {
+            let measured = measuredTextSize(
+                item.translatedText,
+                fontSize: minimumFontSize,
+                width: frame.width,
+                lineCount: 1
+            )
+            let result = NativeMirrorTextLayout(
+                frame: frame,
+                fontSize: minimumFontSize,
+                lineCount: 1,
+                text: item.translatedText,
+                textOriginX: oneLineTextOriginX(
+                    sourceRect: sourceRect,
+                    frame: frame,
+                    measuredWidth: measured.width * horizontalScale
+                ),
+                horizontalScale: horizontalScale
+            )
+            store(result, for: key)
+            return result
+        }
+
         let truncated = largestFittingTruncatedText(
             text: item.translatedText,
             referenceFontSize: referenceFontSize,
-            size: oneLineRect.size,
+            size: frame.size,
             lineCount: 1,
             horizontalScale: horizontalScale
         )
         let result = NativeMirrorTextLayout(
-            frame: oneLineRect,
-            fontSize: truncated?.fontSize ?? referenceFontSize * MirrorTextLayoutTuning.minimumFontScale,
+            frame: frame,
+            fontSize: truncated?.fontSize ?? minimumFontSize,
             lineCount: 1,
             text: truncated?.text ?? "…",
             textOriginX: oneLineTextOriginX(
                 sourceRect: sourceRect,
-                frame: oneLineRect,
+                frame: frame,
                 measuredWidth: measuredTextSize(
                     truncated?.text ?? "…",
-                    fontSize: truncated?.fontSize
-                        ?? referenceFontSize * MirrorTextLayoutTuning.minimumFontScale,
-                    width: oneLineRect.width,
+                    fontSize: truncated?.fontSize ?? minimumFontSize,
+                    width: frame.width,
                     lineCount: 1
                 ).width * horizontalScale
             ),
