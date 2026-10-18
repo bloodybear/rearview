@@ -70,5 +70,14 @@ if anotherInstanceIsRunning {
 let application = NSApplication.shared
 let delegate = AppDelegate()
 application.delegate = delegate
+#if !LST_EXCLUDE_DEBUG_FEATURES
+if CommandLine.arguments.contains(where: { $0.hasPrefix("--debug-select-region=") }) {
+    // Make the mirror window discoverable to desktop automation for this debug launch.
+    application.setActivationPolicy(.regular)
+} else {
+    application.setActivationPolicy(.accessory)
+}
+#else
 application.setActivationPolicy(.accessory)
+#endif
 application.run()

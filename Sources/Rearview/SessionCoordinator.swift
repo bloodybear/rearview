@@ -543,6 +543,9 @@ final class SessionCoordinator {
         latestFrame = nil
         pendingAutomaticFrame.clear()
         _ = prepareFrame(frame)
+        PresentationTrace.shared.record("manual.request", [
+            "frame": frame.id, "epoch": stabilityEpoch
+        ])
         delayedRefinementTask?.cancel()
         delayedRefinementTask = nil
         lastRealtimeOCR = .now
@@ -1062,6 +1065,12 @@ final class SessionCoordinator {
         if change.changedRatio > 0 {
             lastMotion = .now
             stabilityEpoch &+= 1
+            PresentationTrace.shared.record("visual.change", [
+                "frame": frame.id, "epoch": stabilityEpoch,
+                "ratio": change.changedRatio,
+                "motion": String(describing: change.motion.kind),
+                "inFlight": ocrTask != nil
+            ])
         }
         return change
     }
@@ -1138,6 +1147,11 @@ final class SessionCoordinator {
         let activeRevision = contentRevision
         ocrTaskSequence &+= 1
         let taskSequence = ocrTaskSequence
+        PresentationTrace.shared.record("schedule", [
+            "frame": frame.id, "mode": mode.rawValue,
+            "origin": String(describing: origin), "generation": activeGeneration,
+            "revision": activeRevision, "epoch": stabilityEpoch
+        ])
         if let roi {
             PerformanceProfiler.shared.increment("ocr.roiPercent", by: Int(roi.width * roi.height * 100))
         } else {
@@ -1240,6 +1254,9 @@ final class SessionCoordinator {
         let intervalElapsed = lastRealtimeOCR.duration(to: now) >= capturePolicy.realtimeOCRInterval
         guard refreshMode == .automatic, !paused, ocrTask == nil,
               let frame = pendingAutomaticFrame.take(when: intervalElapsed) else { return false }
+        PresentationTrace.shared.record("pending.consume", [
+            "frame": frame.id, "epoch": stabilityEpoch
+        ])
         lastRealtimeOCR = now
         scheduleOCR(
             frame, mode: initialOCRMode(for: refinementOCRPolicy.automaticStrategy), roi: nil
@@ -1323,6 +1340,18 @@ final class SessionCoordinator {
         }
 
         let recognized = batch.lines
+        if PresentationTrace.shared.enabled {
+            PresentationTrace.shared.record("ocr.result", [
+                "frame": frame.id, "mode": mode.rawValue,
+                "lines": recognized.map { line in
+                    [
+                        "id": line.id.uuidString,
+                        "rect": PresentationTrace.rect(line.normalizedRect),
+                        "confidence": line.confidence
+                    ] as [String: Any]
+                }
+            ])
+        }
         var debugItems = batch.debugItems
 
         let languageSpan = PerformanceProfiler.shared.begin(

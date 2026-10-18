@@ -128,6 +128,29 @@ private final class NativeMirrorRenderer {
             artwork = buildArtwork(for: frame)
             artworkFingerprint = fingerprint
             lastArtworkWasRebuilt = true
+            if PresentationTrace.shared.enabled {
+                let imageRect = CGRect(x: 0, y: 0, width: frame.image.width, height: frame.image.height)
+                PresentationTrace.shared.record("render", [
+                    "frame": frame.frameID,
+                    "items": frame.translatedItems.compactMap { item -> [String: Any]? in
+                        guard let layout = artwork?.layouts[item.id] else { return nil }
+                        let sourceRect = mirrorPixelAlignedRect(
+                            mirrorItemRect(normalizedRect: item.normalizedRect, imageRect: imageRect),
+                            backingScale: 1
+                        )
+                        return [
+                            "id": item.id.uuidString,
+                            "rect": PresentationTrace.rect(sourceRect),
+                            "referenceFont": referenceFontSize(
+                                for: mirrorMaximumTextHeight(for: sourceRect.height)
+                            ),
+                            "finalFont": layout.fontSize,
+                            "lineCount": layout.lineCount,
+                            "layoutRect": PresentationTrace.rect(layout.frame)
+                        ]
+                    }
+                ])
+            }
             compositeImage = nil
             compositeFingerprint = nil
             compositeOpacity = nil

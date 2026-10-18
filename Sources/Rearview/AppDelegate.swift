@@ -82,6 +82,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var permissionCheckGeneration: UInt = 0
     private var hasInstalledApplicationServices = false
     private var screenCapturePermissionGranted = false
+#if !LST_EXCLUDE_DEBUG_FEATURES
+    private var debugCaptureWindow: NSWindow?
+    private var debugCaptureStatusLabel: NSTextField?
+    private var debugTranslateButton: NSButton?
+#endif
 
     init(
         permissionClient: ScreenCapturePermissionClient = .live,
@@ -165,6 +170,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Task { @MainActor [weak self] in
                 try? await Task.sleep(for: .milliseconds(500))
                 await self?.runBenchmarkSession()
+            }
+        }
+        if let debugSelectionRegion = debugSelectionRegionFromCommandLine() {
+            shortcutLogger.info("Starting one-off debug capture region")
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .milliseconds(500))
+                guard let self, let screen = NSScreen.screens.first else { return }
+                self.showDebugCaptureStatusWindow(region: debugSelectionRegion)
+                self.startSession(ScreenSelectionResult(
+                    selection: debugSelectionRegion.rect(in: screen.frame),
+                    screen: screen,
+                    initialDockingState: MirrorDockingState.load(),
+                    displayMode: TranslationDisplayMode.load()
+                )) { [weak self] error in
+                    self?.updateDebugCaptureStatus(error: error)
+                }
             }
         }
 #endif
@@ -691,32 +712,117 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self else { return }
             switch result {
             case .success(let selectionResult):
-                Task { @MainActor [weak self] in
-                    guard let self else { return }
-                    await self.coordinator.stop()
-                    // Start in the display mode the user settled on during
-                    // selection (also persists it for the next session).
-                    self.coordinator.setDisplayMode(
-                        selectionResult.displayMode,
-                        focusBehavior: .preserveKeyWindow
-                    )
-                    do {
-                        try await self.coordinator.start(
-                            screen: selectionResult.screen,
-                            selection: selectionResult.selection,
-                            initialDockingState: selectionResult.initialDockingState,
-                            mirrorUpdateStyle: self.mirrorUpdateStyle
-                        )
-                    }
-                    catch {
-                        if !(error is CancellationError) { self.show(error: error) }
-                    }
-                }
+                self.startSession(selectionResult)
             case .failure(let error):
                 if !(error is CancellationError) { self.show(error: error) }
             }
         }
     }
+
+    private func startSession(
+        _ selectionResult: ScreenSelectionResult,
+        onComplete: ((Error?) -> Void)? = nil
+    ) {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.coordinator.stop()
+            // Start in the display mode the user settled on during selection
+            // (also persists it for the next session).
+            self.coordinator.setDisplayMode(
+                selectionResult.displayMode,
+                focusBehavior: .preserveKeyWindow
+            )
+            do {
+                try await self.coordinator.start(
+                    screen: selectionResult.screen,
+                    selection: selectionResult.selection,
+                    initialDockingState: selectionResult.initialDockingState,
+                    mirrorUpdateStyle: self.mirrorUpdateStyle
+                )
+                onComplete?(nil)
+            } catch {
+                onComplete?(error)
+                if !(error is CancellationError) { self.show(error: error) }
+            }
+        }
+    }
+
+#if !LST_EXCLUDE_DEBUG_FEATURES
+    private func showDebugCaptureStatusWindow(region: DebugSelectionRegion) {
+        let size = NSSize(width: 360, height: 132)
+        let window = NSWindow(
+            contentRect: NSRect(origin: .zero, size: size),
+            styleMask: [.titled, .closable],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = "Rearview Debug Capture"
+        window.isReleasedWhenClosed = false
+        window.isRestorable = false
+        window.collectionBehavior = [.fullScreenAuxiliary]
+        window.level = .normal
+
+        let label = NSTextField(wrappingLabelWithString: String(
+            format: "Capture session: starting\nRegion: %.3f, %.3f, %.3f, %.3f",
+            Double(region.x), Double(region.y), Double(region.width), Double(region.height)
+        ))
+        label.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
+        label.maximumNumberOfLines = 0
+        label.setAccessibilityIdentifier("rearview.debug-capture-status")
+        label.frame = NSRect(x: 14, y: 54, width: size.width - 28, height: 62)
+        label.autoresizingMask = [.width, .height]
+        window.contentView?.addSubview(label)
+
+        let translateButton = NSButton(
+            title: "Translate now",
+            target: self,
+            action: #selector(debugTranslateImmediately)
+        )
+        translateButton.bezelStyle = .rounded
+        translateButton.setAccessibilityIdentifier("rearview.debug-translate-now")
+        translateButton.isEnabled = false
+        translateButton.frame = NSRect(x: 14, y: 12, width: 140, height: 30)
+        debugTranslateButton = translateButton
+        window.contentView?.addSubview(translateButton)
+
+        window.setFrameOrigin(NSPoint(
+            x: (NSScreen.main?.visibleFrame.minX ?? 0) + 12,
+            y: (NSScreen.main?.visibleFrame.maxY ?? size.height) - size.height - 12
+        ))
+        debugCaptureWindow = window
+        debugCaptureStatusLabel = label
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    private func updateDebugCaptureStatus(error: Error?) {
+        if let error {
+            debugCaptureStatusLabel?.stringValue = "Capture session: failed\n\(error.localizedDescription)"
+            debugTranslateButton?.isEnabled = false
+        } else {
+            debugCaptureStatusLabel?.stringValue = "Capture session: active"
+            debugTranslateButton?.isEnabled = true
+        }
+    }
+
+    @objc private func debugTranslateImmediately() {
+        coordinator.translateImmediately()
+    }
+
+    private func debugSelectionRegionFromCommandLine() -> DebugSelectionRegion? {
+        guard let argument = CommandLine.arguments.first(where: {
+            $0.hasPrefix("--debug-select-region=")
+        }) else { return nil }
+        let value = String(argument.dropFirst("--debug-select-region=".count))
+        guard let region = DebugSelectionRegion(argumentValue: value) else {
+            shortcutLogger.error(
+                "Ignoring invalid --debug-select-region; expected normalized x,y,width,height"
+            )
+            return nil
+        }
+        return region
+    }
+#endif
 
     private func selectMirrorUpdateStyle(_ style: MirrorUpdateStyle) {
         guard mirrorUpdateStyle != style else { return }
