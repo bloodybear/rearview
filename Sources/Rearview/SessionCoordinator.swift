@@ -153,6 +153,7 @@ final class SessionCoordinator {
     private var windowTrackingAnchor: WindowTrackingAnchor?
     private var selectionInteractionActive = false
     private var ocrTaskRevision: Int?
+    private var ocrTaskSequence: UInt64 = 0
     private var lastRealtimeOCR = ContinuousClock.now - .seconds(2)
     private var lastMotion = ContinuousClock.now
     private var lastRealtimeLines: [RecognizedLine] = []
@@ -541,7 +542,9 @@ final class SessionCoordinator {
         guard let frame = latestCapturedFrame, ocrTask == nil else { return }
         latestFrame = nil
         pendingAutomaticFrame.clear()
-        changes.reset()
+        _ = prepareFrame(frame)
+        delayedRefinementTask?.cancel()
+        delayedRefinementTask = nil
         lastRealtimeOCR = .now
         scheduleOCR(
             frame, mode: initialOCRMode(for: strategy), roi: nil,
@@ -1053,16 +1056,21 @@ final class SessionCoordinator {
         }
     }
 
-    private func processMirrorFrame(_ frame: FrameEnvelope) {
+    private func prepareFrame(_ frame: FrameEnvelope) -> FrameChange {
         let change = changes.analyze(frame.image)
-        PerformanceProfiler.shared.increment(
-            "change.tilesPercent", by: Int(change.changedRatio * 100)
-        )
+        PerformanceProfiler.shared.increment("change.tilesPercent", by: Int(change.changedRatio * 100))
+        if change.changedRatio > 0 {
+            lastMotion = .now
+            stabilityEpoch &+= 1
+        }
+        return change
+    }
+
+    private func processMirrorFrame(_ frame: FrameEnvelope) {
+        let change = prepareFrame(frame)
         let hasVisualChange = change.changedRatio > 0
         let now = ContinuousClock.now
         if hasVisualChange {
-            lastMotion = now
-            stabilityEpoch &+= 1
             if change.motion.kind == .sceneChange {
                 pendingAutomaticFrame.clear()
                 delayedRefinementTask?.cancel()
@@ -1128,6 +1136,8 @@ final class SessionCoordinator {
     ) {
         let activeGeneration = generation
         let activeRevision = contentRevision
+        ocrTaskSequence &+= 1
+        let taskSequence = ocrTaskSequence
         if let roi {
             PerformanceProfiler.shared.increment("ocr.roiPercent", by: Int(roi.width * roi.height * 100))
         } else {
@@ -1145,7 +1155,8 @@ final class SessionCoordinator {
                 frame, mode: mode, roi: roi, generation: activeGeneration,
                 revision: activeRevision, origin: origin
             )
-            if self.generation == activeGeneration, self.ocrTaskRevision == activeRevision {
+            if self.generation == activeGeneration, self.ocrTaskRevision == activeRevision,
+               self.ocrTaskSequence == taskSequence {
                 self.ocrTask = nil
                 self.ocrTaskRevision = nil
                 if self.processPendingAutomaticFrameIfPossible() { return }
@@ -1194,6 +1205,8 @@ final class SessionCoordinator {
     private func scheduleInitialOCRComparison(_ frame: FrameEnvelope) {
         let activeGeneration = generation
         let activeRevision = contentRevision
+        ocrTaskSequence &+= 1
+        let taskSequence = ocrTaskSequence
         ocrTaskRevision = activeRevision
         ocrTask = Task { [weak self] in
             guard let self else { return }
@@ -1212,7 +1225,8 @@ final class SessionCoordinator {
             } catch {
                 self.logger.error("Initial OCR comparison failed: \(error.localizedDescription, privacy: .public)")
             }
-            if self.generation == activeGeneration, self.ocrTaskRevision == activeRevision {
+            if self.generation == activeGeneration, self.ocrTaskRevision == activeRevision,
+               self.ocrTaskSequence == taskSequence {
                 self.ocrTask = nil
                 self.ocrTaskRevision = nil
                 _ = self.processPendingAutomaticFrameIfPossible()
