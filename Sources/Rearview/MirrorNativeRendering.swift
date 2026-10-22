@@ -390,16 +390,16 @@ private final class NativeMirrorRenderer {
 
         let minimumFontSize = referenceFontSize * MirrorTextLayoutTuning.minimumFontScale
         var frame = oneLineRect
-        let requiredWidth = measuredTextSize(
+        let minimumRequiredWidth = measuredTextSize(
             item.translatedText,
             fontSize: minimumFontSize,
             width: .greatestFiniteMagnitude,
             lineCount: 1
         ).width * horizontalScale
-        if requiredWidth > frame.width + 0.5 {
+        if minimumRequiredWidth > frame.width + 0.5 {
             frame = mirrorOneLineTextRect(
                 sourceRect: sourceRect,
-                requiredWidth: requiredWidth,
+                requiredWidth: minimumRequiredWidth,
                 otherRects: expansion.otherRects,
                 reservedCollisionRects: expansion.reservedCollisionRects,
                 inside: expansion.bounds,
