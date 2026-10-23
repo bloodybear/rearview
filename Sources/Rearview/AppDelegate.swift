@@ -86,6 +86,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var debugCaptureWindow: NSWindow?
     private var debugCaptureStatusLabel: NSTextField?
     private var debugTranslateButton: NSButton?
+    private var debugCaptureTranscriptURL: URL?
+    private var debugCaptureDetails = ""
+    private var debugCaptureTranscript: DebugCaptureTextTranscript?
 #endif
 
     init(
@@ -177,13 +180,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Task { @MainActor [weak self] in
                 try? await Task.sleep(for: .milliseconds(500))
                 guard let self, let screen = NSScreen.screens.first else { return }
-                self.showDebugCaptureStatusWindow(region: debugSelectionRegion)
+                let transcript: DebugCaptureTextTranscript?
+                do {
+                    transcript = try DebugCaptureTextTranscript(region: [
+                        Double(debugSelectionRegion.x), Double(debugSelectionRegion.y),
+                        Double(debugSelectionRegion.width), Double(debugSelectionRegion.height)
+                    ])
+                } catch {
+                    transcript = nil
+                    self.shortcutLogger.error(
+                        "Could not create debug text transcript: \(error.localizedDescription, privacy: .public)"
+                    )
+                }
+                self.debugCaptureTranscript = transcript
+                self.showDebugCaptureStatusWindow(
+                    region: debugSelectionRegion, transcriptURL: transcript?.url
+                )
                 self.startSession(ScreenSelectionResult(
                     selection: debugSelectionRegion.rect(in: screen.frame),
                     screen: screen,
                     initialDockingState: MirrorDockingState.load(),
                     displayMode: TranslationDisplayMode.load()
-                )) { [weak self] error in
+                ), debugCaptureTranscript: transcript) { [weak self] error in
+                    if error != nil { transcript?.close() }
                     self?.updateDebugCaptureStatus(error: error)
                 }
             }
@@ -201,6 +220,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         permissionCheckGeneration &+= 1
         permissionCheckTask?.cancel()
         selector.cancel()
+#if !LST_EXCLUDE_DEBUG_FEATURES
+        debugCaptureTranscript?.close()
+#endif
     }
 
     private func installTranslationHost() {
@@ -721,6 +743,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func startSession(
         _ selectionResult: ScreenSelectionResult,
+        debugCaptureTranscript: DebugCaptureTextTranscript? = nil,
         onComplete: ((Error?) -> Void)? = nil
     ) {
         Task { @MainActor [weak self] in
@@ -737,7 +760,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     screen: selectionResult.screen,
                     selection: selectionResult.selection,
                     initialDockingState: selectionResult.initialDockingState,
-                    mirrorUpdateStyle: self.mirrorUpdateStyle
+                    mirrorUpdateStyle: self.mirrorUpdateStyle,
+                    debugCaptureTranscript: debugCaptureTranscript
                 )
                 onComplete?(nil)
             } catch {
@@ -748,8 +772,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
 #if !LST_EXCLUDE_DEBUG_FEATURES
-    private func showDebugCaptureStatusWindow(region: DebugSelectionRegion) {
-        let size = NSSize(width: 360, height: 132)
+    private func showDebugCaptureStatusWindow(
+        region: DebugSelectionRegion, transcriptURL: URL?
+    ) {
+        let size = NSSize(width: 480, height: 184)
         let window = NSWindow(
             contentRect: NSRect(origin: .zero, size: size),
             styleMask: [.titled, .closable],
@@ -762,14 +788,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.collectionBehavior = [.fullScreenAuxiliary]
         window.level = .normal
 
-        let label = NSTextField(wrappingLabelWithString: String(
-            format: "Capture session: starting\nRegion: %.3f, %.3f, %.3f, %.3f",
-            Double(region.x), Double(region.y), Double(region.width), Double(region.height)
-        ))
+        debugCaptureTranscriptURL = transcriptURL
+        debugCaptureDetails = String(
+            format: "Region: %.3f, %.3f, %.3f, %.3f\nTranscript: %@",
+            Double(region.x), Double(region.y), Double(region.width), Double(region.height),
+            transcriptURL?.path ?? "unavailable"
+        )
+        let label = NSTextField(wrappingLabelWithString:
+            "Capture session: starting\n\(debugCaptureDetails)"
+        )
         label.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
         label.maximumNumberOfLines = 0
         label.setAccessibilityIdentifier("rearview.debug-capture-status")
-        label.frame = NSRect(x: 14, y: 54, width: size.width - 28, height: 62)
+        label.frame = NSRect(x: 14, y: 58, width: size.width - 28, height: 112)
         label.autoresizingMask = [.width, .height]
         window.contentView?.addSubview(label)
 
@@ -785,6 +816,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         debugTranslateButton = translateButton
         window.contentView?.addSubview(translateButton)
 
+        let transcriptButton = NSButton(
+            title: "Show transcript",
+            target: self,
+            action: #selector(showDebugCaptureTranscript)
+        )
+        transcriptButton.bezelStyle = .rounded
+        transcriptButton.setAccessibilityIdentifier("rearview.debug-show-transcript")
+        transcriptButton.isEnabled = transcriptURL != nil
+        transcriptButton.frame = NSRect(x: 164, y: 12, width: 150, height: 30)
+        window.contentView?.addSubview(transcriptButton)
+
         window.setFrameOrigin(NSPoint(
             x: (NSScreen.main?.visibleFrame.minX ?? 0) + 12,
             y: (NSScreen.main?.visibleFrame.maxY ?? size.height) - size.height - 12
@@ -797,16 +839,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func updateDebugCaptureStatus(error: Error?) {
         if let error {
-            debugCaptureStatusLabel?.stringValue = "Capture session: failed\n\(error.localizedDescription)"
+            debugCaptureStatusLabel?.stringValue =
+                "Capture session: failed\n\(error.localizedDescription)\n\(debugCaptureDetails)"
             debugTranslateButton?.isEnabled = false
         } else {
-            debugCaptureStatusLabel?.stringValue = "Capture session: active"
+            debugCaptureStatusLabel?.stringValue = "Capture session: active\n\(debugCaptureDetails)"
             debugTranslateButton?.isEnabled = true
         }
     }
 
     @objc private func debugTranslateImmediately() {
         coordinator.translateImmediately()
+    }
+
+    @objc private func showDebugCaptureTranscript() {
+        guard let debugCaptureTranscriptURL else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([debugCaptureTranscriptURL])
     }
 
     private func debugSelectionRegionFromCommandLine() -> DebugSelectionRegion? {

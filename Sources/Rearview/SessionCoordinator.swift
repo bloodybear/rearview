@@ -161,6 +161,7 @@ final class SessionCoordinator {
     private var stabilityEpoch: UInt64 = 0
     private var lastRefinementEpoch: UInt64?
     private var benchmarkDiagnostics = false
+    private var debugCaptureTranscript: DebugCaptureTextTranscript?
     private var initialComparisonStarted = false
     private let logger = Logger(subsystem: "io.github.bloodybear.rearview", category: "pipeline")
 
@@ -191,7 +192,8 @@ final class SessionCoordinator {
         initialDockingState: MirrorDockingState? = nil,
         mirrorUpdateStyle: MirrorUpdateStyle = .atomic,
         captureTarget: CaptureTarget = .allContent,
-        benchmarkDiagnostics: Bool = false
+        benchmarkDiagnostics: Bool = false,
+        debugCaptureTranscript: DebugCaptureTextTranscript? = nil
     ) async throws {
         await stop()
         self.selection = selection
@@ -228,6 +230,7 @@ final class SessionCoordinator {
         guard let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber else {
             throw TranslatorError.noDisplay
         }
+        self.debugCaptureTranscript = debugCaptureTranscript
 
         do {
             try await capture.start(
@@ -288,6 +291,8 @@ final class SessionCoordinator {
         captureTarget = .allContent
         availableApplications = []
         paused = false
+        debugCaptureTranscript?.close()
+        debugCaptureTranscript = nil
         await capture.stop()
     }
 
@@ -554,6 +559,41 @@ final class SessionCoordinator {
             followWithRefinement: strategy == .realtimeThenRefinement,
             origin: .userAction
         )
+    }
+
+    private func recordDebugCaptureText(
+        frameID: UInt64,
+        mode: OCRMode,
+        recognizedLines: [RecognizedLine],
+        translatableLines: [RecognizedLine],
+        translations: [TranslationResult]
+    ) {
+        guard let debugCaptureTranscript else { return }
+        let translationByID = Dictionary(uniqueKeysWithValues: translations.map {
+            ($0.line.id, $0.translated)
+        })
+        let translatableIDs = Set(translatableLines.map(\.id))
+        let records = recognizedLines.map { line -> DebugCaptureTranscriptLine in
+            let translatedText = translationByID[line.id]
+            let status: DebugCaptureTranscriptLine.TranslationStatus
+            if translatedText != nil {
+                status = .translated
+            } else if translatableIDs.contains(line.id) {
+                status = .translationFailed
+            } else {
+                status = .notSourceLanguage
+            }
+            let rect = line.normalizedRect
+            return DebugCaptureTranscriptLine(
+                id: line.id.uuidString,
+                sourceText: line.sourceText,
+                translatedText: translatedText,
+                translationStatus: status,
+                confidence: Double(line.confidence),
+                rect: [Double(rect.minX), Double(rect.minY), Double(rect.width), Double(rect.height)]
+            )
+        }
+        debugCaptureTranscript.record(frameID: frameID, mode: mode, lines: records)
     }
 
     private func display(_ frame: MirrorFrame) {
@@ -1427,6 +1467,10 @@ final class SessionCoordinator {
                 .endToEnd, startedAt: frame.receivedAt, frameID: frame.id,
                 itemCount: items.count, mode: "mirror"
             )
+            recordDebugCaptureText(
+                frameID: frame.id, mode: mode, recognizedLines: recognized,
+                translatableLines: lines, translations: completed
+            )
             return
         }
 
@@ -1486,6 +1530,10 @@ final class SessionCoordinator {
                 }
                 showProcessingStatus(
                     .completed(failures: lines.count - completed.count), frameID: frame.id, origin: origin
+                )
+                recordDebugCaptureText(
+                    frameID: frame.id, mode: mode, recognizedLines: recognized,
+                    translatableLines: lines, translations: completed
                 )
             }
         }
