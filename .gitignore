@@ -9,3 +9,9 @@ DerivedData/
 .idea/
 .local/
 .codegraph/
+
+# Developer-local Notion fixture state
+notion-fixtures/state.json
+notion-fixtures/state.json.lock
+notion-fixtures/.state-*.tmp
+notion-fixtures/**/__pycache__/

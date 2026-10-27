@@ -1,0 +1,20 @@
+{
+  "kind": "database",
+  "page": {
+    "properties": {
+      "title": {
+        "title": [
+          {
+            "text": {
+              "content": "日本語の申請一覧｜表・カード・長いセル"
+            }
+          }
+        ]
+      }
+    }
+  },
+  "databaseTitle": "申請と確認の一覧",
+  "schema": "schema.json",
+  "rows": "rows.json",
+  "views": "views.json"
+}

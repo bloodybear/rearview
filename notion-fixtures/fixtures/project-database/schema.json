@@ -1,0 +1,68 @@
+{
+  "properties": {
+    "件名": {
+      "title": {}
+    },
+    "備考": {
+      "rich_text": {}
+    },
+    "状態": {
+      "status": {}
+    },
+    "優先度": {
+      "select": {
+        "options": [
+          {
+            "name": "高",
+            "color": "red"
+          },
+          {
+            "name": "中",
+            "color": "yellow"
+          },
+          {
+            "name": "低",
+            "color": "blue"
+          }
+        ]
+      }
+    },
+    "分類": {
+      "multi_select": {
+        "options": [
+          {
+            "name": "文字と座標",
+            "color": "purple"
+          },
+          {
+            "name": "表示と折り返し",
+            "color": "green"
+          },
+          {
+            "name": "意味の保持",
+            "color": "orange"
+          }
+        ]
+      }
+    },
+    "見積時間": {
+      "number": {
+        "format": "number"
+      }
+    },
+    "確認済み": {
+      "checkbox": {}
+    },
+    "予定": {
+      "date": {}
+    },
+    "参照先": {
+      "url": {}
+    },
+    "見積時間の二倍": {
+      "formula": {
+        "expression": "prop(\"見積時間\") * 2"
+      }
+    }
+  }
+}

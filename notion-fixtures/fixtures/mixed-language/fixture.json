@@ -1,0 +1,17 @@
+{
+  "kind": "document",
+  "page": {
+    "properties": {
+      "title": {
+        "title": [
+          {
+            "text": {
+              "content": "日本語を中心にした多言語の混在"
+            }
+          }
+        ]
+      }
+    }
+  },
+  "content": "content.md"
+}

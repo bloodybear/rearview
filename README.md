@@ -58,3 +58,7 @@ swift test
 ## Privacy
 
 Screen captures, OCR results, and translations are processed locally. Rearview does not send screen content to an external translation service. By default, mixed text is translated as one unit to preserve context; the optional non-source text protection mode preserves English, Korean, and numeric text but may reduce translation context.
+
+## Notion AX fixtures
+
+The independent [Notion fixture manager](notion-fixtures/README.md) creates and restores developer-local Notion documents for AX testing. It uses Python and the official `ntn` CLI.

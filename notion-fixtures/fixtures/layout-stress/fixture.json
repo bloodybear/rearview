@@ -1,0 +1,17 @@
+{
+  "kind": "document",
+  "page": {
+    "properties": {
+      "title": {
+        "title": [
+          {
+            "text": {
+              "content": "表示領域の境界｜改行・列・切り抜き"
+            }
+          }
+        ]
+      }
+    }
+  },
+  "content": "content.md"
+}

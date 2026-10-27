@@ -1,0 +1,54 @@
+#!/usr/bin/env python3
+"""Developer-local Notion AX fixture manager."""
+import argparse
+import sys
+from pathlib import Path
+
+from fixture_tool.definitions import FixtureError, definitions
+from fixture_tool.manager import Manager, State
+from fixture_tool.ntn import Notion
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    commands = parser.add_subparsers(dest="command", required=True)
+    for name in ("ensure", "reset"):
+        command = commands.add_parser(name)
+        command.add_argument("fixture_name", nargs="?")
+        if name == "ensure":
+            command.add_argument("--parent", help="Dedicated test page URL or UUID (first run only)")
+    commands.add_parser("list")
+    args = parser.parse_args()
+    root = Path(__file__).resolve().parent
+    try:
+        fixtures = definitions(root, getattr(args, "fixture_name", None)) if args.command != "list" else []
+        with State(root) as state:
+            if args.command == "list":
+                management = state.data.get("root", {})
+                print("Management root:", management.get("url") or management.get("pageId", "(not initialized)"))
+                if state.data.get("createWarnings"):
+                    print("WARNING: unresolved parser warnings; see state.json and README")
+                if state.data.get("inFlightCreate"):
+                    print("WARNING: unresolved create; see state.json and README")
+                for name, entry in sorted(state.data["fixtures"].items()):
+                    print(f"{name}\t{entry.get('status', 'incomplete')}\tpage={entry.get('pageId', '-')}\t{entry.get('url', '')}")
+                    if entry.get("databaseId"):
+                        print(f"  database={entry['databaseId']} dataSource={entry.get('dataSourceId', '-')}")
+                        print(f"  rows={','.join(entry.get('rowIds', []))} views={','.join(entry.get('viewIds', []))}")
+                return 0
+            manager = Manager(Notion(), state)
+            manager.initialize(getattr(args, "parent", None))
+            for definition in fixtures:
+                action, entry = manager.ensure(definition, force=args.command == "reset")
+                print(f"{definition.name}\t{action}\t{entry.get('url') or entry['pageId']}")
+        return 0
+    except (FixtureError, OSError, KeyError, TypeError, ValueError) as exc:
+        print(f"fixture: {exc}", file=sys.stderr)
+        return 1
+    except KeyboardInterrupt:
+        print("fixture: interrupted; recorded progress is preserved", file=sys.stderr)
+        return 130
+
+
+if __name__ == "__main__":
+    sys.exit(main())
