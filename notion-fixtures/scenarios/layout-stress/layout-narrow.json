@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "id": "layout-narrow",
+  "name": "狭いウィンドウ・100%・先頭",
+  "version": 1,
+  "fixtureId": "layout-stress",
+  "fixtureVersion": "447566fd89c4aeb8ce6c343947e68c5196da9c81f2e964881d3854d02895ff4d",
+  "state": {
+    "coordinateSystem": "screen-top-left-points",
+    "window": {
+      "x": 0,
+      "y": 60,
+      "width": 640,
+      "height": 700
+    },
+    "zoomPercent": 100,
+    "sidebarOpen": false,
+    "scroll": {
+      "mode": "top"
+    },
+    "focus": {
+      "mode": "clear"
+    },
+    "required": [
+      "target",
+      "window",
+      "zoom",
+      "sidebar",
+      "scroll",
+      "focus",
+      "screenshot",
+      "finalState"
+    ]
+  }
+}

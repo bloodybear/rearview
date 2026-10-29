@@ -51,6 +51,14 @@ class Notion:
         self.env = os.environ.copy()
         self.env["NO_COLOR"] = "1"
         self.last_call = 0.0
+        self.request_timeout = 120
+        self.deadline = None
+
+    def remaining_timeout(self):
+        remaining = self.request_timeout if self.deadline is None else min(self.request_timeout, self.deadline - time.monotonic())
+        if remaining <= 0:
+            raise APIError("Notion read deadline exceeded", code="timeout")
+        return remaining
 
     def request(self, method, path, body=None, query=None):
         args = [self.executable, "api", path, "-X", method,
@@ -60,9 +68,11 @@ class Notion:
             time.sleep(max(0, .35 - (time.monotonic() - self.last_call)))
             try:
                 result = subprocess.run(args, input=json.dumps(body, ensure_ascii=False) if body is not None else "",
-                                        text=True, capture_output=True, env=self.env, timeout=120)
+                                        text=True, capture_output=True, env=self.env, timeout=self.remaining_timeout())
             except (OSError, subprocess.TimeoutExpired) as exc:
-                raise APIError(f"{method} {path}: transport failure ({type(exc).__name__}); write outcome may be unknown") from exc
+                write_note = "; write outcome may be unknown" if method != "GET" else ""
+                raise APIError(f"{method} {path}: transport failure ({type(exc).__name__}){write_note}",
+                               code="timeout" if isinstance(exc, subprocess.TimeoutExpired) else "transport_error") from exc
             finally:
                 self.last_call = time.monotonic()
             obj = decode_object(result.stdout) or decode_object(result.stderr)

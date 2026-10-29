@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "id": "layout-toggle-open",
+  "name": "トグルを開く",
+  "version": 1,
+  "fixtureId": "layout-stress",
+  "fixtureVersion": "447566fd89c4aeb8ce6c343947e68c5196da9c81f2e964881d3854d02895ff4d",
+  "state": {
+    "coordinateSystem": "screen-top-left-points",
+    "window": {
+      "x": 0,
+      "y": 60,
+      "width": 1024,
+      "height": 700
+    },
+    "zoomPercent": 100,
+    "sidebarOpen": false,
+    "scroll": {
+      "mode": "anchor",
+      "anchor": {
+        "text": "開く前に見えている見出し",
+        "blockClass": "notion-toggle-block"
+      },
+      "offset": 80
+    },
+    "focus": {
+      "mode": "clear"
+    },
+    "required": [
+      "target",
+      "window",
+      "zoom",
+      "sidebar",
+      "scroll",
+      "focus",
+      "screenshot",
+      "finalState",
+      "toggle.0"
+    ],
+    "toggles": [
+      {
+        "anchor": {
+          "text": "開く前に見えている見出し",
+          "blockClass": "notion-toggle-block"
+        },
+        "expanded": true
+      }
+    ]
+  }
+}

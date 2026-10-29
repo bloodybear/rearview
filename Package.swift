@@ -6,7 +6,8 @@ let package = Package(
     platforms: [.macOS(.v15)],
     products: [
         .executable(name: "Rearview", targets: ["Rearview"]),
-        .executable(name: "BenchmarkFixture", targets: ["BenchmarkFixture"])
+        .executable(name: "BenchmarkFixture", targets: ["BenchmarkFixture"]),
+        .executable(name: "NotionScenarios", targets: ["NotionScenarios"])
     ],
     dependencies: [
         .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.9.6")
@@ -22,6 +23,9 @@ let package = Package(
             ]
         ),
         .executableTarget(name: "BenchmarkFixture"),
+        .target(name: "NotionScenarioCore"),
+        .executableTarget(name: "NotionScenarios", dependencies: ["NotionScenarioCore"]),
+        .testTarget(name: "NotionScenarioTests", dependencies: ["NotionScenarioCore"]),
         .testTarget(
             name: "RearviewTests",
             dependencies: ["Rearview"],

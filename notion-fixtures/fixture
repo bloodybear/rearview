@@ -7,6 +7,7 @@ from pathlib import Path
 from fixture_tool.definitions import FixtureError, definitions
 from fixture_tool.manager import Manager, State
 from fixture_tool.ntn import Notion
+from fixture_tool.scenarios import add_parser, dispatch
 
 
 def main():
@@ -18,9 +19,12 @@ def main():
         if name == "ensure":
             command.add_argument("--parent", help="Dedicated test page URL or UUID (first run only)")
     commands.add_parser("list")
+    add_parser(commands)
     args = parser.parse_args()
     root = Path(__file__).resolve().parent
     try:
+        if args.command == "scenario":
+            return dispatch(root, args)
         fixtures = definitions(root, getattr(args, "fixture_name", None)) if args.command != "list" else []
         with State(root) as state:
             if args.command == "list":

@@ -15,3 +15,7 @@ notion-fixtures/state.json
 notion-fixtures/state.json.lock
 notion-fixtures/.state-*.tmp
 notion-fixtures/**/__pycache__/
+
+# Local screen scenario runs (screenshots and AX observations)
+notion-fixtures/runs/
+notion-fixtures/scenarios/**/.scenario-*
