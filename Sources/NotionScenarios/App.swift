@@ -73,8 +73,8 @@ private extension View {
     }
 
     func scenarioIconButtonHighlight() -> some View {
-        padding(6)
-            .frame(minWidth: 30, minHeight: 30)
+        padding(3)
+            .frame(minWidth: 24, minHeight: 24)
             .scenarioHoverHighlight()
     }
 }
