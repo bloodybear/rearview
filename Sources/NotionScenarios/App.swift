@@ -64,11 +64,16 @@ struct Listing: Decodable { var fixtures: [FixtureItem]; var scenarios: [Scenari
     @Published var lastRunOperation = ""
     @Published var lastRunFixtureId = ""
     @Published var lastRunScenarioId = ""
+    @Published var lastRunScenarioVersion: Int?
     @Published var lastRunId = ""
     @Published var lastRunStartedAt = ""
     @Published var lastRunStatus = ""
     @Published var savedScenarioId: String?
     @Published var screenshotCapturedAt = ""
+    @Published var savedCaptureDirectory: URL?
+    @Published var savedCaptureImage: NSImage?
+    @Published var savedCaptureAt = ""
+    @Published var screenshotComparison = ""
     var current: Scenario? { scenarios.first { $0.id == selected } }
     var lastRunOperationLabel: String {
         switch lastRunOperation {
@@ -79,6 +84,7 @@ struct Listing: Decodable { var fixtures: [FixtureItem]; var scenarios: [Scenari
     }
     var lastRunTimeLabel: String { formatTimestamp(lastRunStartedAt) }
     var screenshotTimeLabel: String { formatTimestamp(screenshotCapturedAt) }
+    var savedCaptureTimeLabel: String { formatTimestamp(savedCaptureAt) }
     private func formatTimestamp(_ value: String) -> String {
         guard !value.isEmpty else { return "" }
         let formatter = ISO8601DateFormatter()
@@ -144,8 +150,9 @@ struct Listing: Decodable { var fixtures: [FixtureItem]; var scenarios: [Scenari
     }
     func loadLatestRun() {
         lastRunOperation = ""; lastRunFixtureId = ""; lastRunScenarioId = ""
-        lastRunId = ""; lastRunStartedAt = ""; lastRunStatus = ""
+        lastRunScenarioVersion = nil; lastRunId = ""; lastRunStartedAt = ""; lastRunStatus = ""
         savedScenarioId = nil; screenshotCapturedAt = ""
+        savedCaptureDirectory = nil; savedCaptureImage = nil; savedCaptureAt = ""; screenshotComparison = ""
         runStatus = ""; stepResults = []; summary = ""; runDirectory = nil; image = nil
         guard let root,
               let directories = try? FileManager.default.contentsOfDirectory(
@@ -165,6 +172,7 @@ struct Listing: Decodable { var fixtures: [FixtureItem]; var scenarios: [Scenari
             lastRunOperation = operation
             lastRunFixtureId = value["fixtureId"] as? String ?? requestedScenario["fixtureId"] as? String ?? ""
             lastRunScenarioId = value["scenarioId"] as? String ?? requestedScenario["id"] as? String ?? ""
+            lastRunScenarioVersion = value["scenarioVersion"] as? Int ?? requestedScenario["version"] as? Int
             lastRunId = value["runId"] as? String ?? directory.lastPathComponent
             lastRunStartedAt = value["startedAt"] as? String ?? ""
             lastRunStatus = status; runStatus = status
@@ -175,9 +183,79 @@ struct Listing: Decodable { var fixtures: [FixtureItem]; var scenarios: [Scenari
             summary = String(data: (try? JSONSerialization.data(withJSONObject: value, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])) ?? resultData, encoding: .utf8) ?? ""
             runDirectory = directory
             image = NSImage(contentsOf: directory.appendingPathComponent("screen.png"))
+            loadSavedCaptureComparison()
             messages = "Loaded latest saved run: \(lastRunId)"
             return
         }
+    }
+    func loadSavedCaptureComparison() {
+        savedCaptureDirectory = nil; savedCaptureImage = nil; savedCaptureAt = ""; screenshotComparison = ""
+        guard lastRunOperation == "apply", let expectedVersion = lastRunScenarioVersion,
+              let currentImage = image, let root,
+              let directories = try? FileManager.default.contentsOfDirectory(
+                at: root.appendingPathComponent("runs"), includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]
+              ) else { return }
+        for directory in directories.sorted(by: { $0.lastPathComponent > $1.lastPathComponent }) {
+            let resultURL = directory.appendingPathComponent("result.json")
+            let requestURL = directory.appendingPathComponent("request.json")
+            guard let resultData = try? Data(contentsOf: resultURL),
+                  let value = try? JSONSerialization.jsonObject(with: resultData) as? [String: Any],
+                  let requestData = try? Data(contentsOf: requestURL),
+                  let request = try? JSONSerialization.jsonObject(with: requestData) as? [String: Any],
+                  request["operation"] as? String == "capture",
+                  value["status"] as? String != "running",
+                  value["fixtureId"] as? String == lastRunFixtureId,
+                  value["scenarioId"] as? String == lastRunScenarioId,
+                  value["scenarioVersion"] as? Int == expectedVersion,
+                  value["savedScenario"] as? String == lastRunScenarioId,
+                  let screenshot = value["screenshot"] as? [String: Any],
+                  let capturedAt = screenshot["capturedAt"] as? String else { continue }
+            let captureDirectory = directory.appendingPathComponent("screen.png")
+            guard let captureImage = NSImage(contentsOf: captureDirectory) else { continue }
+            savedCaptureDirectory = directory
+            savedCaptureImage = captureImage
+            savedCaptureAt = capturedAt
+            screenshotComparison = compareImages(captureImage, currentImage)
+            return
+        }
+    }
+    private func compareImages(_ saved: NSImage, _ applied: NSImage) -> String {
+        guard let savedCG = saved.cgImage(forProposedRect: nil, context: nil, hints: nil),
+              let appliedCG = applied.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
+            return "Pixel comparison unavailable: an image could not be decoded."
+        }
+        guard savedCG.width == appliedCG.width, savedCG.height == appliedCG.height else {
+            return "Image sizes differ: saved \(savedCG.width) × \(savedCG.height), applied \(appliedCG.width) × \(appliedCG.height)."
+        }
+        guard let savedPixels = rgbaPixels(savedCG), let appliedPixels = rgbaPixels(appliedCG) else {
+            return "Pixel comparison unavailable: image data could not be read."
+        }
+        let pixelCount = savedCG.width * savedCG.height
+        var differentPixels = 0
+        for pixel in 0..<pixelCount {
+            let offset = pixel * 4
+            if savedPixels[offset] != appliedPixels[offset] || savedPixels[offset + 1] != appliedPixels[offset + 1] ||
+                savedPixels[offset + 2] != appliedPixels[offset + 2] || savedPixels[offset + 3] != appliedPixels[offset + 3] {
+                differentPixels += 1
+            }
+        }
+        if differentPixels == 0 { return "All pixels identical (\(savedCG.width) × \(savedCG.height))." }
+        let matchPercent = 100 * (1 - Double(differentPixels) / Double(pixelCount))
+        return String(format: "%.2f%% pixels identical · %d of %d differ", matchPercent, differentPixels, pixelCount)
+    }
+    private func rgbaPixels(_ image: CGImage) -> [UInt8]? {
+        let width = image.width, height = image.height
+        guard width > 0, height > 0, let colorSpace = CGColorSpace(name: CGColorSpace.sRGB) else { return nil }
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        let bitmapInfo = CGBitmapInfo.byteOrder32Big.rawValue | CGImageAlphaInfo.premultipliedLast.rawValue
+        let rendered = pixels.withUnsafeMutableBytes { buffer -> Bool in
+            guard let baseAddress = buffer.baseAddress,
+                  let context = CGContext(data: baseAddress, width: width, height: height, bitsPerComponent: 8,
+                                          bytesPerRow: width * 4, space: colorSpace, bitmapInfo: bitmapInfo) else { return false }
+            context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+            return true
+        }
+        return rendered ? pixels : nil
     }
     func create() {
         guard canUseNewId else { messages = newIdIssue ?? "Enter a scenario ID"; return }
@@ -228,6 +306,7 @@ struct Listing: Decodable { var fixtures: [FixtureItem]; var scenarios: [Scenari
         lastRunId = value["runId"] as? String ?? lastRunId
         lastRunFixtureId = value["fixtureId"] as? String ?? lastRunFixtureId
         lastRunScenarioId = value["scenarioId"] as? String ?? lastRunScenarioId
+        lastRunScenarioVersion = value["scenarioVersion"] as? Int ?? lastRunScenarioVersion
         lastRunStartedAt = value["startedAt"] as? String ?? lastRunStartedAt
         savedScenarioId = value["savedScenario"] as? String
         screenshotCapturedAt = (value["screenshot"] as? [String: Any])?["capturedAt"] as? String ?? ""
@@ -239,6 +318,7 @@ struct Listing: Decodable { var fixtures: [FixtureItem]; var scenarios: [Scenari
             runDirectory = URL(fileURLWithPath: path)
             image = NSImage(contentsOf: runDirectory!.appendingPathComponent("screen.png"))
         }
+        loadSavedCaptureComparison()
     }
     func command(_ arguments: [String], resetProgress: Bool = true, result: @escaping @MainActor (Data) -> Void) {
         guard !busy, let root else { return }
@@ -251,8 +331,10 @@ struct Listing: Decodable { var fixtures: [FixtureItem]; var scenarios: [Scenari
                 lastRunOperation = operation
                 lastRunFixtureId = fixtureId
                 lastRunScenarioId = operation == "capture" ? newId : (selected ?? "")
+                lastRunScenarioVersion = nil
                 lastRunId = ""; lastRunStartedAt = ""; lastRunStatus = "running"
                 savedScenarioId = nil; screenshotCapturedAt = ""
+                savedCaptureDirectory = nil; savedCaptureImage = nil; savedCaptureAt = ""; screenshotComparison = ""
                 summary = ""; runDirectory = nil; image = nil
             }
         }
@@ -355,7 +437,7 @@ struct ScenarioView: View {
                                 Button("Open run folder") { NSWorkspace.shared.open(directory) }
                             }
                         }
-                        Text("Document: \(model.lastRunFixtureId) · Scenario: \(model.lastRunScenarioId)")
+                        Text("Document: \(model.lastRunFixtureId) · Scenario: \(model.lastRunScenarioId)\(model.lastRunScenarioVersion.map { " · v\($0)" } ?? "")")
                             .font(.caption).textSelection(.enabled)
                         if !model.lastRunStartedAt.isEmpty || !model.lastRunId.isEmpty {
                             Text([model.lastRunTimeLabel.isEmpty ? nil : "Started: \(model.lastRunTimeLabel)",
@@ -367,8 +449,6 @@ struct ScenarioView: View {
                             Text("Saved scenario: \(savedScenarioId)")
                                 .font(.caption).textSelection(.enabled)
                         }
-                        Text("Showing the latest saved Apply or Save current result, not per-scenario history.")
-                            .font(.caption).foregroundStyle(.secondary)
                     }
                     .padding(8)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -391,8 +471,30 @@ struct ScenarioView: View {
                     }.tabItem { Text("Progress & item results") }
                     ScrollView { Text(model.summary).font(.system(.caption, design: .monospaced)).frame(maxWidth: .infinity, alignment: .leading).textSelection(.enabled) }.tabItem { Text("Requested / observed JSON") }
                     VStack(alignment: .leading, spacing: 8) {
-                        if let image = model.image {
-                            Text("Screenshot from this same run\(model.screenshotTimeLabel.isEmpty ? "" : " · \(model.screenshotTimeLabel)")")
+                        if model.lastRunOperation == "apply", let saved = model.savedCaptureImage, let applied = model.image {
+                            Text(model.screenshotComparison).font(.caption).bold()
+                            HStack(alignment: .top, spacing: 10) {
+                                VStack(alignment: .leading, spacing: 6) {
+                                    Text("Saved capture · v\(model.lastRunScenarioVersion ?? 0)\(model.savedCaptureTimeLabel.isEmpty ? "" : " · \(model.savedCaptureTimeLabel)")")
+                                        .font(.caption).foregroundStyle(.secondary)
+                                    Image(nsImage: saved).resizable().scaledToFit().frame(maxWidth: .infinity, maxHeight: .infinity)
+                                    if let directory = model.savedCaptureDirectory {
+                                        Button("Open saved capture folder") { NSWorkspace.shared.open(directory) }
+                                    }
+                                }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                                Divider()
+                                VStack(alignment: .leading, spacing: 6) {
+                                    Text("Latest apply · v\(model.lastRunScenarioVersion ?? 0)\(model.screenshotTimeLabel.isEmpty ? "" : " · \(model.screenshotTimeLabel)")")
+                                        .font(.caption).foregroundStyle(.secondary)
+                                    Image(nsImage: applied).resizable().scaledToFit().frame(maxWidth: .infinity, maxHeight: .infinity)
+                                }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                            }
+                        } else if let image = model.image {
+                            if model.lastRunOperation == "apply" {
+                                Text("No saved capture screenshot is available for this scenario version.")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
+                            Text("Screenshot from this run\(model.screenshotTimeLabel.isEmpty ? "" : " · \(model.screenshotTimeLabel)")")
                                 .font(.caption).foregroundStyle(.secondary)
                             Image(nsImage: image).resizable().scaledToFit()
                         } else if model.lastRunOperation.isEmpty {
