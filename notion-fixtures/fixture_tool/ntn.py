@@ -7,6 +7,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 import time
+import threading
 
 from .definitions import FixtureError
 
@@ -60,6 +61,9 @@ class Notion:
         self.request_timeout = 120
         self.deadline = None
         self.metrics = []
+        self._condition = threading.Condition()
+        self._next_start = 0.0
+        self._cooldown_until = 0.0
 
     def remaining_timeout(self):
         remaining = self.request_timeout if self.deadline is None else min(self.request_timeout, self.deadline - time.monotonic())
@@ -72,25 +76,38 @@ class Notion:
                 "--notion-version", API_VERSION]
         args.extend(f"{key}=={value}" for key, value in (query or {}).items())
         for attempt in range(4):
-            waited = max(0, .35 - (time.monotonic() - self.last_call))
-            time.sleep(waited)
+            queued = time.monotonic()
+            with self._condition:
+                while True:
+                    wait = max(self._next_start, self._cooldown_until) - time.monotonic()
+                    if wait <= 0:
+                        self._next_start = time.monotonic() + .35
+                        break
+                    if wait >= self.remaining_timeout():
+                        raise APIError("Notion read deadline exceeded while queued", code="timeout")
+                    self._condition.wait(timeout=wait)
+            waited = time.monotonic() - queued
             started = time.monotonic()
             try:
                 result = subprocess.run(args, input=json.dumps(body, ensure_ascii=False) if body is not None else "",
                                         text=True, capture_output=True, env=self.env, timeout=self.remaining_timeout())
             except (OSError, subprocess.TimeoutExpired) as exc:
-                self.metrics.append({"endpoint": metric_endpoint(path), "method": method, "attempt": attempt + 1,
+                metric = {"endpoint": metric_endpoint(path), "method": method, "attempt": attempt + 1,
                                      "processMs": int((time.monotonic() - started) * 1000), "queueMs": int(waited * 1000),
-                                     "status": None, "error": "timeout" if isinstance(exc, subprocess.TimeoutExpired) else "transport_error"})
+                                     "status": None, "error": "timeout" if isinstance(exc, subprocess.TimeoutExpired) else "transport_error"}
+                with self._condition:
+                    self.metrics.append(metric)
                 write_note = "; write outcome may be unknown" if method != "GET" else ""
                 raise APIError(f"{method} {path}: transport failure ({type(exc).__name__}){write_note}",
                                code="timeout" if isinstance(exc, subprocess.TimeoutExpired) else "transport_error") from exc
             finally:
                 self.last_call = time.monotonic()
             obj = decode_object(result.stdout) or decode_object(result.stderr)
-            self.metrics.append({"endpoint": metric_endpoint(path), "method": method,
+            metric = {"endpoint": metric_endpoint(path), "method": method,
                                  "attempt": attempt + 1, "processMs": int((self.last_call - started) * 1000), "queueMs": int(waited * 1000),
-                                 "status": (obj or {}).get("status", 200 if result.returncode == 0 else None)})
+                                 "status": (obj or {}).get("status", 200 if result.returncode == 0 else None)}
+            with self._condition:
+                self.metrics.append(metric)
             if result.returncode == 0 and obj and obj.get("object") != "error":
                 if obj.get("object") == "async_task":
                     raise APIError(f"{path}: unexpected asynchronous response; inspect the remote result before retrying")
@@ -107,10 +124,12 @@ class Notion:
             if status in (429, 529) and attempt < 3 and (obj or {}).get("additional_data", {}).get("rate_limit_reason") != "public_api_request_blocked":
                 retry_after = (obj or {}).get("additional_data", {}).get("retry_after")
                 delay = float(retry_after) if str(retry_after).isdigit() else 2 ** (attempt + 1)
-                self.metrics[-1]["retryWaitMs"] = int(delay * 1000)
+                metric["retryWaitMs"] = int(delay * 1000)
                 if delay >= self.remaining_timeout():
                     raise APIError("Notion read deadline exceeded during rate limit retry", code="timeout")
-                time.sleep(delay)
+                with self._condition:
+                    self._cooldown_until = max(self._cooldown_until, time.monotonic() + delay)
+                    self._condition.notify_all()
                 continue
             # Never echo raw subprocess diagnostics: they may contain credentials.
             message = f"{method} {path}: ntn request failed (status={status or 'unknown'}, code={code or 'unknown'})"

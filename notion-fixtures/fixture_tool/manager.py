@@ -6,6 +6,7 @@ import os
 import re
 import tempfile
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
@@ -182,7 +183,7 @@ class Manager:
             raise FixtureError(f"Data source {identifier} moved outside its managed database")
         return obj
 
-    def snapshot(self, entry, restore=False):
+    def snapshot(self, entry, restore=False, parallel_views=False):
         page = self.managed_page(entry["pageId"])
         was_restored = False
         if restore and trashed(page):
@@ -220,8 +221,14 @@ class Manager:
         # List endpoints return references, so retrieve each view for timestamps.
         refs = self.api.all("GET", "v1/views", query={"database_id": db["id"]})
         result["views"] = {}
-        for ref in refs:
-            view = self.api.request("GET", f"v1/views/{ref['id']}")
+        def retrieve_view(ref):
+            return self.api.request("GET", f"v1/views/{ref['id']}")
+        if parallel_views and len(refs) > 1:
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                views = list(pool.map(retrieve_view, refs))
+        else:
+            views = [retrieve_view(ref) for ref in refs]
+        for view in views:
             if not parent_is(view, "database_id", db["id"]):
                 raise FixtureError("View belongs to another database")
             result["views"][view["id"]] = stamp(view)

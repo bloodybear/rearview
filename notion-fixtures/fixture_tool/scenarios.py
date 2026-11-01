@@ -188,7 +188,7 @@ def execute(root, scenario, operation):
             if workspace:
                 api.env["NOTION_WORKSPACE_ID"] = workspace
             manager = Manager(api, state)
-            before = manager.snapshot(entry)
+            before = manager.snapshot(entry, parallel_views=True)
             report["documentBefore"] = before
             if before != entry.get("baseline"):
                 raise ScenarioError("fixture_changed", "Document differs from fixture baseline; run ensure separately before replay")
@@ -218,7 +218,7 @@ def execute(root, scenario, operation):
             finally:
                 integrity_start = time.monotonic()
                 # Read-only postcondition, including failed/partial native runs.
-                after = manager.snapshot(entry)
+                after = manager.snapshot(entry, parallel_views=True)
                 report["documentAfter"] = after
                 report["documentUnchanged"] = before == after
                 report["steps"].append(dict(item="documentIntegrity", status="verified" if before == after else "failed",

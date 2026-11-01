@@ -5,6 +5,8 @@ import sys
 import tempfile
 import unittest
 import subprocess
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import patch
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -59,12 +61,34 @@ class ScenarioTests(unittest.TestCase):
         api = Notion()
         responses = [subprocess.CompletedProcess([], 1, '{"object":"error","status":429,"code":"rate_limited","additional_data":{"retry_after":"1"}}', ''),
                      subprocess.CompletedProcess([], 0, '{"object":"page","id":"ok"}', '')]
-        with patch('fixture_tool.ntn.subprocess.run', side_effect=responses), patch('fixture_tool.ntn.time.sleep') as sleep:
+        started = time.monotonic()
+        with patch('fixture_tool.ntn.subprocess.run', side_effect=responses):
             self.assertEqual(api.request('GET', 'v1/pages/secret-id')['id'], 'ok')
-        self.assertIn(1.0, [call.args[0] for call in sleep.call_args_list])
+        self.assertGreaterEqual(time.monotonic() - started, 1.0)
         self.assertEqual(len(api.metrics), 2)
         self.assertEqual(api.metrics[0]['endpoint'], 'v1/pages/{id}')
         self.assertEqual(api.metrics[0]['retryWaitMs'], 1000)
+    def test_parallel_requests_are_staggered_and_bounded(self):
+        api = Notion()
+        lock = threading.Lock()
+        starts = []
+        active = [0]
+        peak = [0]
+        def fake_run(*args, **kwargs):
+            with lock:
+                starts.append(time.monotonic())
+                active[0] += 1
+                peak[0] = max(peak[0], active[0])
+            time.sleep(.55)
+            with lock:
+                active[0] -= 1
+            return subprocess.CompletedProcess([], 0, '{"object":"view","id":"ok"}', '')
+        with patch('fixture_tool.ntn.subprocess.run', side_effect=fake_run):
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                list(pool.map(lambda i: api.request('GET', f'v1/views/{i}'), range(3)))
+        self.assertEqual(peak[0], 2)
+        self.assertTrue(all(b - a >= .34 for a, b in zip(sorted(starts), sorted(starts)[1:])))
+        self.assertEqual(len(api.metrics), 3)
     def test_atomic_write_preserves_definition(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory)/'scenario.json'
