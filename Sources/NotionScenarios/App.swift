@@ -61,7 +61,32 @@ struct Listing: Decodable { var fixtures: [FixtureItem]; var scenarios: [Scenari
     @Published var runStatus = ""
     @Published var image: NSImage?
     @Published var runDirectory: URL?
+    @Published var lastRunOperation = ""
+    @Published var lastRunFixtureId = ""
+    @Published var lastRunScenarioId = ""
+    @Published var lastRunId = ""
+    @Published var lastRunStartedAt = ""
+    @Published var lastRunStatus = ""
+    @Published var savedScenarioId: String?
+    @Published var screenshotCapturedAt = ""
     var current: Scenario? { scenarios.first { $0.id == selected } }
+    var lastRunOperationLabel: String {
+        switch lastRunOperation {
+        case "apply": "Apply saved scenario"
+        case "capture": "Save current Notion screen"
+        default: lastRunOperation
+        }
+    }
+    var lastRunTimeLabel: String { formatTimestamp(lastRunStartedAt) }
+    var screenshotTimeLabel: String { formatTimestamp(screenshotCapturedAt) }
+    private func formatTimestamp(_ value: String) -> String {
+        guard !value.isEmpty else { return "" }
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let date = formatter.date(from: value) ?? ISO8601DateFormatter().date(from: value)
+        guard let date else { return value }
+        return DateFormatter.localizedString(from: date, dateStyle: .medium, timeStyle: .short)
+    }
     var newIdIssue: String? {
         guard !newId.isEmpty else { return nil }
         let scalars = Array(newId.unicodeScalars)
@@ -91,13 +116,13 @@ struct Listing: Decodable { var fixtures: [FixtureItem]; var scenarios: [Scenari
                 base.deleteLastPathComponent()
             }
         }
-        if root != nil { reload() }
+        if root != nil { reload(); loadLatestRun() }
     }
     func chooseRoot() {
         let panel = NSOpenPanel(); panel.canChooseFiles = false; panel.canChooseDirectories = true
         panel.message = "Choose the notion-fixtures folder containing the fixture CLI"
         if panel.runModal() == .OK, let url = panel.url {
-            root = url; UserDefaults.standard.set(url.path, forKey: "fixtureRoot"); reload()
+            root = url; UserDefaults.standard.set(url.path, forKey: "fixtureRoot"); reload(); loadLatestRun()
         }
     }
     func select(_ id: String?) {
@@ -115,6 +140,43 @@ struct Listing: Decodable { var fixtures: [FixtureItem]; var scenarios: [Scenari
                 if let selected = self.selected, self.editor == self.savedEditor { self.select(selected) }
                 if !self.fixtures.contains(where: { $0.id == self.fixtureId }) { self.fixtureId = self.fixtures.first?.id ?? "" }
             } catch { self.messages += "\n\(error)" }
+        }
+    }
+    func loadLatestRun() {
+        lastRunOperation = ""; lastRunFixtureId = ""; lastRunScenarioId = ""
+        lastRunId = ""; lastRunStartedAt = ""; lastRunStatus = ""
+        savedScenarioId = nil; screenshotCapturedAt = ""
+        runStatus = ""; stepResults = []; summary = ""; runDirectory = nil; image = nil
+        guard let root,
+              let directories = try? FileManager.default.contentsOfDirectory(
+                at: root.appendingPathComponent("runs"), includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]
+              ) else { return }
+        for directory in directories.sorted(by: { $0.lastPathComponent > $1.lastPathComponent }) {
+            let resultURL = directory.appendingPathComponent("result.json")
+            let requestURL = directory.appendingPathComponent("request.json")
+            guard let resultData = try? Data(contentsOf: resultURL),
+                  let value = try? JSONSerialization.jsonObject(with: resultData) as? [String: Any],
+                  let requestData = try? Data(contentsOf: requestURL),
+                  let request = try? JSONSerialization.jsonObject(with: requestData) as? [String: Any],
+                  let operation = request["operation"] as? String,
+                  ["apply", "capture"].contains(operation),
+                  let status = value["status"] as? String, status != "running" else { continue }
+            let requestedScenario = request["scenario"] as? [String: Any] ?? [:]
+            lastRunOperation = operation
+            lastRunFixtureId = value["fixtureId"] as? String ?? requestedScenario["fixtureId"] as? String ?? ""
+            lastRunScenarioId = value["scenarioId"] as? String ?? requestedScenario["id"] as? String ?? ""
+            lastRunId = value["runId"] as? String ?? directory.lastPathComponent
+            lastRunStartedAt = value["startedAt"] as? String ?? ""
+            lastRunStatus = status; runStatus = status
+            savedScenarioId = value["savedScenario"] as? String
+            screenshotCapturedAt = (value["screenshot"] as? [String: Any])?["capturedAt"] as? String ?? ""
+            if let steps = value["steps"], let encoded = try? JSONSerialization.data(withJSONObject: steps),
+               let decoded = try? JSONDecoder().decode([StepResult].self, from: encoded) { stepResults = decoded }
+            summary = String(data: (try? JSONSerialization.data(withJSONObject: value, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])) ?? resultData, encoding: .utf8) ?? ""
+            runDirectory = directory
+            image = NSImage(contentsOf: directory.appendingPathComponent("screen.png"))
+            messages = "Loaded latest saved run: \(lastRunId)"
+            return
         }
     }
     func create() {
@@ -155,11 +217,24 @@ struct Listing: Decodable { var fixtures: [FixtureItem]; var scenarios: [Scenari
         command(["capture", fixtureId, "--id", newId, "--json"]) { data in self.showResult(data); self.reload() }
     }
     func showResult(_ data: Data) {
-        guard let value = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { messages += "\nInvalid result JSON"; runStatus = "failed"; return }
+        guard let value = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            messages += "\nInvalid result JSON"
+            summary = "No result JSON was returned. See Progress & item results for the error."
+            runStatus = "failed"; lastRunStatus = "failed"
+            return
+        }
         runStatus = value["status"] as? String ?? "failed"
+        lastRunStatus = runStatus
+        lastRunId = value["runId"] as? String ?? lastRunId
+        lastRunFixtureId = value["fixtureId"] as? String ?? lastRunFixtureId
+        lastRunScenarioId = value["scenarioId"] as? String ?? lastRunScenarioId
+        lastRunStartedAt = value["startedAt"] as? String ?? lastRunStartedAt
+        savedScenarioId = value["savedScenario"] as? String
+        screenshotCapturedAt = (value["screenshot"] as? [String: Any])?["capturedAt"] as? String ?? ""
         if let steps = value["steps"], let encoded = try? JSONSerialization.data(withJSONObject: steps),
            let decoded = try? JSONDecoder().decode([StepResult].self, from: encoded) { stepResults = decoded }
         summary = String(data: (try? JSONSerialization.data(withJSONObject: value, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])) ?? data, encoding: .utf8) ?? ""
+        runDirectory = nil; image = nil
         if let path = value["runDirectory"] as? String {
             runDirectory = URL(fileURLWithPath: path)
             image = NSImage(contentsOf: runDirectory!.appendingPathComponent("screen.png"))
@@ -170,7 +245,16 @@ struct Listing: Decodable { var fixtures: [FixtureItem]; var scenarios: [Scenari
         busy = true
         if resetProgress {
             stepResults = []; messages = "Running: scenario " + arguments.joined(separator: " ") + "\n"
-            runStatus = ["apply", "capture"].contains(arguments.first ?? "") ? "running" : ""
+            let operation = arguments.first ?? ""
+            runStatus = ["apply", "capture"].contains(operation) ? "running" : ""
+            if ["apply", "capture"].contains(operation) {
+                lastRunOperation = operation
+                lastRunFixtureId = fixtureId
+                lastRunScenarioId = operation == "capture" ? newId : (selected ?? "")
+                lastRunId = ""; lastRunStartedAt = ""; lastRunStatus = "running"
+                savedScenarioId = nil; screenshotCapturedAt = ""
+                summary = ""; runDirectory = nil; image = nil
+            }
         }
         let executable = Bundle.main.executableURL?.path ?? CommandLine.arguments[0]
         let packagedCLI = Bundle.main.object(forInfoDictionaryKey: "NotionCLIPath") as? String
@@ -259,6 +343,34 @@ struct ScenarioView: View {
                     }
                 }
                 TextEditor(text: $model.editor).font(.system(.body, design: .monospaced)).frame(minHeight: 160).disabled(model.busy)
+                if !model.lastRunOperation.isEmpty {
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack {
+                            Text("Latest run").font(.headline)
+                            Text(model.lastRunOperationLabel).foregroundStyle(.secondary)
+                            Spacer()
+                            Text(model.lastRunStatus)
+                                .foregroundStyle(model.lastRunStatus == "verified" ? Color.green : model.lastRunStatus == "failed" ? Color.red : Color.orange)
+                        }
+                        Text("Document: \(model.lastRunFixtureId) · Scenario: \(model.lastRunScenarioId)")
+                            .font(.caption).textSelection(.enabled)
+                        if !model.lastRunStartedAt.isEmpty || !model.lastRunId.isEmpty {
+                            Text([model.lastRunTimeLabel.isEmpty ? nil : "Started: \(model.lastRunTimeLabel)",
+                                  model.lastRunId.isEmpty ? nil : "Run ID: \(model.lastRunId)"]
+                                .compactMap { $0 }.joined(separator: " · "))
+                                .font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+                        }
+                        if let savedScenarioId = model.savedScenarioId {
+                            Text("Saved scenario: \(savedScenarioId)")
+                                .font(.caption).textSelection(.enabled)
+                        }
+                        Text("Showing the latest saved Apply or Save current result, not per-scenario history.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    .padding(8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.gray.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+                }
                 TabView {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 8) {
@@ -273,12 +385,23 @@ struct ScenarioView: View {
                             }
                             Text(model.messages).font(.system(.caption2, design: .monospaced)).textSelection(.enabled)
                         }.frame(maxWidth: .infinity, alignment: .leading)
-                    }.tabItem { Text("Progress & item results") }
-                    ScrollView { Text(model.summary).font(.system(.caption, design: .monospaced)).frame(maxWidth: .infinity, alignment: .leading).textSelection(.enabled) }.tabItem { Text("Requested / observed JSON") }
-                    VStack {
-                        if let image = model.image { Image(nsImage: image).resizable().scaledToFit() }
+                    }.tabItem { Text("Latest run · Progress") }
+                    ScrollView { Text(model.summary).font(.system(.caption, design: .monospaced)).frame(maxWidth: .infinity, alignment: .leading).textSelection(.enabled) }.tabItem { Text("Latest run · JSON") }
+                    VStack(alignment: .leading, spacing: 8) {
+                        if let image = model.image {
+                            Text("Screenshot from this same run\(model.screenshotTimeLabel.isEmpty ? "" : " · \(model.screenshotTimeLabel)")")
+                                .font(.caption).foregroundStyle(.secondary)
+                            Image(nsImage: image).resizable().scaledToFit()
+                        } else if model.lastRunOperation.isEmpty {
+                            Text("Run a scenario to view its screenshot.").font(.caption).foregroundStyle(.secondary)
+                        } else if model.lastRunStatus == "running" {
+                            Text("Screenshot will appear here if capture succeeds.").font(.caption).foregroundStyle(.secondary)
+                        } else {
+                            Text("No screenshot is available for the latest run. See Progress & item results.")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
                         if let directory = model.runDirectory { Button("Open run folder") { NSWorkspace.shared.open(directory) } }
-                    }.tabItem { Text("Screenshot") }
+                    }.tabItem { Text("Latest run · Screenshot") }
                 }.frame(minHeight: 250)
             }.padding().frame(minWidth: 620)
         }

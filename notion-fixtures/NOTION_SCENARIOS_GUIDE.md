@@ -41,7 +41,7 @@ NotionScenarios는 테스트용 Notion 문서의 **화면 상태**를 JSON으로
 1. **Document**에서 문서를 고르고 목록에서 시나리오를 선택합니다.
 2. JSON을 바꿨다면 **Save**를 누릅니다.
 3. Notion 데스크톱에서 대상 문서를 열고 **Apply saved scenario**를 누릅니다.
-4. 아래 **Progress & item results**에서 각 단계와 오류를 확인하고 **Screenshot**에서 결과를 확인합니다.
+4. 아래 **Latest run · Progress**에서 각 단계와 오류를 확인하고 **Latest run · Screenshot**에서 결과를 확인합니다.
 
 ### 지금 보이는 화면을 새 시나리오로 남기기
 
@@ -70,7 +70,9 @@ NotionScenarios는 테스트용 Notion 문서의 **화면 상태**를 JSON으로
 | 실제 테스트 문서 | 로그인한 Notion 워크스페이스의 **Notion AX Fixtures** 아래 | `fixture ensure`가 만들고 `reset`이 복구합니다. 시나리오 적용은 화면을 조작하며 문서 본문을 저장하거나 수정하지 않습니다. |
 | 마지막 선택 폴더 | 이 Mac의 앱 사용자 기본 설정 | **Choose fixture folder…**로 선택한 경로입니다. 시나리오 JSON이나 실행 결과가 여기에 저장되는 것은 아닙니다. |
 
-**Progress & item results**는 단계별 상태·오류·시간과 실행 로그를 보여줍니다. **Requested / observed JSON**은 요청값과 실제 관측값을 비교할 수 있는 전체 결과입니다. **Screenshot**은 `screen.png`를 보여주며 **Open run folder**로 해당 실행 폴더를 엽니다. 화면 캡처 단계가 실패하면 이미지가 없을 수 있습니다.
+결과 패널은 `runs/`에 저장된 가장 최근의 **Apply** 또는 **Save current Notion screen** 한 건을 보여줍니다. 앱을 열 때도 최근 완료 실행을 불러옵니다. 선택한 시나리오별 실행 이력을 보여주는 곳은 아닙니다. 상단 **Latest run**에서 작업 종류, Document, Scenario, 시작 시각, 상태, 실행 ID를 확인할 수 있고, 화면 저장이 성공하면 생성된 시나리오 ID도 표시됩니다.
+
+**Latest run · Progress**는 해당 실행의 단계별 상태·오류·시간과 실행 로그를 보여줍니다. **Latest run · JSON**은 해당 실행이 요청한 값과 실제 관측값을 담은 전체 결과입니다. **Latest run · Screenshot**은 같은 실행에서 상태를 관측한 직후 캡처한 `screen.png`를 보여줍니다. 이 이미지를 보며 저장한 화면을 확인할 수 있습니다. **Open run folder**로 해당 실행 폴더를 열 수 있으며, 화면 캡처 단계가 실패하면 이미지가 없을 수 있습니다.
 
 전체 상태 `verified`는 필수 항목을 모두 확인한 경우, `partial`은 일부만 확인된 경우, `failed`는 재현을 안전하게 마치지 못한 경우입니다. Notion의 숫자 줌 배율은 현재 검증할 수 없어 줌이 포함된 시나리오는 `partial`이 될 수 있습니다. 결과의 단계별 `detail`을 함께 확인하세요.
 
