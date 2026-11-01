@@ -18,7 +18,9 @@ from fixture_tool.ntn import APIError, Notion
 class FastNotion(Notion):
     def request(self, *args, **kwargs):
         self.last_call = 0
-        self._next_start = 0
+        self._starts.clear()
+        self._tokens = 5.0
+        self._query_next_start = 0
         return super().request(*args, **kwargs)
 
 

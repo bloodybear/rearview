@@ -224,7 +224,7 @@ class Manager:
         def retrieve_view(ref):
             return self.api.request("GET", f"v1/views/{ref['id']}")
         if parallel_views and len(refs) > 1:
-            with ThreadPoolExecutor(max_workers=3) as pool:
+            with ThreadPoolExecutor(max_workers=5) as pool:
                 views = list(pool.map(retrieve_view, refs))
         else:
             views = [retrieve_view(ref) for ref in refs]

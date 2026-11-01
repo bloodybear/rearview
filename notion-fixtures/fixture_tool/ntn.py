@@ -8,6 +8,8 @@ import tempfile
 from pathlib import Path
 import time
 import threading
+from collections import deque
+import random
 
 from .definitions import FixtureError
 
@@ -62,7 +64,11 @@ class Notion:
         self.deadline = None
         self.metrics = []
         self._condition = threading.Condition()
-        self._next_start = 0.0
+        self._starts = deque()
+        self._tokens = 5.0
+        self._burst_limit = 5.0
+        self._last_refill = time.monotonic()
+        self._query_next_start = 0.0
         self._cooldown_until = 0.0
 
     def remaining_timeout(self):
@@ -79,9 +85,20 @@ class Notion:
             queued = time.monotonic()
             with self._condition:
                 while True:
-                    wait = max(self._next_start, self._cooldown_until) - time.monotonic()
+                    now = time.monotonic()
+                    self._tokens = min(self._burst_limit, self._tokens + (now - self._last_refill) * 3.0)
+                    self._last_refill = now
+                    while self._starts and self._starts[0] <= now - 60:
+                        self._starts.popleft()
+                    wait = max(0.0, self._cooldown_until - now,
+                               (1.0 - self._tokens) / 3.0,
+                               self._query_next_start - now if path.endswith("/query") else 0.0,
+                               self._starts[0] + 60 - now if len(self._starts) >= 180 else 0.0)
                     if wait <= 0:
-                        self._next_start = time.monotonic() + .35
+                        self._tokens -= 1.0
+                        self._starts.append(now)
+                        if path.endswith("/query"):
+                            self._query_next_start = now + .35
                         break
                     if wait >= self.remaining_timeout():
                         raise APIError("Notion read deadline exceeded while queued", code="timeout")
@@ -124,10 +141,14 @@ class Notion:
             if status in (429, 529) and attempt < 3 and (obj or {}).get("additional_data", {}).get("rate_limit_reason") != "public_api_request_blocked":
                 retry_after = (obj or {}).get("additional_data", {}).get("retry_after")
                 delay = float(retry_after) if str(retry_after).isdigit() else 2 ** (attempt + 1)
+                if attempt:
+                    delay = max(delay, 2 ** attempt) + random.uniform(0, .25)
                 metric["retryWaitMs"] = int(delay * 1000)
                 if delay >= self.remaining_timeout():
                     raise APIError("Notion read deadline exceeded during rate limit retry", code="timeout")
                 with self._condition:
+                    self._burst_limit = 1.0
+                    self._tokens = min(self._tokens, 1.0)
                     self._cooldown_until = max(self._cooldown_until, time.monotonic() + delay)
                     self._condition.notify_all()
                 continue

@@ -68,7 +68,8 @@ class ScenarioTests(unittest.TestCase):
         self.assertEqual(len(api.metrics), 2)
         self.assertEqual(api.metrics[0]['endpoint'], 'v1/pages/{id}')
         self.assertEqual(api.metrics[0]['retryWaitMs'], 1000)
-    def test_parallel_requests_are_staggered_and_bounded(self):
+        self.assertEqual(api._burst_limit, 1.0)
+    def test_parallel_gets_use_a_small_burst(self):
         api = Notion()
         lock = threading.Lock()
         starts = []
@@ -84,11 +85,31 @@ class ScenarioTests(unittest.TestCase):
                 active[0] -= 1
             return subprocess.CompletedProcess([], 0, '{"object":"view","id":"ok"}', '')
         with patch('fixture_tool.ntn.subprocess.run', side_effect=fake_run):
-            with ThreadPoolExecutor(max_workers=3) as pool:
-                list(pool.map(lambda i: api.request('GET', f'v1/views/{i}'), range(3)))
-        self.assertEqual(peak[0], 3)
-        self.assertTrue(all(b - a >= .34 for a, b in zip(sorted(starts), sorted(starts)[1:])))
-        self.assertEqual(len(api.metrics), 3)
+            with ThreadPoolExecutor(max_workers=5) as pool:
+                list(pool.map(lambda i: api.request('GET', f'v1/views/{i}'), range(5)))
+        self.assertEqual(peak[0], 5)
+        self.assertLess(max(starts) - min(starts), .25)
+        self.assertEqual(len(api.metrics), 5)
+
+    def test_query_requests_keep_their_separate_spacing(self):
+        api = Notion()
+        starts = []
+        def fake_run(*args, **kwargs):
+            starts.append(time.monotonic())
+            return subprocess.CompletedProcess([], 0, '{"object":"list","results":[],"has_more":false}', '')
+        with patch('fixture_tool.ntn.subprocess.run', side_effect=fake_run):
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                list(pool.map(lambda _: api.request('POST', 'v1/data_sources/test/query', {}), range(2)))
+        self.assertGreaterEqual(max(starts) - min(starts), .34)
+    def test_connection_minute_budget_blocks_new_request(self):
+        api = Notion()
+        api._starts.extend([time.monotonic()] * 180)
+        api.deadline = time.monotonic() + .05
+        with patch('fixture_tool.ntn.subprocess.run') as run:
+            with self.assertRaises(APIError) as failure:
+                api.request('GET', 'v1/views/test')
+        self.assertEqual(failure.exception.code, 'timeout')
+        run.assert_not_called()
     def test_atomic_write_preserves_definition(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory)/'scenario.json'
