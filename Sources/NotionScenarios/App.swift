@@ -938,7 +938,6 @@ struct ScenarioView: View {
                             .foregroundStyle(.orange)
                     }
                     Spacer()
-                    if model.busy { ProgressView().controlSize(.small) }
                 }
                 Text("Only observed values are captured. Zoom may remain unsupported. Save edits before applying.").font(.caption).foregroundStyle(.secondary)
                 if model.hasUnsavedEditorChanges {
