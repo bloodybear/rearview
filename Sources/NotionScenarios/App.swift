@@ -351,6 +351,9 @@ struct ScenarioView: View {
                             Spacer()
                             Text(model.lastRunStatus)
                                 .foregroundStyle(model.lastRunStatus == "verified" ? Color.green : model.lastRunStatus == "failed" ? Color.red : Color.orange)
+                            if let directory = model.runDirectory {
+                                Button("Open run folder") { NSWorkspace.shared.open(directory) }
+                            }
                         }
                         Text("Document: \(model.lastRunFixtureId) · Scenario: \(model.lastRunScenarioId)")
                             .font(.caption).textSelection(.enabled)
@@ -385,8 +388,8 @@ struct ScenarioView: View {
                             }
                             Text(model.messages).font(.system(.caption2, design: .monospaced)).textSelection(.enabled)
                         }.frame(maxWidth: .infinity, alignment: .leading)
-                    }.tabItem { Text("Latest run · Progress") }
-                    ScrollView { Text(model.summary).font(.system(.caption, design: .monospaced)).frame(maxWidth: .infinity, alignment: .leading).textSelection(.enabled) }.tabItem { Text("Latest run · JSON") }
+                    }.tabItem { Text("Progress & item results") }
+                    ScrollView { Text(model.summary).font(.system(.caption, design: .monospaced)).frame(maxWidth: .infinity, alignment: .leading).textSelection(.enabled) }.tabItem { Text("Requested / observed JSON") }
                     VStack(alignment: .leading, spacing: 8) {
                         if let image = model.image {
                             Text("Screenshot from this same run\(model.screenshotTimeLabel.isEmpty ? "" : " · \(model.screenshotTimeLabel)")")
@@ -400,8 +403,7 @@ struct ScenarioView: View {
                             Text("No screenshot is available for the latest run. See Progress & item results.")
                                 .font(.caption).foregroundStyle(.secondary)
                         }
-                        if let directory = model.runDirectory { Button("Open run folder") { NSWorkspace.shared.open(directory) } }
-                    }.tabItem { Text("Latest run · Screenshot") }
+                    }.tabItem { Text("Screenshot") }
                 }.frame(minHeight: 250)
             }.padding().frame(minWidth: 620)
         }
