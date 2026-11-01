@@ -62,6 +62,23 @@ struct Listing: Decodable { var fixtures: [FixtureItem]; var scenarios: [Scenari
     @Published var image: NSImage?
     @Published var runDirectory: URL?
     var current: Scenario? { scenarios.first { $0.id == selected } }
+    var newIdIssue: String? {
+        guard !newId.isEmpty else { return nil }
+        let scalars = Array(newId.unicodeScalars)
+        let isAsciiLowerOrDigit: (UnicodeScalar) -> Bool = { scalar in
+            (scalar.value >= 48 && scalar.value <= 57) || (scalar.value >= 97 && scalar.value <= 122)
+        }
+        guard scalars.count <= 80 else { return "ID는 최대 80자까지 입력할 수 있습니다." }
+        guard let first = scalars.first, isAsciiLowerOrDigit(first) else {
+            return "ID는 소문자 영문 또는 숫자로 시작해야 합니다."
+        }
+        guard scalars.dropFirst().allSatisfy({ isAsciiLowerOrDigit($0) || $0.value == 45 }) else {
+            return "ID에는 소문자 영문·숫자·하이픈만 사용할 수 있습니다."
+        }
+        if scenarios.contains(where: { $0.id == newId }) { return "이미 사용 중인 ID입니다. 다른 ID를 입력해 주세요." }
+        return nil
+    }
+    var canUseNewId: Bool { !newId.isEmpty && newIdIssue == nil }
     func locateRoot() {
         if let i = CommandLine.arguments.firstIndex(of: "--root"), CommandLine.arguments.indices.contains(i + 1) {
             root = URL(fileURLWithPath: CommandLine.arguments[i + 1])
@@ -101,7 +118,7 @@ struct Listing: Decodable { var fixtures: [FixtureItem]; var scenarios: [Scenari
         }
     }
     func create() {
-        guard !scenarios.contains(where: { $0.id == newId }), !newId.isEmpty else { messages = "Choose an unused scenario ID"; return }
+        guard canUseNewId else { messages = newIdIssue ?? "Enter a scenario ID"; return }
         guard let fixture = fixtures.first(where: { $0.id == fixtureId }) else { return }
         let state = #"{"coordinateSystem":"screen-top-left-points","window":{"x":0,"y":60,"width":1024,"height":700},"scroll":{"mode":"top"},"focus":{"mode":"clear"},"required":["target","window","scroll","focus","screenshot"]}"#
         guard let requested = try? JSONDecoder().decode(RequestedState.self, from: Data(state.utf8)) else { return }
@@ -110,7 +127,7 @@ struct Listing: Decodable { var fixtures: [FixtureItem]; var scenarios: [Scenari
         editor = String(data: (try? encoder.encode(s)) ?? Data(), encoding: .utf8) ?? ""; selected = nil
     }
     func duplicate() {
-        guard !scenarios.contains(where: { $0.id == newId }), !newId.isEmpty else { messages = "Choose an unused scenario ID"; return }
+        guard canUseNewId else { messages = newIdIssue ?? "Enter a scenario ID"; return }
         guard var value = try? JSONSerialization.jsonObject(with: Data(editor.utf8)) as? [String: Any] else { return }
         value["id"] = newId; value["name"] = newId; value["version"] = 1
         if let data = try? JSONSerialization.data(withJSONObject: value, options: [.prettyPrinted, .sortedKeys]) {
@@ -133,7 +150,10 @@ struct Listing: Decodable { var fixtures: [FixtureItem]; var scenarios: [Scenari
         command(["delete", selected]) { _ in self.select(nil); self.reload() }
     }
     func apply() { if let selected { command(["apply", selected, "--json"], result: showResult) } }
-    func capture() { command(["capture", fixtureId, "--id", newId, "--json"]) { data in self.showResult(data); self.reload() } }
+    func capture() {
+        guard canUseNewId else { messages = newIdIssue ?? "Enter a scenario ID"; return }
+        command(["capture", fixtureId, "--id", newId, "--json"]) { data in self.showResult(data); self.reload() }
+    }
     func showResult(_ data: Data) {
         guard let value = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { messages += "\nInvalid result JSON"; runStatus = "failed"; return }
         runStatus = value["status"] as? String ?? "failed"
@@ -209,8 +229,16 @@ struct ScenarioView: View {
                     }
                 }
                 TextField("New scenario ID", text: $model.newId)
-                HStack { Button("Create") { model.create() }; Button("Duplicate") { model.duplicate() }.disabled(model.editor.isEmpty) }
-                Button("Save current Notion screen") { model.capture() }.disabled(model.newId.isEmpty)
+                if let issue = model.newIdIssue {
+                    Text(issue)
+                        .font(.caption)
+                        .foregroundStyle(Color.red)
+                }
+                HStack {
+                    Button("Create") { model.create() }.disabled(!model.canUseNewId)
+                    Button("Duplicate") { model.duplicate() }.disabled(!model.canUseNewId || model.editor.isEmpty)
+                }
+                Button("Save current Notion screen") { model.capture() }.disabled(!model.canUseNewId)
                 Button("Refresh") { model.reload() }
             }.padding().frame(minWidth: 260, idealWidth: 300).disabled(model.busy)
             VStack(alignment: .leading, spacing: 10) {
