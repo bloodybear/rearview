@@ -4,6 +4,8 @@ import json
 import sys
 import tempfile
 import unittest
+import subprocess
+from unittest.mock import patch
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from fixture_tool.definitions import FixtureError, definitions
@@ -53,6 +55,16 @@ class ScenarioTests(unittest.TestCase):
         api.deadline = time.monotonic() - 1
         with self.assertRaises(APIError) as failure: api.remaining_timeout()
         self.assertEqual(failure.exception.code, "timeout")
+    def test_rate_limit_uses_retry_after_and_sanitizes_metrics(self):
+        api = Notion()
+        responses = [subprocess.CompletedProcess([], 1, '{"object":"error","status":429,"code":"rate_limited","additional_data":{"retry_after":"1"}}', ''),
+                     subprocess.CompletedProcess([], 0, '{"object":"page","id":"ok"}', '')]
+        with patch('fixture_tool.ntn.subprocess.run', side_effect=responses), patch('fixture_tool.ntn.time.sleep') as sleep:
+            self.assertEqual(api.request('GET', 'v1/pages/secret-id')['id'], 'ok')
+        self.assertIn(1.0, [call.args[0] for call in sleep.call_args_list])
+        self.assertEqual(len(api.metrics), 2)
+        self.assertEqual(api.metrics[0]['endpoint'], 'v1/pages/{id}')
+        self.assertEqual(api.metrics[0]['retryWaitMs'], 1000)
     def test_atomic_write_preserves_definition(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory)/'scenario.json'

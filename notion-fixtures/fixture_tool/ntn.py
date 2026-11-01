@@ -13,6 +13,12 @@ from .definitions import FixtureError
 API_VERSION = "2026-03-11"
 
 
+def metric_endpoint(path):
+    parts = path.split("/")
+    return "/".join("{id}" if i > 1 and parts[i - 1] in ("pages", "databases", "data_sources", "views", "blocks") else part
+                    for i, part in enumerate(parts))
+
+
 class APIError(FixtureError):
     def __init__(self, message, status=None, code=None):
         super().__init__(message)
@@ -53,6 +59,7 @@ class Notion:
         self.last_call = 0.0
         self.request_timeout = 120
         self.deadline = None
+        self.metrics = []
 
     def remaining_timeout(self):
         remaining = self.request_timeout if self.deadline is None else min(self.request_timeout, self.deadline - time.monotonic())
@@ -65,17 +72,25 @@ class Notion:
                 "--notion-version", API_VERSION]
         args.extend(f"{key}=={value}" for key, value in (query or {}).items())
         for attempt in range(4):
-            time.sleep(max(0, .35 - (time.monotonic() - self.last_call)))
+            waited = max(0, .35 - (time.monotonic() - self.last_call))
+            time.sleep(waited)
+            started = time.monotonic()
             try:
                 result = subprocess.run(args, input=json.dumps(body, ensure_ascii=False) if body is not None else "",
                                         text=True, capture_output=True, env=self.env, timeout=self.remaining_timeout())
             except (OSError, subprocess.TimeoutExpired) as exc:
+                self.metrics.append({"endpoint": metric_endpoint(path), "method": method, "attempt": attempt + 1,
+                                     "processMs": int((time.monotonic() - started) * 1000), "queueMs": int(waited * 1000),
+                                     "status": None, "error": "timeout" if isinstance(exc, subprocess.TimeoutExpired) else "transport_error"})
                 write_note = "; write outcome may be unknown" if method != "GET" else ""
                 raise APIError(f"{method} {path}: transport failure ({type(exc).__name__}){write_note}",
                                code="timeout" if isinstance(exc, subprocess.TimeoutExpired) else "transport_error") from exc
             finally:
                 self.last_call = time.monotonic()
             obj = decode_object(result.stdout) or decode_object(result.stderr)
+            self.metrics.append({"endpoint": metric_endpoint(path), "method": method,
+                                 "attempt": attempt + 1, "processMs": int((self.last_call - started) * 1000), "queueMs": int(waited * 1000),
+                                 "status": (obj or {}).get("status", 200 if result.returncode == 0 else None)})
             if result.returncode == 0 and obj and obj.get("object") != "error":
                 if obj.get("object") == "async_task":
                     raise APIError(f"{path}: unexpected asynchronous response; inspect the remote result before retrying")
@@ -89,8 +104,13 @@ class Notion:
             if not code:
                 match = re.search(r"\b(validation_error|unauthorized|restricted_resource|object_not_found|rate_limited|conflict_error|internal_server_error|service_unavailable)\b", diagnostic)
                 code = match[1] if match else None
-            if status == 429 and attempt < 3:
-                time.sleep(2 ** (attempt + 1))
+            if status in (429, 529) and attempt < 3 and (obj or {}).get("additional_data", {}).get("rate_limit_reason") != "public_api_request_blocked":
+                retry_after = (obj or {}).get("additional_data", {}).get("retry_after")
+                delay = float(retry_after) if str(retry_after).isdigit() else 2 ** (attempt + 1)
+                self.metrics[-1]["retryWaitMs"] = int(delay * 1000)
+                if delay >= self.remaining_timeout():
+                    raise APIError("Notion read deadline exceeded during rate limit retry", code="timeout")
+                time.sleep(delay)
                 continue
             # Never echo raw subprocess diagnostics: they may contain credentials.
             message = f"{method} {path}: ntn request failed (status={status or 'unknown'}, code={code or 'unknown'})"
@@ -131,6 +151,8 @@ class Notion:
         target["page_size"] = 100
         while True:
             obj = self.request(method, path, body if method == "POST" else None, query)
+            if obj.get("request_status", {}).get("type") == "incomplete":
+                raise FixtureError(f"{path}: incomplete query result")
             if not isinstance(obj.get("results"), list):
                 raise FixtureError(f"{path}: invalid list response")
             results.extend(obj["results"])

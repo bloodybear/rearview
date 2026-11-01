@@ -200,14 +200,19 @@ class Manager:
         ds = self.source(entry["dataSourceId"], db["id"])
         result.update(database=stamp(db), dataSource=stamp(ds))
         result["dataSourceIds"] = sorted(x["id"] for x in db.get("data_sources", []))
-        # Query omissions alone cannot establish deletion or access. Check every
-        # recorded row directly before deciding to rebuild this database.
+        title = next((value["id"] for value in ds.get("properties", {}).values() if value.get("type") == "title" or "title" in value), None)
+        rows = self.api.all("POST", f"v1/data_sources/{ds['id']}/query", query={"filter_properties": title} if title else None)
+        listed = {row["id"] for row in rows}
         recorded = entry.get("rowIds", entry.get("baseline", {}).get("rows", {}))
         for identifier in recorded:
-            row = self.api.request("GET", f"v1/pages/{identifier}")
+            if identifier in listed:
+                continue
+            row = self.api.request("GET", f"v1/pages/{identifier}", query={"filter_properties": title} if title else None)
             if not parent_is(row, "data_source_id", ds["id"]):
                 raise FixtureError(f"Row {identifier} moved outside its managed data source")
-        rows = self.api.all("POST", f"v1/data_sources/{ds['id']}/query")
+            if trashed(row):
+                continue
+            raise FixtureError(f"Row {identifier} is missing from the data source query; cannot verify fixture baseline")
         for row in rows:
             if not parent_is(row, "data_source_id", ds["id"]):
                 raise FixtureError("Query returned a row outside its managed data source")

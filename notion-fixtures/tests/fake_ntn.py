@@ -73,6 +73,7 @@ elif method == "GET" and endpoint == "v1/views":
     result = [v for v in objects.values() if v["object"] == "view" and v["parent"].get("database_id") == query["database_id"]]
 elif method == "POST" and len(parts) == 4 and parts[1] == "data_sources":
     result = [v for v in objects.values() if v["object"] == "page" and v["parent"].get("data_source_id") == parts[2] and not v["in_trash"]]
+    result = [v for v in result if v["id"] != remote.get("omit_query_row")]
 elif len(parts) >= 3:
     identifier = parts[2]
     if identifier not in objects:

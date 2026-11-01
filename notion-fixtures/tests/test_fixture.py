@@ -102,6 +102,11 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(board["configuration"]["group_by"]["property_id"], "prop-2")
         count = len(remote["calls"])
         self.assertEqual(self.run_fixture(self.db)[0], "reused")
+        calls = self.remote()["calls"][count:]
+        self.assertFalse(any(c[0] == "GET" and c[1] in {"v1/pages/" + row for row in entry["rowIds"]} for c in calls))
+        queries = [c for c in calls if c[1].endswith("/query")]
+        self.assertEqual(len(queries), (len(entry["rowIds"]) + 1) // 2)
+        self.assertTrue(all(c[3].get("filter_properties") for c in queries))
         self.assertEqual(self.writes_since(count), [])
         self.edit(entry["rowIds"][0], markdown="changed")
         _, repaired = self.run_fixture(self.db)
@@ -162,6 +167,16 @@ class LifecycleTests(unittest.TestCase):
         count = len(self.remote()["calls"])
         with self.assertRaises(APIError):
             self.run_fixture(self.db)
+        self.assertEqual(self.writes_since(count), [])
+
+    def test_query_omission_of_accessible_row_never_rebuilds(self):
+        _, entry = self.run_fixture(self.db)
+        self.remote(lambda r: r.update(omit_query_row=entry["rowIds"][0]))
+        count = len(self.remote()["calls"])
+        with self.assertRaisesRegex(FixtureError, "missing from the data source query"):
+            self.run_fixture(self.db)
+        calls = self.remote()["calls"][count:]
+        self.assertTrue(any(c[0] == "GET" and c[1] == "v1/pages/" + entry["rowIds"][0] for c in calls))
         self.assertEqual(self.writes_since(count), [])
 
     def test_moved_page_db_row_and_account_block_writes(self):

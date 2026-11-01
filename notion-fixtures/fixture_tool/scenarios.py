@@ -166,6 +166,7 @@ def execute(root, scenario, operation):
     atomic_json(directory / "result.json", report)
     run_started_at = report["startedAt"]
     native = None
+    api = None
     preflight_steps = []
     try:
         validate(scenario)
@@ -233,6 +234,7 @@ def execute(root, scenario, operation):
                                           "missing_or_inaccessible" if isinstance(exc, APIError) and exc.status == 404 else
                                           getattr(exc, "code", None) or "fixture_error"),
                                     detail=str(exc), durationMs=int((time.monotonic() - start) * 1000)))
+    report["apiRequests"] = api.metrics if api is not None else []
     report["startedAt"] = run_started_at
     report["durationMs"] = int((time.monotonic() - start) * 1000)
     report["finishedAt"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
