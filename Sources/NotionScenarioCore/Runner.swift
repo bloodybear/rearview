@@ -46,14 +46,15 @@ public final class ScenarioRunner {
         let start = Date()
         var failure: ScenarioFailure?
         var attempts = 0
-        // At most two retries, always re-observing before another action.
+        // Retry state convergence, but resolve capture targets once so a missing selected document fails promptly.
         for attempt in 0..<3 {
             attempts = attempt + 1
-            stepDeadline = min(deadline, Date().addingTimeInterval(10))
+            let captureTarget = item == "target" && request.operation == "capture"
+            stepDeadline = min(deadline, Date().addingTimeInterval(captureTarget ? 3 : 10))
             do { try checkTime(); if item != "target" { try guardTarget() }; try await body(); failure = nil; break }
             catch let error as ScenarioFailure {
                 failure = error
-                if error.code != "timeout" || attempt == 2 || Date() >= deadline { break }
+                if error.code != "timeout" || captureTarget || attempt == 2 || Date() >= deadline { break }
             } catch { failure = ScenarioFailure("operation_failed", String(describing: error)); break }
         }
         var record = StepResult(item: item, status: failure == nil ? "verified" : (failure!.code == "unsupported" ? "unsupported" : "failed"),
@@ -91,14 +92,23 @@ public final class ScenarioRunner {
             }
             self.result.environment["notion"] = Bundle(url: self.ax.process.bundleURL!)?.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"
             var targets = self.ax.targets(pageId: request.pageId)
-            if targets.isEmpty && request.operation == "apply" {
-                let compact = request.pageId.replacingOccurrences(of: "-", with: "")
-                NSWorkspace.shared.open(URL(string: "notion://www.notion.so/\(compact)")!)
-            }
-            try await self.wait {
-                targets = self.ax.targets(pageId: request.pageId)
-                if targets.count > 1 { throw ScenarioFailure("ambiguous_window", "The page is open in multiple windows; close duplicate windows") }
-                return targets.count == 1
+            if request.operation == "capture" {
+                if targets.count > 1 {
+                    throw ScenarioFailure("ambiguous_window", "The selected document is open in multiple windows; close duplicate windows")
+                }
+                guard !targets.isEmpty else {
+                    throw ScenarioFailure("selected_document_not_found", "Could not find selected document '\(request.scenario.fixtureId)' in a Notion window. Open that page and try again.")
+                }
+            } else {
+                if targets.isEmpty {
+                    let compact = request.pageId.replacingOccurrences(of: "-", with: "")
+                    NSWorkspace.shared.open(URL(string: "notion://www.notion.so/\(compact)")!)
+                }
+                try await self.wait {
+                    targets = self.ax.targets(pageId: request.pageId)
+                    if targets.count > 1 { throw ScenarioFailure("ambiguous_window", "The page is open in multiple windows; close duplicate windows") }
+                    return targets.count == 1
+                }
             }
             self.window = targets[0].0; let targetWeb = targets[0].1
             self.ax.process.activate()
@@ -113,8 +123,13 @@ public final class ScenarioRunner {
         }
         guard result.steps.last?.status == "verified" else {
             if result.steps.last?.code == "timeout" {
-                result.steps[result.steps.count - 1].code = "target_window_missing"
-                result.steps[result.steps.count - 1].detail = "No window exposing the requested Notion document URL was found"
+                if request.operation == "capture" {
+                    result.steps[result.steps.count - 1].code = "target_window_focus_failed"
+                    result.steps[result.steps.count - 1].detail = "The selected document was found, but its Notion window could not be brought forward"
+                } else {
+                    result.steps[result.steps.count - 1].code = "target_window_missing"
+                    result.steps[result.steps.count - 1].detail = "No window exposing the requested Notion document URL was found"
+                }
             }
             result.status = "failed"; result.finishedAt = now(); try? save(); return result
         }

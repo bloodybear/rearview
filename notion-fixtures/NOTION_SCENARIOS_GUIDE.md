@@ -25,14 +25,14 @@ NotionScenarios는 테스트용 Notion 문서의 **화면 상태**를 JSON으로
 | 왼쪽 | **New scenario ID** | 새 시나리오의 파일 이름이 될 ID를 입력합니다. 소문자 영문·숫자로 시작하고 이후 소문자 영문·숫자·하이픈을 쓸 수 있습니다. 최대 80자이며 전체 시나리오에서 고유해야 합니다. 입력 규칙에 맞지 않거나 이미 사용 중인 ID를 입력했을 때만 입력란 아래에 원인별 안내가 표시되고 새 시나리오 작업 버튼이 비활성화됩니다. |
 | 왼쪽 | **Create** | 선택한 문서용 기본 시나리오 JSON을 편집기에 만듭니다. 이때는 **초안만** 만들어지며 **Save**를 눌러야 파일이 생깁니다. |
 | 왼쪽 | **Duplicate** | 현재 편집기에 보이는 JSON을 새 ID와 버전 1로 복사해 초안을 만듭니다. **Save**를 눌러야 파일이 생깁니다. |
-| 왼쪽 | **Save current Notion screen** | 현재 열려 있는 해당 Notion 문서의 화면을 관측해 **새 ID**의 시나리오로 저장합니다. 실행 결과와 화면 캡처도 만듭니다. 기존 시나리오를 덮어쓰는 버튼이 아닙니다. |
+| 왼쪽 | **Save screen for selected document** | 선택한 Document에 해당하는 Notion 화면을 관측해 **새 ID**의 시나리오로 저장합니다. 해당 페이지가 Notion 데스크톱에 열려 있어야 합니다. 다른 페이지로 자동 전환하지 않으며, 찾지 못하면 빠르게 실패하고 원인 요약을 표시합니다. |
 | 왼쪽 | **Refresh** | 디스크의 문서·시나리오 목록을 다시 읽습니다. 편집 중인 JSON을 저장하지 않습니다. |
 | 오른쪽 | **Scenario definition (JSON)** | 선택하거나 만든 시나리오의 요청 상태를 직접 편집합니다. 여기서 고친 내용은 **Save** 전까지 편집기에만 있습니다. |
 | 오른쪽 | **Save** | 편집기 JSON을 검사하고 `scenarios/` 아래에 저장합니다. 같은 ID의 파일이 있으면 덮어쓰고 버전이 1 증가합니다. |
 | 오른쪽 | **Delete** | 목록에서 선택한 시나리오 JSON 파일을 삭제합니다. 별도 확인 창이 없으므로 ID를 확인한 뒤 누르세요. 과거 실행 기록은 삭제하지 않습니다. |
 | 오른쪽 | **Apply saved scenario** | 선택한 **저장본**을 현재 Notion 화면에 적용하고 결과를 기록합니다. 편집기에 저장하지 않은 변경이 있으면 버튼이 비활성화됩니다. |
 
-**Create**나 **Duplicate**는 현재 편집기의 내용을 새 초안으로 바꿉니다. 작업 중이던 JSON을 유지하려면 먼저 **Save**하세요. **Save current Notion screen**은 편집기 내용 대신 실제 Notion 화면을 읽으며, 해당 문서가 Notion에서 열려 있어야 합니다.
+**Create**나 **Duplicate**는 현재 편집기의 내용을 새 초안으로 바꿉니다. 작업 중이던 JSON을 유지하려면 먼저 **Save**하세요. **Save screen for selected document**는 편집기 내용 대신 실제 Notion 화면을 읽습니다. 선택한 Document의 페이지가 열려 있어야 하며, 다른 Fixture 페이지는 대상으로 자동 선택하지 않습니다.
 
 ## 가장 흔한 작업 순서
 
@@ -43,11 +43,11 @@ NotionScenarios는 테스트용 Notion 문서의 **화면 상태**를 JSON으로
 3. Notion 데스크톱에서 대상 문서를 열고 **Apply saved scenario**를 누릅니다.
 4. 아래 **Latest run · Progress**에서 각 단계와 오류를 확인하고 **Latest run · Screenshot**에서 결과를 확인합니다.
 
-### 지금 보이는 화면을 새 시나리오로 남기기
+### 선택한 문서의 화면을 새 시나리오로 남기기
 
 1. Notion 데스크톱에서 해당 테스트 문서를 열고 원하는 창 위치·크기, 사이드바, 스크롤, 토글 상태를 만듭니다.
 2. 앱에서 **Document**를 맞추고 **New scenario ID**에 사용하지 않은 ID를 입력합니다.
-3. **Save current Notion screen**을 누릅니다. 화면 관측과 캡처가 성공하고 저장 가능한 상태라면 시나리오 JSON이 자동으로 생성됩니다. 실패하면 결과 탭의 `status`와 `captureSaveError`를 확인합니다.
+3. **Save screen for selected document**를 누릅니다. 화면 관측과 캡처가 성공하고 저장 가능한 상태라면 시나리오 JSON이 자동으로 생성됩니다. 실패하면 Latest run의 요약과 Progress 탭의 단계별 오류를 확인합니다.
 4. 목록에서 새 항목을 선택해 저장된 JSON을 확인합니다. 현재 화면 저장은 관측 가능한 값만 기록합니다. 줌 수치는 저장하지 않으며, 화면 밖 토글이나 여러 블록에 걸친 선택 상태는 추정하지 않습니다.
 
 ### 새 요청 상태를 직접 만들기
@@ -65,12 +65,12 @@ NotionScenarios는 테스트용 Notion 문서의 **화면 상태**를 JSON으로
 | 데이터 | 저장 위치 | 의미 |
 | --- | --- | --- |
 | 시나리오 정의 | `notion-fixtures/scenarios/<문서-ID>/<시나리오-ID>.json` | **Save** 또는 성공한 현재 화면 저장으로 생성됩니다. Git으로 공유할 수 있는 요청 상태입니다. |
-| 실행 기록 | `notion-fixtures/runs/<실행-ID>/` | **Apply saved scenario** 또는 **Save current Notion screen**을 실행할 때마다 새 폴더를 만듭니다. `result.json`은 상태·단계별 결과·관측값, `request.json`은 실행 요청, `screen.png`는 캡처 성공 시 실제 이미지입니다. `runs/`는 Git에서 제외됩니다. |
+| 실행 기록 | `notion-fixtures/runs/<실행-ID>/` | **Apply saved scenario** 또는 **Save screen for selected document**를 실행할 때마다 새 폴더를 만듭니다. `result.json`은 상태·단계별 결과·관측값, `request.json`은 실행 요청, `screen.png`는 캡처 성공 시 실제 이미지입니다. `runs/`는 Git에서 제외됩니다. |
 | Fixture의 Notion 페이지 ID·상태 | `notion-fixtures/state.json` | `fixture ensure`가 관리하는 개발자별 로컬 정보입니다. 시나리오 적용은 여기서 대상 페이지를 조회합니다. Git에서 제외됩니다. |
 | 실제 테스트 문서 | 로그인한 Notion 워크스페이스의 **Notion AX Fixtures** 아래 | `fixture ensure`가 만들고 `reset`이 복구합니다. 시나리오 적용은 화면을 조작하며 문서 본문을 저장하거나 수정하지 않습니다. |
 | 마지막 선택 폴더 | 이 Mac의 앱 사용자 기본 설정 | **Choose fixture folder…**로 선택한 경로입니다. 시나리오 JSON이나 실행 결과가 여기에 저장되는 것은 아닙니다. |
 
-결과 패널은 `runs/`에 저장된 가장 최근의 **Apply** 또는 **Save current Notion screen** 한 건을 보여줍니다. 앱을 열 때도 최근 완료 실행을 불러옵니다. 상단 **Latest run**에서 작업 종류, Document, Scenario, 시작 시각, 상태, 실행 ID를 확인할 수 있고, 화면 저장이 성공하면 생성된 시나리오 ID도 표시됩니다.
+결과 패널은 `runs/`에 저장된 가장 최근의 **Apply** 또는 **Save screen for selected document** 한 건을 보여줍니다. 앱을 열 때도 최근 완료 실행을 불러옵니다. 상단 **Latest run**에서 작업 종류, Document, Scenario, 시작 시각, 상태, 실행 ID를 확인할 수 있고, 화면 저장이 성공하면 생성된 시나리오 ID도 표시됩니다.
 
 **Progress & item results**는 해당 실행의 단계별 상태·오류·시간과 실행 로그를 보여줍니다. **Requested / observed JSON**은 해당 실행이 요청한 값과 실제 관측값을 담은 전체 결과입니다. **Screenshot**은 현재 실행의 `screen.png`를 보여줍니다. 최신 실행이 Apply이고 같은 시나리오·버전의 저장 캡처가 있으면 두 이미지를 나란히 놓고 픽셀 단위로 비교해 일치 픽셀 비율과 차이 픽셀 수를 표시합니다. 이미지 크기가 다르면 비율은 계산하지 않습니다. 이는 이미지끼리의 비교이며, JSON 상태값과 이미지가 같은지 자동 검증하는 기능은 아닙니다. **Open run folder**는 상단 **Latest run**에 해당하는 폴더를 열고, 비교 기준인 저장 캡처가 있으면 **Open saved capture folder**가 그 폴더를 엽니다.
 
@@ -82,4 +82,4 @@ NotionScenarios는 테스트용 Notion 문서의 **화면 상태**를 JSON으로
 - **권한 오류:** 결과에 `accessibility_permission` 또는 `screen_capture_permission`이 표시되면 앱에 나타나는 **Accessibility settings…** / **Screen Recording settings…** 버튼으로 macOS 설정을 열어 권한을 켭니다.
 - **Fixture가 준비되지 않았거나 문서가 바뀜:** 별도로 `./notion-fixtures/fixture ensure`를 실행합니다. 복구가 필요한 문서 수정 사실을 알고 있다면 `reset`을 사용합니다. 시나리오의 `fixtureVersion`도 현재 정의와 일치해야 합니다.
 - **화면 저장은 실행됐지만 JSON이 없음:** 결과 JSON의 `captureSaveError`, `status`, `savedScenario`를 확인합니다. 실행 기록은 `runs/`에 남을 수 있습니다.
-- **대상 창을 찾지 못함:** 해당 Fixture 페이지를 Notion 데스크톱에서 열고, 같은 페이지가 여러 창에 열려 있다면 하나만 남깁니다. 실행 중에는 다른 창으로 전환하지 않습니다.
+- **선택한 Document를 찾지 못함:** 선택한 Fixture 페이지를 Notion 데스크톱에서 엽니다. 다른 Fixture 페이지를 자동으로 선택하지 않으며, 같은 페이지가 여러 창에 열려 있다면 하나만 남깁니다.

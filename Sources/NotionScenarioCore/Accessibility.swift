@@ -10,7 +10,7 @@ final class Accessibility {
     init() throws {
         guard AXIsProcessTrusted() else { throw ScenarioFailure("accessibility_permission", "Enable Accessibility for Notion Scenarios in System Settings.") }
         guard let process = NSRunningApplication.runningApplications(withBundleIdentifier: "notion.id").first else {
-            throw ScenarioFailure("target_window_missing", "Open the Notion desktop app first.")
+            throw ScenarioFailure("notion_not_running", "Open the Notion desktop app first.")
         }
         self.process = process
         inputSource?.localEventsSuppressionInterval = 0

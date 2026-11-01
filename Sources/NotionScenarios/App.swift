@@ -68,6 +68,7 @@ struct Listing: Decodable { var fixtures: [FixtureItem]; var scenarios: [Scenari
     @Published var lastRunId = ""
     @Published var lastRunStartedAt = ""
     @Published var lastRunStatus = ""
+    @Published var runErrorSummary = ""
     @Published var savedScenarioId: String?
     @Published var screenshotCapturedAt = ""
     @Published var savedCaptureDirectory: URL?
@@ -78,7 +79,7 @@ struct Listing: Decodable { var fixtures: [FixtureItem]; var scenarios: [Scenari
     var lastRunOperationLabel: String {
         switch lastRunOperation {
         case "apply": "Apply saved scenario"
-        case "capture": "Save current Notion screen"
+        case "capture": "Save screen for selected document"
         default: lastRunOperation
         }
     }
@@ -151,6 +152,7 @@ struct Listing: Decodable { var fixtures: [FixtureItem]; var scenarios: [Scenari
     func loadLatestRun() {
         lastRunOperation = ""; lastRunFixtureId = ""; lastRunScenarioId = ""
         lastRunScenarioVersion = nil; lastRunId = ""; lastRunStartedAt = ""; lastRunStatus = ""
+        runErrorSummary = ""
         savedScenarioId = nil; screenshotCapturedAt = ""
         savedCaptureDirectory = nil; savedCaptureImage = nil; savedCaptureAt = ""; screenshotComparison = ""
         runStatus = ""; stepResults = []; summary = ""; runDirectory = nil; image = nil
@@ -176,6 +178,7 @@ struct Listing: Decodable { var fixtures: [FixtureItem]; var scenarios: [Scenari
             lastRunId = value["runId"] as? String ?? directory.lastPathComponent
             lastRunStartedAt = value["startedAt"] as? String ?? ""
             lastRunStatus = status; runStatus = status
+            runErrorSummary = userFacingError(value, request: request) ?? ""
             savedScenarioId = value["savedScenario"] as? String
             screenshotCapturedAt = (value["screenshot"] as? [String: Any])?["capturedAt"] as? String ?? ""
             if let steps = value["steps"], let encoded = try? JSONSerialization.data(withJSONObject: steps),
@@ -186,6 +189,40 @@ struct Listing: Decodable { var fixtures: [FixtureItem]; var scenarios: [Scenari
             loadSavedCaptureComparison()
             messages = "Loaded latest saved run: \(lastRunId)"
             return
+        }
+    }
+    private func userFacingError(_ value: [String: Any], request: [String: Any]? = nil) -> String? {
+        guard value["status"] as? String == "failed" else { return nil }
+        let requestedScenario = request?["scenario"] as? [String: Any] ?? [:]
+        let fixtureId = value["fixtureId"] as? String ?? requestedScenario["fixtureId"] as? String ?? "selected document"
+        if let saveError = value["captureSaveError"] as? String {
+            return "The screen was captured, but the scenario could not be saved: \(saveError)"
+        }
+        let steps = value["steps"] as? [[String: Any]] ?? []
+        guard let failure = steps.first(where: { $0["status"] as? String == "failed" }) else {
+            return "The scenario failed. See Progress & item results for details."
+        }
+        let code = failure["code"] as? String ?? ""
+        let detail = failure["detail"] as? String ?? "The scenario failed. See Progress & item results for details."
+        switch code {
+        case "selected_document_not_found":
+            return "Could not find selected document '\(fixtureId)' in a Notion window. This action only captures the selected document. Open that page and try again."
+        case "notion_not_running":
+            return "Notion desktop is not open. Open Notion and try again."
+        case "target_window_focus_failed":
+            return "The selected document '\(fixtureId)' was found, but its window could not be brought forward. Bring it to the front and try again."
+        case "ambiguous_window":
+            return "The selected document is open in multiple Notion windows. Close duplicate windows and try again."
+        case "accessibility_permission":
+            return "Notion Scenarios needs Accessibility permission. Enable it in System Settings, then try again."
+        case "screen_capture_permission":
+            return "Notion Scenarios needs Screen Recording permission to save a screenshot. Enable it in System Settings, then try again."
+        case "document_mismatch":
+            return "The Notion document or foreground window changed during the run. Keep the selected document open and try again."
+        case "target_window_missing":
+            return "Notion did not expose the selected page in time. Make sure the page is open, then try again."
+        default:
+            return detail
         }
     }
     func loadSavedCaptureComparison() {
@@ -298,11 +335,13 @@ struct Listing: Decodable { var fixtures: [FixtureItem]; var scenarios: [Scenari
         guard let value = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             messages += "\nInvalid result JSON"
             summary = "No result JSON was returned. See Progress & item results for the error."
+            runErrorSummary = "No readable result was returned. See Progress & item results for details."
             runStatus = "failed"; lastRunStatus = "failed"
             return
         }
         runStatus = value["status"] as? String ?? "failed"
         lastRunStatus = runStatus
+        runErrorSummary = userFacingError(value) ?? ""
         lastRunId = value["runId"] as? String ?? lastRunId
         lastRunFixtureId = value["fixtureId"] as? String ?? lastRunFixtureId
         lastRunScenarioId = value["scenarioId"] as? String ?? lastRunScenarioId
@@ -336,6 +375,7 @@ struct Listing: Decodable { var fixtures: [FixtureItem]; var scenarios: [Scenari
                 savedScenarioId = nil; screenshotCapturedAt = ""
                 savedCaptureDirectory = nil; savedCaptureImage = nil; savedCaptureAt = ""; screenshotComparison = ""
                 summary = ""; runDirectory = nil; image = nil
+                runErrorSummary = ""
             }
         }
         let executable = Bundle.main.executableURL?.path ?? CommandLine.arguments[0]
@@ -404,7 +444,7 @@ struct ScenarioView: View {
                     Button("Create") { model.create() }.disabled(!model.canUseNewId)
                     Button("Duplicate") { model.duplicate() }.disabled(!model.canUseNewId || model.editor.isEmpty)
                 }
-                Button("Save current Notion screen") { model.capture() }.disabled(!model.canUseNewId)
+                Button("Save screen for selected document") { model.capture() }.disabled(!model.canUseNewId)
                 Button("Refresh") { model.reload() }
             }.padding().frame(minWidth: 260, idealWidth: 300).disabled(model.busy)
             VStack(alignment: .leading, spacing: 10) {
@@ -448,6 +488,13 @@ struct ScenarioView: View {
                         if let savedScenarioId = model.savedScenarioId {
                             Text("Saved scenario: \(savedScenarioId)")
                                 .font(.caption).textSelection(.enabled)
+                        }
+                        if !model.runErrorSummary.isEmpty {
+                            Label(model.runErrorSummary, systemImage: "exclamationmark.triangle.fill")
+                                .font(.callout)
+                                .foregroundStyle(.red)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .textSelection(.enabled)
                         }
                     }
                     .padding(8)
