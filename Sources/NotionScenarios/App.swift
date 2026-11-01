@@ -1150,6 +1150,7 @@ private struct ScreenshotComparisonWindowView: View {
                         Image(systemName: "minus.magnifyingglass")
                             .scenarioIconButtonHighlight()
                     }
+                        .buttonStyle(.plain)
                         .help("Zoom out (⌘−)")
                         .accessibilityLabel("Zoom out")
                     Button("\(Int((magnification * 100).rounded()))%") { resetZoom() }
@@ -1161,6 +1162,7 @@ private struct ScreenshotComparisonWindowView: View {
                         Image(systemName: "plus.magnifyingglass")
                             .scenarioIconButtonHighlight()
                     }
+                        .buttonStyle(.plain)
                         .help("Zoom in (⌘+)")
                         .accessibilityLabel("Zoom in")
                 }
