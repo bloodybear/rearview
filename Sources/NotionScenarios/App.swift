@@ -21,9 +21,10 @@ struct Main {
         _ = NSApplication.shared
         NSApp.setActivationPolicy(.regular)
         let model = ScenarioModel()
+        let comparisonWindowController = ScreenshotComparisonWindowController()
         let window = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 1060, height: 760), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         window.title = "Notion Screen Scenarios"
-        window.contentView = NSHostingView(rootView: ScenarioView(model: model))
+        window.contentView = NSHostingView(rootView: ScenarioView(model: model, comparisonWindowController: comparisonWindowController))
         let delegate = AppDelegate(); NSApp.delegate = delegate
         let menu = NSMenu(), appMenu = NSMenu()
         let appItem = NSMenuItem(); appItem.submenu = appMenu; menu.addItem(appItem)
@@ -42,6 +43,101 @@ struct Main {
 }
 @MainActor final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+}
+
+private struct ScenarioButtonHoverHighlight: ViewModifier {
+    var padding: CGFloat = 0
+    @Environment(\.isEnabled) private var isEnabled
+    @State private var isHovered = false
+
+    func body(content: Content) -> some View {
+        content
+            .padding(padding)
+            .background {
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(Color.primary.opacity(isHovered && isEnabled ? 0.12 : 0))
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: 6)
+                    .strokeBorder(Color.primary.opacity(isHovered && isEnabled ? 0.22 : 0), lineWidth: 1)
+            }
+            .contentShape(RoundedRectangle(cornerRadius: 6))
+            .onHover { isHovered = $0 }
+            .animation(.easeOut(duration: 0.12), value: isHovered)
+    }
+}
+
+private extension View {
+    func scenarioHoverHighlight(padding: CGFloat = 0) -> some View {
+        modifier(ScenarioButtonHoverHighlight(padding: padding))
+    }
+
+    func scenarioIconButtonHighlight() -> some View {
+        padding(6)
+            .frame(minWidth: 30, minHeight: 30)
+            .scenarioHoverHighlight()
+    }
+}
+
+@MainActor final class ScreenshotComparisonWindowController: NSObject, NSWindowDelegate {
+    private var window: NSWindow?
+    private var displayedComparisonID: String?
+
+    func show(saved: NSImage, applied: NSImage, model: ScenarioModel) {
+        let comparisonID = [
+            model.lastRunFixtureId,
+            model.lastRunScenarioId,
+            model.lastRunId,
+            model.savedCaptureAt,
+            model.screenshotCapturedAt
+        ].joined(separator: "|")
+
+        if let window {
+            if displayedComparisonID != comparisonID {
+                window.contentView = NSHostingView(rootView: makeContent(saved: saved, applied: applied, model: model))
+                window.title = "Screenshot comparison · \(model.lastRunScenarioId)"
+                displayedComparisonID = comparisonID
+            }
+            if window.isMiniaturized { window.deminiaturize(nil) }
+            window.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
+        let newWindow = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 1500, height: 1000),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        newWindow.isReleasedWhenClosed = false
+        newWindow.title = "Screenshot comparison · \(model.lastRunScenarioId)"
+        newWindow.minSize = NSSize(width: 900, height: 600)
+        newWindow.contentView = NSHostingView(rootView: makeContent(saved: saved, applied: applied, model: model))
+        newWindow.delegate = self
+        newWindow.center()
+        window = newWindow
+        displayedComparisonID = comparisonID
+        newWindow.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    private func makeContent(saved: NSImage, applied: NSImage, model: ScenarioModel) -> ScreenshotComparisonWindowView {
+        ScreenshotComparisonWindowView(
+            savedImage: saved,
+            appliedImage: applied,
+            savedLabel: "Saved capture · v\(model.lastRunScenarioVersion ?? 0) · \(model.savedCaptureTimeLabel)",
+            appliedLabel: "Latest apply · v\(model.lastRunScenarioVersion ?? 0) · \(model.screenshotTimeLabel)",
+            comparison: model.screenshotComparison,
+            savedCaptureDirectory: model.savedCaptureDirectory,
+            latestApplyDirectory: model.runDirectory
+        )
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        guard let closingWindow = notification.object as? NSWindow, window === closingWindow else { return }
+        window = nil
+        displayedComparisonID = nil
+    }
 }
 struct FixtureItem: Decodable, Identifiable { var id: String; var version: String }
 struct Listing: Decodable { var fixtures: [FixtureItem]; var scenarios: [Scenario] }
@@ -66,6 +162,8 @@ private struct DeletedScenario {
     @Published var newId = ""
     @Published var busy = false
     @Published var messages = ""
+    @Published var saveError = ""
+    @Published private(set) var unsavedEditBlockPulse = 0
     @Published var summary = ""
     @Published var runStatus = ""
     @Published var image: NSImage?
@@ -89,6 +187,16 @@ private struct DeletedScenario {
     private var undoExpirationTask: Task<Void, Never>?
     var current: Scenario? { scenarios.first { $0.id == selected } }
     var hasUnsavedEditorChanges: Bool { editor != savedEditor }
+    var unsavedEditorNotice: String {
+        let scenarioName = current?.name ?? "the current scenario"
+        return "Unsaved changes to \(scenarioName). Save or discard them before switching scenarios or capturing a new one."
+    }
+    @discardableResult
+    func blockActionForUnsavedEditorChanges() -> Bool {
+        guard hasUnsavedEditorChanges else { return false }
+        unsavedEditBlockPulse &+= 1
+        return true
+    }
     var lastRunOperationLabel: String {
         switch lastRunOperation {
         case "apply": "Apply saved scenario"
@@ -139,19 +247,43 @@ private struct DeletedScenario {
         if root != nil { reload(); loadLatestRun() }
     }
     func chooseRoot() {
+        guard !blockActionForUnsavedEditorChanges() else { return }
         let panel = NSOpenPanel(); panel.canChooseFiles = false; panel.canChooseDirectories = true
         panel.message = "Choose the notion-fixtures folder containing the fixture CLI"
         if panel.runModal() == .OK, let url = panel.url {
-            clearPendingDeletion()
-            root = url; UserDefaults.standard.set(url.path, forKey: "fixtureRoot"); reload(); loadLatestRun()
+            applyRoot(url)
         }
+    }
+    private func applyRoot(_ url: URL) {
+        clearPendingDeletion()
+        root = url
+        UserDefaults.standard.set(url.path, forKey: "fixtureRoot")
+        reload()
+        loadLatestRun()
     }
     func select(_ id: String?) {
         selected = id
+        saveError = ""
         guard let s = current else { editor = ""; savedEditor = ""; return }
         let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
         editor = String(data: (try? encoder.encode(s)) ?? Data(), encoding: .utf8) ?? ""
         savedEditor = editor
+    }
+    func requestScenarioSelection(_ id: String?) {
+        guard id != selected else { return }
+        guard !blockActionForUnsavedEditorChanges() else { return }
+        select(id)
+    }
+    func requestFixtureSelection(_ id: String) {
+        guard id != fixtureId else { return }
+        guard !blockActionForUnsavedEditorChanges() else { return }
+        fixtureId = id
+        select(nil)
+    }
+    func discardEditorChanges() {
+        guard hasUnsavedEditorChanges else { return }
+        editor = savedEditor
+        saveError = ""
     }
     func reload(selecting requestedSelection: String? = nil) {
         command(["list", "--json"], resetProgress: false) { data in
@@ -317,12 +449,23 @@ private struct DeletedScenario {
         return rendered ? pixels : nil
     }
     func save() {
+        guard !busy, !editor.isEmpty else { return }
+        saveError = ""
+        let originalID = selected
+        let editedID = (try? JSONSerialization.jsonObject(with: Data(editor.utf8)) as? [String: Any])?["id"] as? String
         let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".json")
-        do { try Data(editor.utf8).write(to: file) } catch { messages = String(describing: error); return }
-        command(["save", file.path]) { data in
+        do { try Data(editor.utf8).write(to: file) } catch { saveError = String(describing: error); return }
+        var arguments = ["save", file.path]
+        if let originalID, let editedID, originalID != editedID {
+            arguments += ["--replace-id", originalID]
+        }
+        command(arguments) { data in
             try? FileManager.default.removeItem(at: file)
-            guard let s = try? JSONDecoder().decode(Scenario.self, from: data) else { return }
-            self.scenarios.removeAll { $0.id == s.id }; self.scenarios.append(s)
+            guard let s = try? JSONDecoder().decode(Scenario.self, from: data) else {
+                self.saveError = self.messages.split(separator: "\n").last.map(String.init) ?? "Scenario could not be saved."
+                return
+            }
+            self.scenarios.removeAll { $0.id == s.id || $0.id == originalID }; self.scenarios.append(s)
             self.select(s.id)
             self.reload()
         }
@@ -495,11 +638,8 @@ private struct DeletedScenario {
     }
 
     func capture() {
+        guard !blockActionForUnsavedEditorChanges() else { return }
         guard canUseNewId else { messages = newIdIssue ?? "Enter a scenario ID"; return }
-        guard !hasUnsavedEditorChanges else {
-            messages = "Save or discard the current JSON edits before capturing a new scenario."
-            return
-        }
         let requestedID = newId
         command(["capture", fixtureId, "--id", requestedID, "--json"]) { data in
             self.showResult(data)
@@ -605,32 +745,99 @@ private struct DeletedScenario {
 }
 struct ScenarioView: View {
     @ObservedObject var model: ScenarioModel
+    let comparisonWindowController: ScreenshotComparisonWindowController
+    @FocusState private var newIDFocused: Bool
+    @FocusState private var chooseFolderFocused: Bool
+    @State private var newIDSelection: TextSelection?
+    @State private var capturePrompt = ""
+    @State private var fixturePrompt = ""
+    @State private var isUnsavedWarningHighlighted = false
+    @State private var unsavedWarningHighlightTask: Task<Void, Never>?
+
+    private func showComparisonWindow(saved: NSImage, applied: NSImage) {
+        comparisonWindowController.show(saved: saved, applied: applied, model: model)
+    }
+
+    private var captureButtonDisabled: Bool {
+        model.busy || model.newIdIssue != nil ||
+            (model.newId.isEmpty && !capturePrompt.isEmpty) ||
+            (model.root == nil && !fixturePrompt.isEmpty)
+    }
+
+    private func attemptCapture() {
+        guard !model.blockActionForUnsavedEditorChanges() else { return }
+        if model.newId.isEmpty {
+            capturePrompt = "새 시나리오 ID를 입력해 주세요."
+            newIDFocused = true
+            return
+        }
+        if let issue = model.newIdIssue {
+            capturePrompt = issue
+            newIDFocused = true
+            if issue.hasPrefix("이미 사용 중인 ID") {
+                newIDSelection = TextSelection(range: model.newId.startIndex..<model.newId.endIndex)
+            }
+            return
+        }
+        if model.root == nil {
+            fixturePrompt = "Choose a fixture folder before capturing a scenario."
+            chooseFolderFocused = true
+            return
+        }
+        fixturePrompt = ""
+        capturePrompt = ""
+        model.capture()
+    }
+
+    private func highlightBlockedUnsavedEdit() {
+        unsavedWarningHighlightTask?.cancel()
+        withAnimation(.easeInOut(duration: 0.15)) {
+            isUnsavedWarningHighlighted = true
+        }
+        unsavedWarningHighlightTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 850_000_000)
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeInOut(duration: 0.25)) {
+                isUnsavedWarningHighlighted = false
+            }
+        }
+    }
+
     var body: some View {
         HSplitView {
             VStack(alignment: .leading, spacing: 12) {
                 Button("Choose fixture folder…") { model.chooseRoot() }
+                    .focused($chooseFolderFocused)
+                    .scenarioHoverHighlight()
                 Text(model.root?.path ?? "Select notion-fixtures folder").font(.caption).textSelection(.enabled)
-                Picker("Document", selection: $model.fixtureId) {
+                if !fixturePrompt.isEmpty {
+                    Text(fixturePrompt).font(.caption).foregroundStyle(.red)
+                }
+                Picker("Document", selection: Binding(
+                    get: { model.fixtureId },
+                    set: { model.requestFixtureSelection($0) }
+                )) {
                     ForEach(model.fixtures) { Text($0.id).tag($0.id) }
-                }.onChange(of: model.fixtureId) { _, _ in model.select(nil) }
+                }
                 HStack {
                     Text("Scenarios").font(.headline)
                     Spacer()
                     Button { model.reload() } label: {
                         Image(systemName: "arrow.clockwise")
+                            .scenarioIconButtonHighlight()
                     }
                     .buttonStyle(.borderless)
                     .help("Reload fixture and scenario lists from the selected folder.")
                     .accessibilityLabel("Reload fixture and scenario lists")
                 }
-                List(selection: Binding(get: { model.selected }, set: { model.select($0) })) {
+                List(selection: Binding(get: { model.selected }, set: { model.requestScenarioSelection($0) })) {
                     ForEach(model.scenarios.filter { $0.fixtureId == model.fixtureId }, id: \.id) { s in
                         HStack(spacing: 8) {
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(s.name).lineLimit(2)
-                                Text("\(s.id) · v\(s.version)")
+                                Text("\(s.id) · v\(s.version)\(model.hasUnsavedChanges(for: s.id) ? " · Modified" : "")")
                                     .font(.caption)
-                                    .foregroundStyle(.secondary)
+                                    .foregroundStyle(model.hasUnsavedChanges(for: s.id) ? .orange : .secondary)
                                     .lineLimit(1)
                             }
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -638,6 +845,7 @@ struct ScenarioView: View {
                             HStack(spacing: 6) {
                                 Button { model.duplicateScenario(s.id) } label: {
                                     Image(systemName: "doc.on.doc")
+                                        .scenarioIconButtonHighlight()
                                 }
                                 .buttonStyle(.borderless)
                                 .help(model.hasUnsavedEditorChanges ? "Save or discard JSON edits before duplicating." : "Duplicate saved scenario")
@@ -646,6 +854,7 @@ struct ScenarioView: View {
 
                                 Button { model.applyScenario(s.id) } label: {
                                     Image(systemName: "play.fill")
+                                        .scenarioIconButtonHighlight()
                                 }
                                 .buttonStyle(.borderless)
                                 .help(model.hasUnsavedChanges(for: s.id) ? "Save or discard JSON edits before applying." : "Apply saved scenario")
@@ -654,6 +863,7 @@ struct ScenarioView: View {
 
                                 Button(role: .destructive) { model.deleteScenario(s.id) } label: {
                                     Image(systemName: "trash")
+                                        .scenarioIconButtonHighlight()
                                 }
                                 .buttonStyle(.borderless)
                                 .help(model.hasUnsavedChanges(for: s.id) ? "Save or discard JSON edits before deleting." : "Delete scenario")
@@ -672,6 +882,7 @@ struct ScenarioView: View {
                         Spacer(minLength: 4)
                         Button("Undo") { model.undoDelete() }
                             .buttonStyle(.link)
+                            .scenarioHoverHighlight()
                             .accessibilityLabel("Undo scenario deletion")
                     }
                     .font(.callout)
@@ -679,39 +890,91 @@ struct ScenarioView: View {
                     .padding(.vertical, 7)
                     .background(Color.gray.opacity(0.1), in: RoundedRectangle(cornerRadius: 7))
                 }
-                TextField("New scenario ID", text: $model.newId)
-                if let issue = model.newIdIssue {
+                TextField("New scenario ID", text: $model.newId, selection: $newIDSelection)
+                    .focused($newIDFocused)
+                    .onChange(of: model.newId) { _, _ in capturePrompt = "" }
+                    .onChange(of: model.root) { _, newRoot in
+                        if newRoot != nil {
+                            capturePrompt = ""
+                            fixturePrompt = ""
+                        }
+                    }
+                    .onChange(of: model.selected) { _, _ in capturePrompt = "" }
+                if !capturePrompt.isEmpty || model.newIdIssue != nil {
+                    let issue = capturePrompt.isEmpty ? model.newIdIssue! : capturePrompt
                     Text(issue)
                         .font(.caption)
                         .foregroundStyle(Color.red)
                 }
                 Button {
-                    model.capture()
+                    attemptCapture()
                 } label: {
                     Label("Capture as new", systemImage: "viewfinder")
                 }
-                .disabled(!model.canUseNewId || model.hasUnsavedEditorChanges || model.busy)
-                .help(model.hasUnsavedEditorChanges
-                    ? "Save or discard JSON edits before capturing a new scenario."
-                    : "Capture the current Notion screen and save it as a new scenario.")
+                .scenarioHoverHighlight()
+                .disabled(captureButtonDisabled)
+                .help("Enter a new scenario ID, then capture the current Notion screen.")
                 .accessibilityLabel("Capture current Notion screen as a new scenario")
-            }.padding().frame(minWidth: 340, idealWidth: 360).disabled(model.busy)
+            }
+            .padding()
+            .frame(minWidth: 340, idealWidth: 360)
+            .disabled(model.busy)
             VStack(alignment: .leading, spacing: 10) {
                 HStack {
                     Text("Scenario definition (JSON)").font(.headline)
+                    if model.hasUnsavedEditorChanges {
+                        Text("Modified")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.orange)
+                    }
                     Spacer()
                     if !model.runStatus.isEmpty { Text(model.runStatus).font(.headline).foregroundStyle(model.runStatus == "verified" ? .green : model.runStatus == "failed" ? .red : .orange) }
                     if model.busy { ProgressView().controlSize(.small) }
-                    Button("Save") { model.save() }.disabled(model.editor.isEmpty || model.busy)
                 }
                 Text("Only observed values are captured. Zoom may remain unsupported. Save edits before applying.").font(.caption).foregroundStyle(.secondary)
+                if model.hasUnsavedEditorChanges {
+                    HStack(spacing: 10) {
+                        Label(model.unsavedEditorNotice, systemImage: "pencil.line")
+                            .font(.callout)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        Button("Save") { model.save() }
+                            .scenarioHoverHighlight()
+                            .disabled(model.editor.isEmpty || model.busy)
+                        Button("Discard changes") { model.discardEditorChanges() }
+                            .scenarioHoverHighlight()
+                            .disabled(model.busy)
+                    }
+                    .padding(9)
+                    .background(
+                        Color.orange.opacity(isUnsavedWarningHighlighted ? 0.32 : 0.12),
+                        in: RoundedRectangle(cornerRadius: 8)
+                    )
+                    .animation(.easeInOut(duration: 0.15), value: isUnsavedWarningHighlighted)
+                }
+                if !model.saveError.isEmpty {
+                    Label(model.saveError, systemImage: "exclamationmark.triangle.fill")
+                        .font(.callout).foregroundStyle(.red).textSelection(.enabled)
+                }
                 if model.messages.contains("accessibility_permission") || model.messages.contains("screen_capture_permission") {
                     HStack {
                         Button("Accessibility settings…") { NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!) }
+                            .scenarioHoverHighlight()
                         Button("Screen Recording settings…") { NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")!) }
+                            .scenarioHoverHighlight()
                     }
                 }
-                TextEditor(text: $model.editor).font(.system(.body, design: .monospaced)).frame(minHeight: 160).disabled(model.busy)
+                ScenarioJSONEditor(text: $model.editor, isEditable: !model.busy)
+                    .frame(minHeight: 160)
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 6)
+                            .strokeBorder(
+                                isUnsavedWarningHighlighted ? Color.orange : Color.clear,
+                                lineWidth: isUnsavedWarningHighlighted ? 2 : 0
+                            )
+                            .allowsHitTesting(false)
+                    }
+                    .animation(.easeInOut(duration: 0.15), value: isUnsavedWarningHighlighted)
                 if !model.lastRunOperation.isEmpty {
                     VStack(alignment: .leading, spacing: 4) {
                         HStack {
@@ -722,6 +985,7 @@ struct ScenarioView: View {
                                 .foregroundStyle(model.lastRunStatus == "verified" ? Color.green : model.lastRunStatus == "failed" ? Color.red : Color.orange)
                             if let directory = model.runDirectory {
                                 Button("Open run folder") { NSWorkspace.shared.open(directory) }
+                                    .scenarioHoverHighlight()
                             }
                         }
                         Text("Document: \(model.lastRunFixtureId) · Scenario: \(model.lastRunScenarioId)\(model.lastRunScenarioVersion.map { " · v\($0)" } ?? "")")
@@ -768,20 +1032,13 @@ struct ScenarioView: View {
                         if model.lastRunOperation == "apply", let saved = model.savedCaptureImage, let applied = model.image {
                             Text(model.screenshotComparison).font(.caption).bold()
                             HStack(alignment: .top, spacing: 10) {
-                                VStack(alignment: .leading, spacing: 6) {
-                                    Text("Saved capture · v\(model.lastRunScenarioVersion ?? 0)\(model.savedCaptureTimeLabel.isEmpty ? "" : " · \(model.savedCaptureTimeLabel)")")
-                                        .font(.caption).foregroundStyle(.secondary)
-                                    Image(nsImage: saved).resizable().scaledToFit().frame(maxWidth: .infinity, maxHeight: .infinity)
-                                    if let directory = model.savedCaptureDirectory {
-                                        Button("Open saved capture folder") { NSWorkspace.shared.open(directory) }
-                                    }
-                                }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                                comparisonThumbnail(saved, label: "Saved capture · v\(model.lastRunScenarioVersion ?? 0)", time: model.savedCaptureTimeLabel) {
+                                    showComparisonWindow(saved: saved, applied: applied)
+                                }
                                 Divider()
-                                VStack(alignment: .leading, spacing: 6) {
-                                    Text("Latest apply · v\(model.lastRunScenarioVersion ?? 0)\(model.screenshotTimeLabel.isEmpty ? "" : " · \(model.screenshotTimeLabel)")")
-                                        .font(.caption).foregroundStyle(.secondary)
-                                    Image(nsImage: applied).resizable().scaledToFit().frame(maxWidth: .infinity, maxHeight: .infinity)
-                                }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                                comparisonThumbnail(applied, label: "Latest apply · v\(model.lastRunScenarioVersion ?? 0)", time: model.screenshotTimeLabel) {
+                                    showComparisonWindow(saved: saved, applied: applied)
+                                }
                             }
                         } else if let image = model.image {
                             if model.lastRunOperation == "apply" {
@@ -802,6 +1059,301 @@ struct ScenarioView: View {
                     }.tabItem { Text("Screenshot") }
                 }.frame(minHeight: 250)
             }.padding().frame(minWidth: 620)
+        }
+        .onChange(of: model.unsavedEditBlockPulse) { _, _ in highlightBlockedUnsavedEdit() }
+        .onDisappear {
+            unsavedWarningHighlightTask?.cancel()
+            unsavedWarningHighlightTask = nil
+            isUnsavedWarningHighlighted = false
+        }
+    }
+
+    private func comparisonThumbnail(_ image: NSImage, label: String, time: String, open: @escaping () -> Void) -> some View {
+        Button(action: open) {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 5) {
+                    Text(label).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    if !time.isEmpty { Text("· \(time)").font(.caption).foregroundStyle(.secondary).lineLimit(1) }
+                }
+                .frame(height: 18, alignment: .leading)
+                Image(nsImage: image)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .contentShape(Rectangle())
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .scenarioHoverHighlight()
+        .help("Open both screenshots in a large comparison window")
+        .accessibilityLabel("Open enlarged screenshot comparison: \(label)")
+    }
+}
+
+private struct ScenarioJSONEditor: NSViewRepresentable {
+    @Binding var text: String
+    var isEditable: Bool
+
+    final class Coordinator: NSObject, NSTextViewDelegate {
+        var owner: ScenarioJSONEditor
+        init(_ owner: ScenarioJSONEditor) { self.owner = owner }
+        func textDidChange(_ notification: Notification) {
+            guard let view = notification.object as? NSTextView else { return }
+            owner.text = view.string
+        }
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    func makeNSView(context: Context) -> NSScrollView {
+        let scrollView = NSTextView.scrollableTextView()
+        let textView = scrollView.documentView as! NSTextView
+        textView.delegate = context.coordinator
+        textView.font = .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
+        textView.isAutomaticQuoteSubstitutionEnabled = false
+        textView.isAutomaticDashSubstitutionEnabled = false
+        textView.isAutomaticTextReplacementEnabled = false
+        textView.isAutomaticSpellingCorrectionEnabled = false
+        textView.string = text
+        textView.isEditable = isEditable
+        return scrollView
+    }
+
+    func updateNSView(_ scrollView: NSScrollView, context: Context) {
+        guard let textView = scrollView.documentView as? NSTextView else { return }
+        context.coordinator.owner = self
+        if textView.string != text { textView.string = text }
+        textView.isEditable = isEditable
+    }
+}
+
+private struct ScreenshotComparisonWindowView: View {
+    let savedImage: NSImage
+    let appliedImage: NSImage
+    let savedLabel: String
+    let appliedLabel: String
+    let comparison: String
+    let savedCaptureDirectory: URL?
+    let latestApplyDirectory: URL?
+    @State private var magnification: CGFloat = 0
+    @State private var userHasZoomed = false
+
+    var body: some View {
+        GeometryReader { geometry in
+            VStack(spacing: 5) {
+                HStack(alignment: .center) {
+                    Text(comparison).font(.caption).foregroundStyle(.secondary)
+                    Spacer(minLength: 20)
+                    Button { zoomOut() } label: {
+                        Image(systemName: "minus.magnifyingglass")
+                            .scenarioIconButtonHighlight()
+                    }
+                        .help("Zoom out (⌘−)")
+                        .accessibilityLabel("Zoom out")
+                    Button("\(Int((magnification * 100).rounded()))%") { resetZoom() }
+                        .scenarioHoverHighlight()
+                        .help("Show at 100% (⌘0)")
+                        .accessibilityLabel("Reset zoom to 100 percent")
+                        .frame(minWidth: 54)
+                    Button { zoomIn() } label: {
+                        Image(systemName: "plus.magnifyingglass")
+                            .scenarioIconButtonHighlight()
+                    }
+                        .help("Zoom in (⌘+)")
+                        .accessibilityLabel("Zoom in")
+                }
+                HStack(spacing: 0) {
+                    screenshotHeader(savedLabel, directory: savedCaptureDirectory, accessibilityLabel: "Open saved capture folder")
+                    Rectangle()
+                        .fill(Color(nsColor: .separatorColor))
+                        .frame(width: 1)
+                    screenshotHeader(appliedLabel, directory: latestApplyDirectory, accessibilityLabel: "Open latest apply folder")
+                }
+                .frame(height: 22)
+                ScreenshotComparisonCanvas(savedImage: savedImage, appliedImage: appliedImage, magnification: $magnification)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(Color.black.opacity(0.92))
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                Text("Drag or scroll to move both screenshots together · ⌘+ / ⌘− to zoom · ⌘0 for 100%")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(16)
+            .onAppear {
+                guard !userHasZoomed else { return }
+                magnification = fittedMagnification(in: geometry.size)
+            }
+            .onChange(of: geometry.size) { _, size in
+                if !userHasZoomed { magnification = fittedMagnification(in: size) }
+            }
+        }
+        .frame(minWidth: 900, minHeight: 600)
+    }
+
+    private func screenshotHeader(_ title: String, directory: URL?, accessibilityLabel: String) -> some View {
+        HStack(spacing: 5) {
+            Text(title)
+                .font(.caption)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            if let directory {
+                Button { NSWorkspace.shared.open(directory) } label: {
+                    Image(systemName: "folder")
+                        .scenarioIconButtonHighlight()
+                }
+                .buttonStyle(.borderless)
+                .controlSize(.small)
+                .help(accessibilityLabel)
+                .accessibilityLabel(accessibilityLabel)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(height: 18, alignment: .leading)
+    }
+
+    private func fittedMagnification(in size: CGSize) -> CGFloat {
+        let maxWidth = max(savedImage.size.width, appliedImage.size.width)
+        let maxHeight = max(savedImage.size.height, appliedImage.size.height)
+        guard maxWidth > 0, maxHeight > 0 else { return 1 }
+        let panelWidth = max(100, (size.width - 64) / 2)
+        let canvasHeight = max(100, size.height - 130)
+        return min(1, (panelWidth - 20) / maxWidth, (canvasHeight - 20) / maxHeight)
+    }
+
+    private func zoomIn() {
+        userHasZoomed = true
+        magnification = min(8, max(0.05, magnification) * 1.25)
+    }
+
+    private func zoomOut() {
+        userHasZoomed = true
+        magnification = max(0.05, max(0.05, magnification) / 1.25)
+    }
+
+    private func resetZoom() {
+        userHasZoomed = true
+        magnification = 1
+    }
+}
+
+private struct ScreenshotComparisonCanvas: NSViewRepresentable {
+    let savedImage: NSImage
+    let appliedImage: NSImage
+    @Binding var magnification: CGFloat
+
+    func makeNSView(context: Context) -> ScreenshotComparisonCanvasView {
+        let view = ScreenshotComparisonCanvasView(savedImage: savedImage, appliedImage: appliedImage)
+        let zoomBinding = $magnification
+        view.onMagnificationChanged = { zoomBinding.wrappedValue = $0 }
+        view.magnification = magnification
+        return view
+    }
+
+    func updateNSView(_ view: ScreenshotComparisonCanvasView, context: Context) {
+        view.savedImage = savedImage
+        view.appliedImage = appliedImage
+        view.magnification = magnification
+        let zoomBinding = $magnification
+        view.onMagnificationChanged = { zoomBinding.wrappedValue = $0 }
+        view.needsDisplay = true
+    }
+}
+
+private final class ScreenshotComparisonCanvasView: NSView {
+    var savedImage: NSImage { didSet { needsDisplay = true } }
+    var appliedImage: NSImage { didSet { needsDisplay = true } }
+    var magnification: CGFloat = 0 { didSet { needsDisplay = true } }
+    var onMagnificationChanged: ((CGFloat) -> Void)?
+
+    private var panOffset = CGPoint.zero
+    private var dragStart = CGPoint.zero
+    private var panAtDragStart = CGPoint.zero
+
+    init(savedImage: NSImage, appliedImage: NSImage) {
+        self.savedImage = savedImage
+        self.appliedImage = appliedImage
+        super.init(frame: .zero)
+        wantsLayer = true
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    override var isFlipped: Bool { true }
+    override var acceptsFirstResponder: Bool { true }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let window = self.window else { return }
+            window.makeFirstResponder(self)
+        }
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor(calibratedWhite: 0.08, alpha: 1).setFill()
+        dirtyRect.fill()
+
+        let dividerWidth: CGFloat = 1
+        let panelWidth = (bounds.width - dividerWidth) / 2
+        let leftPanel = CGRect(x: bounds.minX, y: bounds.minY, width: panelWidth, height: bounds.height)
+        let rightPanel = CGRect(x: leftPanel.maxX + dividerWidth, y: bounds.minY, width: panelWidth, height: bounds.height)
+        NSColor.separatorColor.setFill()
+        CGRect(x: leftPanel.maxX, y: bounds.minY, width: dividerWidth, height: bounds.height).fill()
+
+        let commonWidth = max(savedImage.size.width, appliedImage.size.width)
+        let commonHeight = max(savedImage.size.height, appliedImage.size.height)
+        guard commonWidth > 0, commonHeight > 0 else { return }
+        let fit = min(1, (panelWidth - 32) / commonWidth, (bounds.height - 32) / commonHeight)
+        let scale = magnification > 0 ? magnification : fit
+
+        draw(savedImage, in: leftPanel, commonWidth: commonWidth, commonHeight: commonHeight, scale: scale)
+        draw(appliedImage, in: rightPanel, commonWidth: commonWidth, commonHeight: commonHeight, scale: scale)
+    }
+
+    private func draw(_ image: NSImage, in panel: CGRect, commonWidth: CGFloat, commonHeight: CGFloat, scale: CGFloat) {
+        NSGraphicsContext.saveGraphicsState()
+        NSBezierPath(rect: panel).addClip()
+        let commonOrigin = CGPoint(
+            x: panel.midX - commonWidth * scale / 2 + panOffset.x,
+            y: panel.minY + panOffset.y
+        )
+        let imageRect = CGRect(
+            x: commonOrigin.x,
+            y: commonOrigin.y,
+            width: image.size.width * scale,
+            height: image.size.height * scale
+        )
+        image.draw(in: imageRect, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+        NSGraphicsContext.restoreGraphicsState()
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        window?.makeFirstResponder(self)
+        dragStart = convert(event.locationInWindow, from: nil)
+        panAtDragStart = panOffset
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        panOffset = CGPoint(x: panAtDragStart.x + point.x - dragStart.x, y: panAtDragStart.y + point.y - dragStart.y)
+        needsDisplay = true
+    }
+
+    override func scrollWheel(with event: NSEvent) {
+        panOffset = CGPoint(x: panOffset.x + event.scrollingDeltaX, y: panOffset.y + event.scrollingDeltaY)
+        needsDisplay = true
+    }
+
+    override func keyDown(with event: NSEvent) {
+        guard event.modifierFlags.contains(.command) else { super.keyDown(with: event); return }
+        let key = event.charactersIgnoringModifiers?.lowercased() ?? ""
+        switch key {
+        case "+", "=": onMagnificationChanged?(min(8, max(0.05, magnification) * 1.25))
+        case "-": onMagnificationChanged?(max(0.05, max(0.05, magnification) / 1.25))
+        case "0": onMagnificationChanged?(1)
+        default: super.keyDown(with: event)
         }
     }
 }
