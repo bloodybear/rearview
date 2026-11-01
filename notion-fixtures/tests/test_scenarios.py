@@ -116,5 +116,16 @@ class ScenarioTests(unittest.TestCase):
             atomic_json(path,self.value)
             self.assertEqual(json.loads(path.read_text()),self.value)
             self.assertEqual(list(Path(directory).iterdir()),[path])
+    def test_atomic_create_only_never_overwrites_existing_definition(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)/'scenario.json'
+            original = copy.deepcopy(self.value)
+            atomic_json(path, original, create_only=True)
+            replacement = copy.deepcopy(original)
+            replacement['name'] = 'replacement'
+            with self.assertRaises(FileExistsError):
+                atomic_json(path, replacement, create_only=True)
+            self.assertEqual(json.loads(path.read_text()), original)
+            self.assertEqual(list(Path(directory).iterdir()), [path])
 
 if __name__ == '__main__': unittest.main()

@@ -28,14 +28,19 @@ ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,79}$")
 ITEMS = {"target", "window", "zoom", "sidebar", "scroll", "focus", "screenshot", "finalState"}
 
 
-def atomic_json(path, value):
+def atomic_json(path, value, create_only=False):
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, temporary = tempfile.mkstemp(prefix=".scenario-", dir=path.parent)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             json.dump(value, handle, ensure_ascii=False, indent=2, allow_nan=False)
             handle.write("\n")
-        os.replace(temporary, path)
+        if create_only:
+            # A hard link publishes the fully written temp file without replacing
+            # a scenario that appeared after the caller checked the ID.
+            os.link(temporary, path)
+        else:
+            os.replace(temporary, path)
     finally:
         if os.path.exists(temporary):
             os.unlink(temporary)
@@ -262,8 +267,17 @@ def dispatch(root, args):
         existing = find(root, value["id"])
         if existing and existing["fixtureId"] != value["fixtureId"]:
             raise FixtureError("Scenario ID already belongs to another fixture")
+        if args.create_only and existing:
+            raise FixtureError("Scenario ID already exists")
         value["version"] = existing["version"] + 1 if existing else 1
-        atomic_json(root / "scenarios" / value["fixtureId"] / f"{value['id']}.json", value)
+        try:
+            atomic_json(
+                root / "scenarios" / value["fixtureId"] / f"{value['id']}.json",
+                value,
+                create_only=args.create_only,
+            )
+        except FileExistsError as exc:
+            raise FixtureError("Scenario ID already exists") from exc
         print(json.dumps(value, ensure_ascii=False))
         return 0
     if args.scenario_command == "delete":
@@ -326,5 +340,6 @@ def add_parser(commands):
     capture.add_argument("--json", action="store_true")
     save = subs.add_parser("save", help="Validate/create/update a scenario JSON definition")
     save.add_argument("definition", type=Path)
+    save.add_argument("--create-only", action="store_true", help="Fail if the scenario ID already exists")
     delete = subs.add_parser("delete")
     delete.add_argument("id")

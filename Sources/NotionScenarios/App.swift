@@ -45,6 +45,15 @@ struct Main {
 }
 struct FixtureItem: Decodable, Identifiable { var id: String; var version: String }
 struct Listing: Decodable { var fixtures: [FixtureItem]; var scenarios: [Scenario] }
+private struct DeletedScenario {
+    let id: String
+    let name: String
+    let rootURL: URL
+    let fileURL: URL
+    let contents: Data
+    let wasSelected: Bool
+    let token: UUID
+}
 @MainActor final class ScenarioModel: ObservableObject {
     @Published var root: URL?
     @Published var fixtures: [FixtureItem] = []
@@ -75,11 +84,15 @@ struct Listing: Decodable { var fixtures: [FixtureItem]; var scenarios: [Scenari
     @Published var savedCaptureImage: NSImage?
     @Published var savedCaptureAt = ""
     @Published var screenshotComparison = ""
+    @Published var undoDeleteMessage: String?
+    private var pendingDeletion: DeletedScenario?
+    private var undoExpirationTask: Task<Void, Never>?
     var current: Scenario? { scenarios.first { $0.id == selected } }
+    var hasUnsavedEditorChanges: Bool { editor != savedEditor }
     var lastRunOperationLabel: String {
         switch lastRunOperation {
         case "apply": "Apply saved scenario"
-        case "capture": "Save screen for selected document"
+        case "capture": "Capture as new scenario"
         default: lastRunOperation
         }
     }
@@ -129,6 +142,7 @@ struct Listing: Decodable { var fixtures: [FixtureItem]; var scenarios: [Scenari
         let panel = NSOpenPanel(); panel.canChooseFiles = false; panel.canChooseDirectories = true
         panel.message = "Choose the notion-fixtures folder containing the fixture CLI"
         if panel.runModal() == .OK, let url = panel.url {
+            clearPendingDeletion()
             root = url; UserDefaults.standard.set(url.path, forKey: "fixtureRoot"); reload(); loadLatestRun()
         }
     }
@@ -139,12 +153,20 @@ struct Listing: Decodable { var fixtures: [FixtureItem]; var scenarios: [Scenari
         editor = String(data: (try? encoder.encode(s)) ?? Data(), encoding: .utf8) ?? ""
         savedEditor = editor
     }
-    func reload() {
+    func reload(selecting requestedSelection: String? = nil) {
         command(["list", "--json"], resetProgress: false) { data in
             do {
                 let listing = try JSONDecoder().decode(Listing.self, from: data)
                 self.fixtures = listing.fixtures; self.scenarios = listing.scenarios
-                if let selected = self.selected, self.editor == self.savedEditor { self.select(selected) }
+                if let requestedSelection, listing.scenarios.contains(where: { $0.id == requestedSelection }) {
+                    self.select(requestedSelection)
+                } else if let selected = self.selected {
+                    if listing.scenarios.contains(where: { $0.id == selected }) {
+                        if self.editor == self.savedEditor { self.select(selected) }
+                    } else if self.editor == self.savedEditor {
+                        self.select(nil)
+                    }
+                }
                 if !self.fixtures.contains(where: { $0.id == self.fixtureId }) { self.fixtureId = self.fixtures.first?.id ?? "" }
             } catch { self.messages += "\n\(error)" }
         }
@@ -294,23 +316,6 @@ struct Listing: Decodable { var fixtures: [FixtureItem]; var scenarios: [Scenari
         }
         return rendered ? pixels : nil
     }
-    func create() {
-        guard canUseNewId else { messages = newIdIssue ?? "Enter a scenario ID"; return }
-        guard let fixture = fixtures.first(where: { $0.id == fixtureId }) else { return }
-        let state = #"{"coordinateSystem":"screen-top-left-points","window":{"x":0,"y":60,"width":1024,"height":700},"scroll":{"mode":"top"},"focus":{"mode":"clear"},"required":["target","window","scroll","focus","screenshot"]}"#
-        guard let requested = try? JSONDecoder().decode(RequestedState.self, from: Data(state.utf8)) else { return }
-        let s = Scenario(id: newId, name: newId, fixtureId: fixture.id, fixtureVersion: fixture.version, state: requested)
-        let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        editor = String(data: (try? encoder.encode(s)) ?? Data(), encoding: .utf8) ?? ""; selected = nil
-    }
-    func duplicate() {
-        guard canUseNewId else { messages = newIdIssue ?? "Enter a scenario ID"; return }
-        guard var value = try? JSONSerialization.jsonObject(with: Data(editor.utf8)) as? [String: Any] else { return }
-        value["id"] = newId; value["name"] = newId; value["version"] = 1
-        if let data = try? JSONSerialization.data(withJSONObject: value, options: [.prettyPrinted, .sortedKeys]) {
-            editor = String(decoding: data, as: UTF8.self); selected = nil
-        }
-    }
     func save() {
         let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".json")
         do { try Data(editor.utf8).write(to: file) } catch { messages = String(describing: error); return }
@@ -322,14 +327,190 @@ struct Listing: Decodable { var fixtures: [FixtureItem]; var scenarios: [Scenari
             self.reload()
         }
     }
-    func remove() {
-        guard let selected else { return }
-        command(["delete", selected]) { _ in self.select(nil); self.reload() }
+
+    func hasUnsavedChanges(for scenarioID: String) -> Bool {
+        selected == scenarioID && hasUnsavedEditorChanges
     }
-    func apply() { if let selected { command(["apply", selected, "--json"], result: showResult) } }
+
+    func duplicateScenario(_ scenarioID: String) {
+        guard !busy else { return }
+        guard !hasUnsavedEditorChanges else {
+            messages = "Save or discard the current JSON edits before duplicating a scenario."
+            return
+        }
+        guard var copy = scenarios.first(where: { $0.id == scenarioID }) else { return }
+        let identity = duplicateIdentity(for: copy)
+        copy.id = identity.id
+        copy.name = identity.name
+        copy.version = 1
+        persistNewScenario(copy)
+    }
+
+    private func duplicateIdentity(for source: Scenario) -> (id: String, name: String) {
+        let usedIDs = Set(scenarios.map(\.id))
+        var ordinal = 1
+        while true {
+            let idSuffix = ordinal == 1 ? "-copy" : "-copy-\(ordinal)"
+            let baseLimit = max(1, 80 - idSuffix.count)
+            let baseID = String(source.id.prefix(baseLimit)).trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+            let candidateID = baseID + idSuffix
+            if !usedIDs.contains(candidateID) {
+                let nameSuffix = ordinal == 1 ? " (copy)" : " (copy \(ordinal))"
+                return (candidateID, source.name + nameSuffix)
+            }
+            ordinal += 1
+        }
+    }
+
+    private func persistNewScenario(_ scenario: Scenario) {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".json")
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        do {
+            try encoder.encode(scenario).write(to: file)
+        } catch {
+            messages = "Could not prepare the duplicate scenario: \(error)"
+            return
+        }
+        command(["save", file.path, "--create-only"]) { data in
+            defer { try? FileManager.default.removeItem(at: file) }
+            guard let saved = try? JSONDecoder().decode(Scenario.self, from: data) else {
+                self.messages += "\nCould not save the duplicate scenario. See the command output for details."
+                self.reload()
+                return
+            }
+            self.scenarios.removeAll { $0.id == saved.id }
+            self.scenarios.append(saved)
+            self.select(saved.id)
+            self.reload(selecting: saved.id)
+        }
+    }
+
+    func deleteScenario(_ scenarioID: String) {
+        guard !busy else { return }
+        guard !hasUnsavedChanges(for: scenarioID) else {
+            messages = "Save or discard this scenario's JSON edits before deleting it."
+            return
+        }
+        guard let root,
+              let scenario = scenarios.first(where: { $0.id == scenarioID }) else { return }
+        let folderURL = root.appendingPathComponent("scenarios", isDirectory: true)
+            .appendingPathComponent(scenario.fixtureId, isDirectory: true)
+        let fileURL = folderURL.appendingPathComponent("\(scenario.id).json")
+        let contents: Data
+        do {
+            contents = try Data(contentsOf: fileURL)
+        } catch {
+            messages = "Could not read the saved scenario before deleting it: \(error)"
+            reload()
+            return
+        }
+
+        command(["delete", scenarioID]) { data in
+            guard let result = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  result["deleted"] as? String == scenarioID else {
+                self.messages += "\nScenario deletion did not complete. The list was refreshed."
+                self.reload()
+                return
+            }
+            self.startUndoWindow(for: DeletedScenario(
+                id: scenario.id,
+                name: scenario.name,
+                rootURL: root.standardizedFileURL,
+                fileURL: fileURL,
+                contents: contents,
+                wasSelected: self.selected == scenarioID,
+                token: UUID()
+            ))
+            self.scenarios.removeAll { $0.id == scenarioID }
+            if self.selected == scenarioID { self.select(nil) }
+        }
+    }
+
+    private func startUndoWindow(for deletion: DeletedScenario) {
+        undoExpirationTask?.cancel()
+        pendingDeletion = deletion
+        undoDeleteMessage = "Deleted \(deletion.name)"
+        undoExpirationTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 8_000_000_000)
+            guard !Task.isCancelled, self?.pendingDeletion?.token == deletion.token else { return }
+            self?.pendingDeletion = nil
+            self?.undoDeleteMessage = nil
+        }
+    }
+
+    func undoDelete() {
+        guard !busy, let deletion = pendingDeletion else { return }
+        guard root?.standardizedFileURL == deletion.rootURL else {
+            clearPendingDeletion()
+            messages = "The fixture folder changed. This deletion can no longer be undone here."
+            return
+        }
+        do {
+            try restoreDeletedScenario(deletion)
+            clearPendingDeletion()
+            messages = "Restored \(deletion.name)."
+            let shouldReselect = deletion.wasSelected && !hasUnsavedEditorChanges
+            reload(selecting: shouldReselect ? deletion.id : nil)
+        } catch {
+            clearPendingDeletion()
+            messages = "Could not undo the deletion: \(error)"
+            reload()
+        }
+    }
+
+    private func restoreDeletedScenario(_ deletion: DeletedScenario) throws {
+        let fileManager = FileManager.default
+        guard fileManager.fileExists(atPath: deletion.fileURL.deletingLastPathComponent().path) else {
+            throw CocoaError(.fileNoSuchFile)
+        }
+        guard !fileManager.fileExists(atPath: deletion.fileURL.path) else {
+            throw CocoaError(.fileWriteFileExists)
+        }
+        let temporaryURL = deletion.fileURL.deletingLastPathComponent()
+            .appendingPathComponent(".undo-\(UUID().uuidString).tmp")
+        do {
+            try deletion.contents.write(to: temporaryURL, options: .atomic)
+            try fileManager.moveItem(at: temporaryURL, to: deletion.fileURL)
+        } catch {
+            try? fileManager.removeItem(at: temporaryURL)
+            throw error
+        }
+    }
+
+    private func clearPendingDeletion() {
+        undoExpirationTask?.cancel()
+        undoExpirationTask = nil
+        pendingDeletion = nil
+        undoDeleteMessage = nil
+    }
+
+    func applyScenario(_ scenarioID: String) {
+        guard !busy else { return }
+        guard !hasUnsavedChanges(for: scenarioID) else {
+            messages = "Save or discard this scenario's JSON edits before applying it."
+            return
+        }
+        command(["apply", scenarioID, "--json"], result: showResult)
+    }
+
     func capture() {
         guard canUseNewId else { messages = newIdIssue ?? "Enter a scenario ID"; return }
-        command(["capture", fixtureId, "--id", newId, "--json"]) { data in self.showResult(data); self.reload() }
+        guard !hasUnsavedEditorChanges else {
+            messages = "Save or discard the current JSON edits before capturing a new scenario."
+            return
+        }
+        let requestedID = newId
+        command(["capture", fixtureId, "--id", requestedID, "--json"]) { data in
+            self.showResult(data)
+            let savedID = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["savedScenario"] as? String
+            if savedID == requestedID {
+                self.newId = ""
+                self.reload(selecting: requestedID)
+            } else {
+                self.reload()
+            }
+        }
     }
     func showResult(_ data: Data) {
         guard let value = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
@@ -368,8 +549,11 @@ struct Listing: Decodable { var fixtures: [FixtureItem]; var scenarios: [Scenari
             runStatus = ["apply", "capture"].contains(operation) ? "running" : ""
             if ["apply", "capture"].contains(operation) {
                 lastRunOperation = operation
-                lastRunFixtureId = fixtureId
-                lastRunScenarioId = operation == "capture" ? newId : (selected ?? "")
+                let scenarioID = arguments.count > 1 ? arguments[1] : (selected ?? "")
+                lastRunFixtureId = operation == "apply"
+                    ? (scenarios.first(where: { $0.id == scenarioID })?.fixtureId ?? fixtureId)
+                    : fixtureId
+                lastRunScenarioId = operation == "capture" ? newId : scenarioID
                 lastRunScenarioVersion = nil
                 lastRunId = ""; lastRunStartedAt = ""; lastRunStatus = "running"
                 savedScenarioId = nil; screenshotCapturedAt = ""
@@ -429,10 +613,71 @@ struct ScenarioView: View {
                 Picker("Document", selection: $model.fixtureId) {
                     ForEach(model.fixtures) { Text($0.id).tag($0.id) }
                 }.onChange(of: model.fixtureId) { _, _ in model.select(nil) }
+                HStack {
+                    Text("Scenarios").font(.headline)
+                    Spacer()
+                    Button { model.reload() } label: {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Reload fixture and scenario lists from the selected folder.")
+                    .accessibilityLabel("Reload fixture and scenario lists")
+                }
                 List(selection: Binding(get: { model.selected }, set: { model.select($0) })) {
                     ForEach(model.scenarios.filter { $0.fixtureId == model.fixtureId }, id: \.id) { s in
-                        VStack(alignment: .leading) { Text(s.name); Text("\(s.id) · v\(s.version)").font(.caption).foregroundStyle(.secondary) }.tag(s.id)
+                        HStack(spacing: 8) {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(s.name).lineLimit(2)
+                                Text("\(s.id) · v\(s.version)")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                            HStack(spacing: 6) {
+                                Button { model.duplicateScenario(s.id) } label: {
+                                    Image(systemName: "doc.on.doc")
+                                }
+                                .buttonStyle(.borderless)
+                                .help(model.hasUnsavedEditorChanges ? "Save or discard JSON edits before duplicating." : "Duplicate saved scenario")
+                                .accessibilityLabel("Duplicate \(s.name)")
+                                .disabled(model.busy || model.hasUnsavedEditorChanges)
+
+                                Button { model.applyScenario(s.id) } label: {
+                                    Image(systemName: "play.fill")
+                                }
+                                .buttonStyle(.borderless)
+                                .help(model.hasUnsavedChanges(for: s.id) ? "Save or discard JSON edits before applying." : "Apply saved scenario")
+                                .accessibilityLabel("Apply \(s.name)")
+                                .disabled(model.busy || model.hasUnsavedChanges(for: s.id))
+
+                                Button(role: .destructive) { model.deleteScenario(s.id) } label: {
+                                    Image(systemName: "trash")
+                                }
+                                .buttonStyle(.borderless)
+                                .help(model.hasUnsavedChanges(for: s.id) ? "Save or discard JSON edits before deleting." : "Delete scenario")
+                                .accessibilityLabel("Delete \(s.name)")
+                                .disabled(model.busy || model.hasUnsavedChanges(for: s.id))
+                            }
+                            .controlSize(.small)
+                        }
+                        .contentShape(Rectangle())
+                        .tag(s.id)
                     }
+                }
+                if let undoDeleteMessage = model.undoDeleteMessage {
+                    HStack(spacing: 8) {
+                        Text(undoDeleteMessage).lineLimit(1)
+                        Spacer(minLength: 4)
+                        Button("Undo") { model.undoDelete() }
+                            .buttonStyle(.link)
+                            .accessibilityLabel("Undo scenario deletion")
+                    }
+                    .font(.callout)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 7)
+                    .background(Color.gray.opacity(0.1), in: RoundedRectangle(cornerRadius: 7))
                 }
                 TextField("New scenario ID", text: $model.newId)
                 if let issue = model.newIdIssue {
@@ -440,13 +685,17 @@ struct ScenarioView: View {
                         .font(.caption)
                         .foregroundStyle(Color.red)
                 }
-                HStack {
-                    Button("Create") { model.create() }.disabled(!model.canUseNewId)
-                    Button("Duplicate") { model.duplicate() }.disabled(!model.canUseNewId || model.editor.isEmpty)
+                Button {
+                    model.capture()
+                } label: {
+                    Label("Capture as new", systemImage: "viewfinder")
                 }
-                Button("Save screen for selected document") { model.capture() }.disabled(!model.canUseNewId)
-                Button("Refresh") { model.reload() }
-            }.padding().frame(minWidth: 260, idealWidth: 300).disabled(model.busy)
+                .disabled(!model.canUseNewId || model.hasUnsavedEditorChanges || model.busy)
+                .help(model.hasUnsavedEditorChanges
+                    ? "Save or discard JSON edits before capturing a new scenario."
+                    : "Capture the current Notion screen and save it as a new scenario.")
+                .accessibilityLabel("Capture current Notion screen as a new scenario")
+            }.padding().frame(minWidth: 340, idealWidth: 360).disabled(model.busy)
             VStack(alignment: .leading, spacing: 10) {
                 HStack {
                     Text("Scenario definition (JSON)").font(.headline)
@@ -454,8 +703,6 @@ struct ScenarioView: View {
                     if !model.runStatus.isEmpty { Text(model.runStatus).font(.headline).foregroundStyle(model.runStatus == "verified" ? .green : model.runStatus == "failed" ? .red : .orange) }
                     if model.busy { ProgressView().controlSize(.small) }
                     Button("Save") { model.save() }.disabled(model.editor.isEmpty || model.busy)
-                    Button("Delete", role: .destructive) { model.remove() }.disabled(model.selected == nil || model.busy)
-                    Button("Apply saved scenario") { model.apply() }.disabled(model.selected == nil || model.busy || model.editor != model.savedEditor)
                 }
                 Text("Only observed values are captured. Zoom may remain unsupported. Save edits before applying.").font(.caption).foregroundStyle(.secondary)
                 if model.messages.contains("accessibility_permission") || model.messages.contains("screen_capture_permission") {
