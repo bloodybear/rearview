@@ -79,6 +79,16 @@ private extension View {
     }
 }
 
+private final class ScreenshotComparisonWindow: NSWindow {
+    override func sendEvent(_ event: NSEvent) {
+        if event.type == .keyDown && event.keyCode == 53 {
+            close()
+            return
+        }
+        super.sendEvent(event)
+    }
+}
+
 @MainActor final class ScreenshotComparisonWindowController: NSObject, NSWindowDelegate {
     private var window: NSWindow?
     private var displayedComparisonID: String?
@@ -103,7 +113,7 @@ private extension View {
             NSApp.activate(ignoringOtherApps: true)
             return
         }
-        let newWindow = NSWindow(
+        let newWindow = ScreenshotComparisonWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1500, height: 1000),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
