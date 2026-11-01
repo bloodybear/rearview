@@ -989,8 +989,13 @@ struct ScenarioView: View {
                             Text("Latest run").font(.headline)
                             Text(model.lastRunOperationLabel).foregroundStyle(.secondary)
                             Spacer()
-                            Text(model.lastRunStatus)
-                                .foregroundStyle(model.lastRunStatus == "verified" ? Color.green : model.lastRunStatus == "failed" ? Color.red : Color.orange)
+                            HStack(spacing: 6) {
+                                if model.lastRunStatus == "running" {
+                                    ProgressView().controlSize(.small)
+                                }
+                                Text(model.lastRunStatus)
+                                    .foregroundStyle(model.lastRunStatus == "verified" ? Color.green : model.lastRunStatus == "failed" ? Color.red : Color.orange)
+                            }
                             if let directory = model.runDirectory {
                                 Button("Open run folder") { NSWorkspace.shared.open(directory) }
                                     .scenarioHoverHighlight()
