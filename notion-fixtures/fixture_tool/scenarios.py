@@ -132,18 +132,85 @@ def catalog(root):
     return result
 
 
+def anchor_source(definition):
+    """Return fixture-authored text that can safely back navigation anchors."""
+    parts = []
+    page = getattr(definition, "page", None)
+    if page is not None:
+        parts.append(json.dumps(page, ensure_ascii=False))
+
+    content = getattr(definition, "content", None)
+    if content is not None:
+        parts.append(content)
+    else:
+        manifest = getattr(definition, "manifest", {})
+        database_title = manifest.get("databaseTitle") if isinstance(manifest, dict) else None
+        if isinstance(database_title, str):
+            parts.append(database_title)
+        for name in ("schema", "views", "rows"):
+            value = getattr(definition, name, None)
+            if value is not None:
+                parts.append(json.dumps(value, ensure_ascii=False))
+    return "\n".join(parts)
+
+
+def anchor_match_count(anchor, source):
+    return source.count(anchor["text"])
+
+
+def anchor_match_error(anchor, count):
+    if count == 0:
+        return f"Anchor {anchor['text']!r} is not present in the local fixture source"
+    return f"Anchor {anchor['text']!r} appears {count} times in the local fixture source; choose a unique phrase"
+
+
+def omit_unverifiable_optional_capture_anchors(state, definition, required):
+    """Drop captured optional anchors that cannot be tied to fixture-authored text."""
+    source = anchor_source(definition)
+    warnings = []
+    omitted = {}
+
+    def can_keep(item, anchor, required_item=None):
+        count = anchor_match_count(anchor, source)
+        if count == 1:
+            return True
+        issue = anchor_match_error(anchor, count)
+        if (required_item or item) in required:
+            raise FixtureError(f"Required {item} state cannot be saved: {issue}")
+        warning = f"Omitted optional {item} state: {issue}."
+        warnings.append(warning)
+        omitted.setdefault(item, []).append(issue)
+        return False
+
+    for item in ("scroll", "focus"):
+        value = state.get(item)
+        anchor = value.get("anchor") if isinstance(value, dict) else None
+        if isinstance(anchor, dict) and not can_keep(item, anchor):
+            state.pop(item, None)
+
+    toggles = state.get("toggles")
+    if isinstance(toggles, list):
+        kept = []
+        for index, toggle in enumerate(toggles):
+            anchor = toggle.get("anchor") if isinstance(toggle, dict) else None
+            if not isinstance(anchor, dict) or can_keep("toggles", anchor, f"toggle.{index}"):
+                kept.append(toggle)
+        state["toggles"] = kept
+
+    return warnings, omitted
+
+
 def check_anchors(scenario, definition):
     # AX reads are navigation observations, never a new source-of-truth corpus.
-    # v1 conservatively requires unique verbatim text in the existing local source.
-    source = getattr(definition, "content", None)
-    if source is None:
-        source = json.dumps(definition.rows, ensure_ascii=False)
+    # Every saved anchor must be a unique verbatim match in local fixture data.
+    source = anchor_source(definition)
     state = scenario["state"]
     anchors = [t["anchor"] for t in state.get("toggles", [])]
     anchors += [v["anchor"] for k in ("scroll", "focus") if (v := state.get(k, {})).get("anchor")]
     for a in anchors:
-        if source.count(a["text"]) != 1:
-            raise FixtureError("Anchor must occur exactly once in the local fixture source; choose a different unique phrase")
+        count = anchor_match_count(a, source)
+        if count != 1:
+            raise FixtureError(anchor_match_error(a, count))
 
 
 def native_binary(root):
@@ -296,17 +363,33 @@ def dispatch(root, args):
                      state=dict(coordinateSystem="screen-top-left-points", required=["target", "screenshot"]))
         report = execute(root, value, "capture")
         if report["status"] != "failed" and report.get("screenshot"):
-            observed = {k: v for k, v in report["observed"].items() if k != "required" and v is not None}
-            observed["required"] = ["target", "screenshot"] + [k for k in ("window", "scroll", "focus") if k in observed]
-            if "sidebarOpen" in observed:
-                observed["required"].append("sidebar")
-            observed["required"] += [f"toggle.{i}" for i in range(len(observed.get("toggles", [])))]
-            value["state"] = observed
             try:
+                observed = copy.deepcopy({k: v for k, v in report["observed"].items() if k != "required" and v is not None})
+                initially_required = list(value["state"].get("required", []))
+                observed["required"] = initially_required
+                value["state"] = observed
+                validate(value)
+                capture_warnings, omitted_items = omit_unverifiable_optional_capture_anchors(
+                    observed, definition, set(initially_required)
+                )
+                observed["required"] = initially_required + [k for k in ("window", "scroll", "focus") if k in observed]
+                if "sidebarOpen" in observed:
+                    observed["required"].append("sidebar")
+                observed["required"] += [f"toggle.{i}" for i in range(len(observed.get("toggles", [])))]
+                value["state"] = observed
                 validate(value)
                 check_anchors(value, definition)
                 atomic_json(root / "scenarios" / value["fixtureId"] / f"{value['id']}.json", value)
                 report["savedScenario"] = value["id"]
+                if capture_warnings:
+                    report["captureWarnings"] = capture_warnings
+                    report["status"] = "partial"
+                    for item, issues in omitted_items.items():
+                        step = next((step for step in report["steps"] if step["item"] == item), None)
+                        if step:
+                            step["status"] = "unsupported"
+                            step["code"] = "optional_anchor_omitted"
+                            step["detail"] = "Optional captured state omitted: " + "; ".join(issues)
             except FixtureError as exc:
                 report["captureSaveError"] = str(exc)
                 report["status"] = "failed"

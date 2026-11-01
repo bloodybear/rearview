@@ -356,6 +356,10 @@ private struct DeletedScenario {
         }
     }
     private func userFacingError(_ value: [String: Any], request: [String: Any]? = nil) -> String? {
+        let captureWarnings = value["captureWarnings"] as? [String] ?? []
+        if value["status"] as? String != "failed", !captureWarnings.isEmpty {
+            return "Capture saved with warnings: " + captureWarnings.joined(separator: " ")
+        }
         guard value["status"] as? String == "failed" else { return nil }
         let requestedScenario = request?["scenario"] as? [String: Any] ?? [:]
         let fixtureId = value["fixtureId"] as? String ?? requestedScenario["fixtureId"] as? String ?? "selected document"
@@ -1016,7 +1020,7 @@ struct ScenarioView: View {
                         if !model.runErrorSummary.isEmpty {
                             Label(model.runErrorSummary, systemImage: "exclamationmark.triangle.fill")
                                 .font(.callout)
-                                .foregroundStyle(.red)
+                                .foregroundStyle(model.lastRunStatus == "partial" ? .orange : .red)
                                 .fixedSize(horizontal: false, vertical: true)
                                 .textSelection(.enabled)
                         }
