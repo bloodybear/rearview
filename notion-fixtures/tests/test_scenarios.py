@@ -79,14 +79,14 @@ class ScenarioTests(unittest.TestCase):
                 starts.append(time.monotonic())
                 active[0] += 1
                 peak[0] = max(peak[0], active[0])
-            time.sleep(.55)
+            time.sleep(.9)
             with lock:
                 active[0] -= 1
             return subprocess.CompletedProcess([], 0, '{"object":"view","id":"ok"}', '')
         with patch('fixture_tool.ntn.subprocess.run', side_effect=fake_run):
-            with ThreadPoolExecutor(max_workers=2) as pool:
+            with ThreadPoolExecutor(max_workers=3) as pool:
                 list(pool.map(lambda i: api.request('GET', f'v1/views/{i}'), range(3)))
-        self.assertEqual(peak[0], 2)
+        self.assertEqual(peak[0], 3)
         self.assertTrue(all(b - a >= .34 for a, b in zip(sorted(starts), sorted(starts)[1:])))
         self.assertEqual(len(api.metrics), 3)
     def test_atomic_write_preserves_definition(self):
