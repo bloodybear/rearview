@@ -176,3 +176,5 @@ API 서버 검증 성공은 실제 Notion 화면이나 AX 트리 검증을 대�
 ## 화면 시나리오
 
 독립 macOS 앱과 `fixture scenario` CLI로 창·스크롤·토글 등의 상태를 저장하고 재현한다. 사용법과 실제 지원 범위는 [SCREEN_SCENARIOS.md](SCREEN_SCENARIOS.md)를 참고한다. 기존 문서 생성·복구와 별도로 실행되며 원문을 수정하지 않는다.
+
+앱의 버튼별 사용법과 저장 위치는 [NotionScenarios 화면 사용법](NOTION_SCENARIOS_GUIDE.md)을 참고한다.
