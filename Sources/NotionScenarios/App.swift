@@ -824,7 +824,7 @@ private struct ScenarioTreeSection: View {
     @ObservedObject var model: ScenarioModel
     let fixture: FixtureItem
     let searchQuery: String
-    @State private var isExpanded = true
+    @Binding var isExpanded: Bool
 
     private var scenarios: [Scenario] {
         model.scenarios.filter { $0.fixtureId == fixture.id && (searchQuery.isEmpty || $0.name.range(of: searchQuery, options: .caseInsensitive) != nil || $0.id.range(of: searchQuery, options: .caseInsensitive) != nil) }.sorted {
@@ -870,6 +870,7 @@ struct ScenarioView: View {
     @ObservedObject var model: ScenarioModel
     let comparisonWindowController: ScreenshotComparisonWindowController
     @State private var searchQuery = ""
+    @State private var fixtureExpansion: [String: Bool] = [:]
     @FocusState private var searchFocused: Bool
     @FocusState private var newIDFocused: Bool
     @FocusState private var chooseFolderFocused: Bool
@@ -976,12 +977,20 @@ struct ScenarioView: View {
                     if !searchQuery.isEmpty && !model.scenarios.contains(where: { $0.name.range(of: searchQuery, options: .caseInsensitive) != nil || $0.id.range(of: searchQuery, options: .caseInsensitive) != nil }) {
                         Text("No matching scenarios").foregroundStyle(.secondary)
                     }
-                    ForEach(model.fixtures.sorted { $0.id < $1.id }) { fixture in
-                        ScenarioTreeSection(model: model, fixture: fixture, searchQuery: searchQuery)
-                            .frame(height: !searchQuery.isEmpty && !model.scenarios.contains(where: { $0.fixtureId == fixture.id && ($0.name.range(of: searchQuery, options: .caseInsensitive) != nil || $0.id.range(of: searchQuery, options: .caseInsensitive) != nil) }) ? 0 : nil)
-                            .clipped()
-                            .listRowInsets(!searchQuery.isEmpty && !model.scenarios.contains(where: { $0.fixtureId == fixture.id && ($0.name.range(of: searchQuery, options: .caseInsensitive) != nil || $0.id.range(of: searchQuery, options: .caseInsensitive) != nil) }) ? EdgeInsets() : nil)
-                            .listRowSeparator(searchQuery.isEmpty ? .automatic : .hidden)
+                    ForEach(model.fixtures.filter { fixture in
+                        searchQuery.isEmpty || model.scenarios.contains {
+                            $0.fixtureId == fixture.id &&
+                            ($0.name.range(of: searchQuery, options: .caseInsensitive) != nil ||
+                             $0.id.range(of: searchQuery, options: .caseInsensitive) != nil)
+                        }
+                    }.sorted { $0.id < $1.id }) { fixture in
+                        ScenarioTreeSection(
+                            model: model, fixture: fixture, searchQuery: searchQuery,
+                            isExpanded: Binding(
+                                get: { fixtureExpansion[fixture.id] ?? true },
+                                set: { fixtureExpansion[fixture.id] = $0 }
+                            )
+                        )
                     }
                 }
                 if let undoDeleteMessage = model.undoDeleteMessage {
