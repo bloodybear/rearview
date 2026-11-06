@@ -149,7 +149,7 @@ private final class ScreenshotComparisonWindow: NSWindow {
         displayedComparisonID = nil
     }
 }
-struct FixtureItem: Decodable, Identifiable { var id: String; var version: String }
+struct FixtureItem: Decodable, Identifiable { var id: String; var title: String?; var version: String }
 struct Listing: Decodable { var fixtures: [FixtureItem]; var scenarios: [Scenario] }
 private struct DeletedScenario {
     let id: String
@@ -757,9 +757,120 @@ private struct DeletedScenario {
         }
     }
 }
+private func scenarioSearchText(_ value: String, query: String) -> AttributedString {
+    var result = AttributedString(value)
+    guard !query.isEmpty else { return result }
+    var start = value.startIndex
+    while start < value.endIndex,
+          let range = value.range(of: query, options: [.caseInsensitive], range: start..<value.endIndex) {
+        if let lower = AttributedString.Index(range.lowerBound, within: result),
+           let upper = AttributedString.Index(range.upperBound, within: result) {
+            result[lower..<upper].backgroundColor = .yellow.opacity(0.55)
+        }
+        start = range.upperBound
+    }
+    return result
+}
+
+private struct ScenarioTreeRow: View {
+    @ObservedObject var model: ScenarioModel
+    let scenario: Scenario
+    let searchQuery: String
+
+    var body: some View {
+        HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(scenarioSearchText(scenario.name, query: searchQuery)).lineLimit(2)
+                (Text(scenarioSearchText(scenario.id, query: searchQuery)) + Text(" · v\(scenario.version)\(model.hasUnsavedChanges(for: scenario.id) ? " · Modified" : "")"))
+                    .font(.caption)
+                    .foregroundStyle(model.hasUnsavedChanges(for: scenario.id) ? .orange : .secondary)
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            HStack(spacing: 6) {
+                Button { model.duplicateScenario(scenario.id) } label: {
+                    Image(systemName: "doc.on.doc").scenarioIconButtonHighlight()
+                }
+                .buttonStyle(.borderless)
+                .help(model.hasUnsavedEditorChanges ? "Save or discard JSON edits before duplicating." : "Duplicate saved scenario")
+                .accessibilityLabel("Duplicate \(scenario.name)")
+                .disabled(model.busy || model.hasUnsavedEditorChanges)
+
+                Button { model.applyScenario(scenario.id) } label: {
+                    Image(systemName: "play.fill").scenarioIconButtonHighlight()
+                }
+                .buttonStyle(.borderless)
+                .help(model.hasUnsavedChanges(for: scenario.id) ? "Save or discard JSON edits before applying." : "Apply saved scenario")
+                .accessibilityLabel("Apply \(scenario.name)")
+                .disabled(model.busy || model.hasUnsavedChanges(for: scenario.id))
+
+                Button(role: .destructive) { model.deleteScenario(scenario.id) } label: {
+                    Image(systemName: "trash").scenarioIconButtonHighlight()
+                }
+                .buttonStyle(.borderless)
+                .help(model.hasUnsavedChanges(for: scenario.id) ? "Save or discard JSON edits before deleting." : "Delete scenario")
+                .accessibilityLabel("Delete \(scenario.name)")
+                .disabled(model.busy || model.hasUnsavedChanges(for: scenario.id))
+            }
+            .controlSize(.small)
+        }
+        .contentShape(Rectangle())
+        .tag(scenario.id)
+    }
+}
+
+private struct ScenarioTreeSection: View {
+    @ObservedObject var model: ScenarioModel
+    let fixture: FixtureItem
+    let searchQuery: String
+    @State private var isExpanded = true
+
+    private var scenarios: [Scenario] {
+        model.scenarios.filter { $0.fixtureId == fixture.id && (searchQuery.isEmpty || $0.name.range(of: searchQuery, options: .caseInsensitive) != nil || $0.id.range(of: searchQuery, options: .caseInsensitive) != nil) }.sorted {
+            let order = $0.name.localizedStandardCompare($1.name)
+            return order == .orderedSame ? $0.id < $1.id : order == .orderedAscending
+        }
+    }
+    private var fixtureLabel: String {
+        guard let title = fixture.title?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty else { return fixture.id }
+        guard title != fixture.id else { return fixture.id }
+        return "\(title) · \(fixture.id)"
+    }
+
+    var body: some View {
+        DisclosureGroup(isExpanded: Binding(get: { searchQuery.isEmpty ? isExpanded : true }, set: { if searchQuery.isEmpty { isExpanded = $0 } })) {
+            if scenarios.isEmpty {
+                Text("No scenarios yet")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.vertical, 3)
+            } else {
+                ForEach(scenarios, id: \.id) { scenario in
+                    ScenarioTreeRow(model: model, scenario: scenario, searchQuery: searchQuery)
+                }
+            }
+        } label: {
+            HStack(spacing: 6) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(fixtureLabel)
+                        .lineLimit(1)
+                    Text("\(scenarios.count) scenario\(scenarios.count == 1 ? "" : "s")")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 4)
+            }
+            .contentShape(Rectangle())
+        }
+    }
+}
+
 struct ScenarioView: View {
     @ObservedObject var model: ScenarioModel
     let comparisonWindowController: ScreenshotComparisonWindowController
+    @State private var searchQuery = ""
+    @FocusState private var searchFocused: Bool
     @FocusState private var newIDFocused: Bool
     @FocusState private var chooseFolderFocused: Bool
     @State private var newIDSelection: TextSelection?
@@ -827,15 +938,32 @@ struct ScenarioView: View {
                 if !fixturePrompt.isEmpty {
                     Text(fixturePrompt).font(.caption).foregroundStyle(.red)
                 }
-                Picker("Document", selection: Binding(
-                    get: { model.fixtureId },
-                    set: { model.requestFixtureSelection($0) }
-                )) {
-                    ForEach(model.fixtures) { Text($0.id).tag($0.id) }
-                }
                 HStack {
                     Text("Scenarios").font(.headline)
-                    Spacer()
+                    TextField("Search title or ID", text: $searchQuery)
+                        .textFieldStyle(.plain)
+                        .focused($searchFocused)
+                        .padding(.leading, 6)
+                        .padding(.trailing, 24)
+                        .padding(.vertical, 4)
+                        .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 5))
+                        .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(Color.secondary.opacity(0.3)))
+                        .overlay(alignment: .trailing) {
+                            if searchFocused && !searchQuery.isEmpty {
+                                Button {
+                                    searchQuery = ""
+                                    searchFocused = true
+                                } label: {
+                                    Image(systemName: "xmark.circle.fill")
+                                        .foregroundStyle(.secondary)
+                                }
+                                .buttonStyle(.plain)
+                                .padding(.trailing, 5)
+                                .accessibilityLabel("Clear scenario search")
+                            }
+                        }
+                        .onExitCommand { if searchFocused { searchQuery = "" } }
+                        .accessibilityLabel("Search scenarios by title or ID")
                     Button { model.reload() } label: {
                         Image(systemName: "arrow.clockwise")
                             .scenarioIconButtonHighlight()
@@ -845,49 +973,15 @@ struct ScenarioView: View {
                     .accessibilityLabel("Reload fixture and scenario lists")
                 }
                 List(selection: Binding(get: { model.selected }, set: { model.requestScenarioSelection($0) })) {
-                    ForEach(model.scenarios.filter { $0.fixtureId == model.fixtureId }, id: \.id) { s in
-                        HStack(spacing: 8) {
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(s.name).lineLimit(2)
-                                Text("\(s.id) · v\(s.version)\(model.hasUnsavedChanges(for: s.id) ? " · Modified" : "")")
-                                    .font(.caption)
-                                    .foregroundStyle(model.hasUnsavedChanges(for: s.id) ? .orange : .secondary)
-                                    .lineLimit(1)
-                            }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-
-                            HStack(spacing: 6) {
-                                Button { model.duplicateScenario(s.id) } label: {
-                                    Image(systemName: "doc.on.doc")
-                                        .scenarioIconButtonHighlight()
-                                }
-                                .buttonStyle(.borderless)
-                                .help(model.hasUnsavedEditorChanges ? "Save or discard JSON edits before duplicating." : "Duplicate saved scenario")
-                                .accessibilityLabel("Duplicate \(s.name)")
-                                .disabled(model.busy || model.hasUnsavedEditorChanges)
-
-                                Button { model.applyScenario(s.id) } label: {
-                                    Image(systemName: "play.fill")
-                                        .scenarioIconButtonHighlight()
-                                }
-                                .buttonStyle(.borderless)
-                                .help(model.hasUnsavedChanges(for: s.id) ? "Save or discard JSON edits before applying." : "Apply saved scenario")
-                                .accessibilityLabel("Apply \(s.name)")
-                                .disabled(model.busy || model.hasUnsavedChanges(for: s.id))
-
-                                Button(role: .destructive) { model.deleteScenario(s.id) } label: {
-                                    Image(systemName: "trash")
-                                        .scenarioIconButtonHighlight()
-                                }
-                                .buttonStyle(.borderless)
-                                .help(model.hasUnsavedChanges(for: s.id) ? "Save or discard JSON edits before deleting." : "Delete scenario")
-                                .accessibilityLabel("Delete \(s.name)")
-                                .disabled(model.busy || model.hasUnsavedChanges(for: s.id))
-                            }
-                            .controlSize(.small)
-                        }
-                        .contentShape(Rectangle())
-                        .tag(s.id)
+                    if !searchQuery.isEmpty && !model.scenarios.contains(where: { $0.name.range(of: searchQuery, options: .caseInsensitive) != nil || $0.id.range(of: searchQuery, options: .caseInsensitive) != nil }) {
+                        Text("No matching scenarios").foregroundStyle(.secondary)
+                    }
+                    ForEach(model.fixtures.sorted { $0.id < $1.id }) { fixture in
+                        ScenarioTreeSection(model: model, fixture: fixture, searchQuery: searchQuery)
+                            .frame(height: !searchQuery.isEmpty && !model.scenarios.contains(where: { $0.fixtureId == fixture.id && ($0.name.range(of: searchQuery, options: .caseInsensitive) != nil || $0.id.range(of: searchQuery, options: .caseInsensitive) != nil) }) ? 0 : nil)
+                            .clipped()
+                            .listRowInsets(!searchQuery.isEmpty && !model.scenarios.contains(where: { $0.fixtureId == fixture.id && ($0.name.range(of: searchQuery, options: .caseInsensitive) != nil || $0.id.range(of: searchQuery, options: .caseInsensitive) != nil) }) ? EdgeInsets() : nil)
+                            .listRowSeparator(searchQuery.isEmpty ? .automatic : .hidden)
                     }
                 }
                 if let undoDeleteMessage = model.undoDeleteMessage {
