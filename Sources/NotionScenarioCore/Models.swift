@@ -40,6 +40,14 @@ public struct RequestedState: Codable, Equatable, Sendable {
     public var scroll: ScrollRequest?
     public var toggles: [ToggleRequest]?
     public var focus: FocusRequest?
+    public var presentation: PresentationRequest?
+    public var sidebar: SidebarRequest?
+    public var scrolls: [ViewportScrollRequest]?
+    public var tabs: [TabRequest]?
+    public var databaseView: String?
+    public var blockDisplays: [BlockDisplayRequest]?
+    public var captureRegion: RegionRequest?
+    public var overlay: OverlayRequest?
     public var required: [String]
     public init() { coordinateSystem = "screen-top-left-points"; required = ["target", "window", "scroll", "focus", "screenshot"] }
 }
@@ -51,6 +59,7 @@ public struct Scenario: Codable, Sendable {
     public var fixtureId: String
     public var fixtureVersion: String
     public var state: RequestedState
+    public var fixtureVersions: [String: String]?
     public init(id: String, name: String, fixtureId: String, fixtureVersion: String, state: RequestedState) {
         schemaVersion = 1; self.id = id; self.name = name; version = 1
         self.fixtureId = fixtureId; self.fixtureVersion = fixtureVersion; self.state = state
@@ -62,6 +71,17 @@ public struct RunRequest: Codable, Sendable {
     public var pageId: String
     public var scenario: Scenario
     public var timeoutSeconds: Double?
+    public var requireFocusedPage: Bool?
+    public var previewPageId: String?
+    public var previewTitle: String?
+    public var previewRowText: String?
+    public var pageReferences: [PageReference]?
+    public var databaseViewNames: [String]?
+    public var databaseViewTypes: [String: String]?
+    public var databasePropertyNames: [String]?
+    public var allowPersistentPresentation: Bool?
+    public var captureTabs: [TabRequest]?
+    public var captureBlockDisplays: [BlockDisplayRequest]?
 }
 public struct StepResult: Codable, Sendable {
     public var item: String
@@ -106,6 +126,7 @@ public struct RunResult: Codable, Sendable {
     public var environment: [String: String]
     public var observedGeometry: [String: Rect] = [:]
     public var screenshot: CaptureInfo?
+    public var regionScreenshot: CaptureInfo?
 
     public static func verdict(required: [String], steps: [StepResult]) -> String {
         if steps.contains(where: { $0.item == "target" && $0.status != "verified" }) { return "failed" }

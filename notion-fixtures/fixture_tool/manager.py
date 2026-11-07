@@ -94,6 +94,22 @@ class Manager:
         self.state = state
         self.data = state.data
 
+    @staticmethod
+    def identity_snapshot(value):
+        """Keep fixture identity/inventory while ignoring modification timestamps."""
+        if isinstance(value, dict):
+            return {key: Manager.identity_snapshot(item) for key, item in value.items()
+                    if key not in ("lastEditedTime", "restored")}
+        if isinstance(value, list):
+            return [Manager.identity_snapshot(item) for item in value]
+        return value
+
+    @staticmethod
+    def matches_baseline(definition, current, baseline):
+        if definition.mutable_presentation:
+            return Manager.identity_snapshot(current) == Manager.identity_snapshot(baseline)
+        return current == baseline
+
     def create(self, path, body, destination, key):
         # Persist intent BEFORE POST. A process crash at any point is conservative:
         # unresolved intent is never silently replayed, even if nothing was sent.
@@ -192,6 +208,12 @@ class Manager:
             was_restored = True
         result = {"page": stamp(page)}
         if entry["kind"] == "document":
+            if entry.get("resolvedLinks"):
+                blocks = self.api.all("GET", f"v1/blocks/{entry['pageId']}/children")
+                result["pageLinks"] = [part["mention"]["page"]["id"]
+                    for block in blocks if block.get("type") == "paragraph"
+                    for part in block["paragraph"].get("rich_text", [])
+                    if part.get("type") == "mention" and part.get("mention", {}).get("type") == "page"]
             return result
         db = self.database(entry["databaseId"], page["id"])
         if restore and trashed(db):
@@ -240,6 +262,14 @@ class Manager:
         entry = self.data["fixtures"].setdefault(definition.name, {"kind": definition.kind})
         if entry["kind"] != definition.kind:
             raise FixtureError(f"{definition.name}: changing fixture kind requires manual state migration")
+        links = getattr(definition, "page_links", [])
+        resolved = {}
+        for link in links:
+            target = self.data["fixtures"].get(link["fixtureId"])
+            if not target or target.get("status") != "ready":
+                raise FixtureError("Linked Fixture must be ready: " + link["fixtureId"])
+            self.managed_page(target["pageId"])
+            resolved[link["fixtureId"]] = target["pageId"]
         baseline = entry.get("baseline")
         restored = False
         if entry.get("pageId"):
@@ -249,7 +279,7 @@ class Manager:
                 restored = True
         if baseline and not entry.get("pending"):
             snapshot = self.snapshot(entry, restore=True)
-            if not force and not restored and entry.get("status") == "ready" and entry.get("sourceHash") == definition.source_hash and snapshot == baseline:
+            if not force and not restored and entry.get("status") == "ready" and entry.get("sourceHash") == definition.source_hash and self.matches_baseline(definition, snapshot, baseline) and entry.get("resolvedLinks", {}) == resolved:
                 return "reused", entry
         entry["status"] = "incomplete"
         self.state.save()
@@ -269,15 +299,45 @@ class Manager:
             })
             self.check_warnings(result)
             self.install_images(definition, entry)
+            self.install_page_links(definition, entry, resolved)
+            entry["resolvedLinks"] = resolved
         else:
             self.rebuild_database(definition, entry)
         new_baseline = self.snapshot(entry)
+        if links and sorted(new_baseline.get("pageLinks", [])) != sorted(resolved[link["fixtureId"]] for link in links):
+            raise FixtureError("Created page links do not match the requested Fixture targets")
         entry.pop("pending", None)
-        entry["baseline"] = new_baseline
+        entry["baseline"] = self.identity_snapshot(new_baseline) if definition.mutable_presentation else new_baseline
         entry["sourceHash"] = definition.source_hash
         entry["status"] = "ready"
         self.state.save()
         return ("created" if baseline is None else "restored"), entry
+
+    def install_page_links(self, definition, entry, resolved):
+        links = getattr(definition, "page_links", [])
+        if not links:
+            return
+        blocks = self.api.all("GET", f"v1/blocks/{entry['pageId']}/children")
+        for link in links:
+            matches = []
+            for block in blocks:
+                if block.get("type") != "paragraph":
+                    continue
+                text = "".join(part.get("plain_text", part.get("text", {}).get("content", ""))
+                               for part in block["paragraph"].get("rich_text", []))
+                if text == link["after"]:
+                    matches.append(block)
+            if len(matches) != 1:
+                raise FixtureError("Page link insertion anchor is missing or ambiguous")
+            self.managed_page(entry["pageId"])
+            self.api.request("PATCH", f"v1/blocks/{entry['pageId']}/children", {
+                "position": {"type": "after_block", "after_block": {"id": matches[0]["id"]}},
+                "children": [{"object": "block", "type": "paragraph", "paragraph": {
+                    "rich_text": [{"type": "mention", "mention": {
+                        "type": "page", "page": {"id": resolved[link["fixtureId"]]}
+                    }}]
+                }}]
+            })
 
     def install_images(self, definition, entry):
         # Markdown owns the text; official image blocks insert local PNGs after
@@ -398,7 +458,8 @@ class Manager:
         self.managed_page(entry["pageId"])
         self.api.request("PATCH", f"v1/pages/{entry['pageId']}", definition.page)
         entry.update(databaseId=db["id"], dataSourceId=ds["id"],
-                     rowIds=list(pending["rows"].values()), viewIds=list(pending["views"].values()))
+                     rowIds=[pending["rows"][str(i)] for i in range(len(definition.rows))],
+                     viewIds=[pending["views"][str(i)] for i in range(len(definition.views))])
         self.state.save()
 
 

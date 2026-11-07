@@ -1,0 +1,59 @@
+{
+  "schemaVersion": 2,
+  "id": "database-peek-b08",
+  "name": "[core] Database Peek B08",
+  "version": 1,
+  "fixtureId": "project-database",
+  "fixtureVersion": "e91b9f0a459086eaa720dcb4415c1bc66989dc86bdb9aca337a0b20c3ed132b9",
+  "fixtureVersions": {
+    "project-database": "e91b9f0a459086eaa720dcb4415c1bc66989dc86bdb9aca337a0b20c3ed132b9"
+  },
+  "state": {
+    "coordinateSystem": "screen-top-left-points",
+    "window": {
+      "x": 0,
+      "y": 60,
+      "width": 1280,
+      "height": 800
+    },
+    "zoomPercent": 100,
+    "sidebar": {
+      "mode": "closed"
+    },
+    "presentation": {
+      "mode": "side",
+      "fixtureId": "project-database",
+      "rowIndex": 7,
+      "widthFraction": 0.6
+    },
+    "focus": {
+      "mode": "clear"
+    },
+    "scrolls": [
+      {
+        "scope": "main",
+        "axis": "y",
+        "mode": "start"
+      },
+      {
+        "scope": "preview",
+        "axis": "y",
+        "mode": "start"
+      }
+    ],
+    "databaseView": "表：一行で省略",
+    "required": [
+      "target",
+      "window",
+      "zoom",
+      "sidebar",
+      "focus",
+      "screenshot",
+      "finalState",
+      "databaseView",
+      "presentation",
+      "scroll.0",
+      "scroll.1"
+    ]
+  }
+}

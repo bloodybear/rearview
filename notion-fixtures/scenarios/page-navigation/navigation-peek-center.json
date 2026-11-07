@@ -1,0 +1,62 @@
+{
+  "schemaVersion": 2,
+  "id": "navigation-peek-center",
+  "name": "Navigation Peek Center",
+  "version": 3,
+  "fixtureId": "page-navigation",
+  "fixtureVersion": "892173cb1b992fde8a69a438198e35b1d7fc8dd7e857b630cce84ecc542c6d38",
+  "fixtureVersions": {
+    "layout-stress": "e4fb079951259477037a1b889db20cdaa4b345f6c8e9a93df3ba47d5a3a9bc8c",
+    "long-reading": "9c15519ecca1278d348c6621293246798c86c0fb870e25c70a8d4cb4def35d17",
+    "media-diagrams": "896a5a3cf10dec24a51e3e57236f23e1c55ee409c4f43ff9a57068517e14cfc2",
+    "mixed-language": "f441165f623e5bd04033a630f56e9a5d0311469a25fc4ad5658b479905d1dfc6",
+    "page-navigation": "892173cb1b992fde8a69a438198e35b1d7fc8dd7e857b630cce84ecc542c6d38",
+    "project-database": "e91b9f0a459086eaa720dcb4415c1bc66989dc86bdb9aca337a0b20c3ed132b9",
+    "rich-document": "31f56af7eada8fbdc9410be4e21d4342e30c1235508ff6b838aee4505fbfec30"
+  },
+  "state": {
+    "coordinateSystem": "screen-top-left-points",
+    "window": {
+      "x": 0,
+      "y": 60,
+      "width": 1280,
+      "height": 800
+    },
+    "zoomPercent": 100,
+    "sidebar": {
+      "mode": "closed"
+    },
+    "presentation": {
+      "mode": "center",
+      "fixtureId": "rich-document"
+    },
+    "focus": {
+      "mode": "clear"
+    },
+    "scrolls": [
+      {
+        "scope": "main",
+        "axis": "y",
+        "mode": "start"
+      },
+      {
+        "scope": "preview",
+        "axis": "y",
+        "mode": "start"
+      }
+    ],
+    "required": [
+      "target",
+      "window",
+      "zoom",
+      "sidebar",
+      "focus",
+      "screenshot",
+      "finalState",
+      "backgroundState",
+      "presentation",
+      "scroll.0",
+      "scroll.1"
+    ]
+  }
+}

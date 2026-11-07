@@ -1,0 +1,53 @@
+{
+  "schemaVersion": 2,
+  "id": "reading-big-end",
+  "name": "Reading Big End",
+  "version": 2,
+  "fixtureId": "long-reading",
+  "fixtureVersion": "9c15519ecca1278d348c6621293246798c86c0fb870e25c70a8d4cb4def35d17",
+  "fixtureVersions": {
+    "long-reading": "9c15519ecca1278d348c6621293246798c86c0fb870e25c70a8d4cb4def35d17"
+  },
+  "state": {
+    "coordinateSystem": "screen-top-left-points",
+    "window": {
+      "x": 0,
+      "y": 60,
+      "width": 640,
+      "height": 700
+    },
+    "zoomPercent": 100,
+    "sidebar": {
+      "mode": "closed"
+    },
+    "presentation": {
+      "mode": "none"
+    },
+    "focus": {
+      "mode": "clear"
+    },
+    "scrolls": [
+      {
+        "scope": "main",
+        "axis": "y",
+        "mode": "anchor",
+        "anchor": {
+          "text": "D06-BIG｜改行のない大きな段落"
+        },
+        "offset": 80,
+        "advancePixels": 850
+      }
+    ],
+    "required": [
+      "target",
+      "window",
+      "zoom",
+      "sidebar",
+      "focus",
+      "screenshot",
+      "finalState",
+      "presentation",
+      "scroll.0"
+    ]
+  }
+}

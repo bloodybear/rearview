@@ -1,0 +1,52 @@
+{
+  "schemaVersion": 2,
+  "id": "mixed-m09",
+  "name": "Mixed M09",
+  "version": 1,
+  "fixtureId": "mixed-language",
+  "fixtureVersion": "f441165f623e5bd04033a630f56e9a5d0311469a25fc4ad5658b479905d1dfc6",
+  "fixtureVersions": {
+    "mixed-language": "f441165f623e5bd04033a630f56e9a5d0311469a25fc4ad5658b479905d1dfc6"
+  },
+  "state": {
+    "coordinateSystem": "screen-top-left-points",
+    "window": {
+      "x": 0,
+      "y": 60,
+      "width": 1024,
+      "height": 700
+    },
+    "zoomPercent": 100,
+    "sidebar": {
+      "mode": "closed"
+    },
+    "presentation": {
+      "mode": "none"
+    },
+    "focus": {
+      "mode": "clear"
+    },
+    "scrolls": [
+      {
+        "scope": "main",
+        "axis": "y",
+        "mode": "anchor",
+        "anchor": {
+          "text": "M09｜韓国語だけの対照群"
+        },
+        "offset": 80
+      }
+    ],
+    "required": [
+      "target",
+      "window",
+      "zoom",
+      "sidebar",
+      "focus",
+      "screenshot",
+      "finalState",
+      "presentation",
+      "scroll.0"
+    ]
+  }
+}

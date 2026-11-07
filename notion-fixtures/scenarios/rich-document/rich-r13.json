@@ -1,0 +1,52 @@
+{
+  "schemaVersion": 2,
+  "id": "rich-r13",
+  "name": "Rich R13",
+  "version": 1,
+  "fixtureId": "rich-document",
+  "fixtureVersion": "31f56af7eada8fbdc9410be4e21d4342e30c1235508ff6b838aee4505fbfec30",
+  "fixtureVersions": {
+    "rich-document": "31f56af7eada8fbdc9410be4e21d4342e30c1235508ff6b838aee4505fbfec30"
+  },
+  "state": {
+    "coordinateSystem": "screen-top-left-points",
+    "window": {
+      "x": 0,
+      "y": 60,
+      "width": 1024,
+      "height": 700
+    },
+    "zoomPercent": 100,
+    "sidebar": {
+      "mode": "closed"
+    },
+    "presentation": {
+      "mode": "none"
+    },
+    "focus": {
+      "mode": "clear"
+    },
+    "scrolls": [
+      {
+        "scope": "main",
+        "axis": "y",
+        "mode": "anchor",
+        "anchor": {
+          "text": "R13｜調理の順番と、数値の単位"
+        },
+        "offset": 80
+      }
+    ],
+    "required": [
+      "target",
+      "window",
+      "zoom",
+      "sidebar",
+      "focus",
+      "screenshot",
+      "finalState",
+      "presentation",
+      "scroll.0"
+    ]
+  }
+}

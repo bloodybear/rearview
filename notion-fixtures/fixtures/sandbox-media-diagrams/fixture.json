@@ -1,0 +1,35 @@
+{
+  "kind": "document",
+  "mutablePresentation": true,
+  "page": {
+    "properties": {
+      "title": {
+        "title": [
+          {
+            "text": {
+              "content": "図版と本文｜画像内文字・図解・読順 | AX Sandbox"
+            }
+          }
+        ]
+      }
+    }
+  },
+  "content": "content.md",
+  "images": [
+    {
+      "file": "assets/approval-flow.png",
+      "after": "I01-FIGURE｜承認手順の図",
+      "caption": "承認手順。差し戻しは不承認と同じではありません。"
+    },
+    {
+      "file": "assets/service-notice.png",
+      "after": "I02-FIGURE｜画像に埋め込まれたお知らせ",
+      "caption": "架空のサービスのお知らせ。画像内の文字と、このキャプションを区別してください。"
+    },
+    {
+      "file": "assets/comparison-chart.png",
+      "after": "I03-FIGURE｜数値と注釈を含む図",
+      "caption": "処理件数の比較。縦軸の単位と対象外の条件を確認してください。"
+    }
+  ]
+}

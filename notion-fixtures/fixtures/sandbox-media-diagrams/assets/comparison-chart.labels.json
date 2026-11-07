@@ -1,0 +1,118 @@
+{
+  "labels" : [
+    {
+      "layoutRect" : [
+        60,
+        30,
+        1200,
+        66
+      ],
+      "text" : "完了件数の比較"
+    },
+    {
+      "layoutRect" : [
+        60,
+        110,
+        300,
+        44.549999999999997
+      ],
+      "text" : "単位：件"
+    },
+    {
+      "layoutRect" : [
+        85,
+        593,
+        80,
+        41.25
+      ],
+      "text" : "0"
+    },
+    {
+      "layoutRect" : [
+        85,
+        463,
+        80,
+        41.25
+      ],
+      "text" : "40"
+    },
+    {
+      "layoutRect" : [
+        85,
+        333,
+        80,
+        41.25
+      ],
+      "text" : "80"
+    },
+    {
+      "layoutRect" : [
+        85,
+        203,
+        80,
+        41.25
+      ],
+      "text" : "120"
+    },
+    {
+      "layoutRect" : [
+        320,
+        305,
+        220,
+        52.799999999999997
+      ],
+      "text" : "80 件"
+    },
+    {
+      "layoutRect" : [
+        330,
+        630,
+        250,
+        49.5
+      ],
+      "text" : "変更前"
+    },
+    {
+      "layoutRect" : [
+        780,
+        175,
+        220,
+        52.799999999999997
+      ],
+      "text" : "120 件"
+    },
+    {
+      "layoutRect" : [
+        790,
+        630,
+        250,
+        49.5
+      ],
+      "text" : "変更後"
+    },
+    {
+      "layoutRect" : [
+        60,
+        700,
+        1200,
+        41.25
+      ],
+      "text" : "対象：初回の申請のみ。再申請は含みません。"
+    },
+    {
+      "layoutRect" : [
+        60,
+        744,
+        1200,
+        36.299999999999997
+      ],
+      "text" : "件数が増えたことは、処理時間が長くなったことを意味しません。"
+    }
+  ],
+  "note" : "Layout rectangles in image pixels, not tight glyph bounds or screen-space AX boxes. Some text is deliberately occluded; see SCENARIOS.md.",
+  "origin" : "top-left",
+  "size" : [
+    1320,
+    790
+  ]
+}

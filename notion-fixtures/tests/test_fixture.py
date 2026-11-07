@@ -70,6 +70,39 @@ class LifecycleTests(unittest.TestCase):
     def writes_since(self, count):
         return [c for c in self.remote()["calls"][count:] if c[0] != "GET" and not c[1].endswith("/query")]
 
+    def test_page_links_reuse_repair_and_interrupted_rebuild(self):
+        self.run_fixture(self.doc)
+        directory = self.root / "host"
+        directory.mkdir()
+        (directory / "content.md").write_text("LINK\n\n背景の本文です。")
+        (directory / "fixture.json").write_text(json.dumps({
+            "kind": "document", "page": {"properties": {"title": {"title": [{"text": {"content": "host"}}]}}},
+            "content": "content.md", "pageLinks": [{"after": "LINK", "fixtureId": self.doc.name}]
+        }))
+        definition = Definition(directory)
+        self.remote(lambda remote: remote.update(materialize_markdown=True))
+        _, entry = self.run_fixture(definition)
+        self.assertEqual(entry["baseline"]["pageLinks"], [self.state()["fixtures"][self.doc.name]["pageId"]])
+        count = len(self.remote()["calls"])
+        self.assertEqual(self.run_fixture(definition)[0], "reused")
+        self.assertEqual(self.writes_since(count), [])
+        def corrupt(remote):
+            for block in remote["objects"].values():
+                if block["object"] == "block" and block["parent"].get("page_id") == entry["pageId"]:
+                    for part in block.get("paragraph", {}).get("rich_text", []):
+                        if part.get("type") == "mention":
+                            part["mention"]["page"]["id"] = "incorrect-target"
+        self.remote(corrupt)
+        repaired = self.run_fixture(definition)[1]
+        self.assertEqual(repaired["baseline"]["pageLinks"], entry["baseline"]["pageLinks"])
+        endpoint = "v1/blocks/" + entry["pageId"] + "/children"
+        self.remote(lambda remote: remote.update(fault=["PATCH", endpoint, 500]))
+        with self.assertRaises(APIError): self.run_fixture(definition, force=True)
+        self.assertEqual(self.state()["fixtures"][definition.name]["status"], "incomplete")
+        recovered = self.run_fixture(definition)[1]
+        self.assertEqual(recovered["pageId"], entry["pageId"])
+        self.assertEqual(recovered["baseline"]["pageLinks"], entry["baseline"]["pageLinks"])
+
     def test_document_create_reuse_edit_reset_and_local_change(self):
         action, entry = self.run_fixture(self.doc)
         self.assertEqual(action, "created")
@@ -88,6 +121,25 @@ class LifecycleTests(unittest.TestCase):
         changed.source_hash = "new-source"
         self.run_fixture(changed)
         self.assertEqual(self.state()["fixtures"][self.doc.name]["sourceHash"], "new-source")
+
+    def test_mutable_presentation_database_reuses_recorded_ids_after_timestamp_changes(self):
+        self.db.mutable_presentation = True
+        _, entry = self.run_fixture(self.db)
+        self.assertNotIn("lastEditedTime", json.dumps(entry["baseline"]))
+        identifiers = [entry["pageId"], entry["databaseId"], entry["dataSourceId"], entry["rowIds"][0], entry["viewIds"][0]]
+        for identifier in identifiers:
+            self.edit(identifier)
+        count = len(self.remote()["calls"])
+        action, reused = self.run_fixture(self.db)
+        self.assertEqual(action, "reused")
+        self.assertEqual(reused["pageId"], entry["pageId"])
+        self.assertEqual(reused["databaseId"], entry["databaseId"])
+        self.assertEqual(reused["dataSourceId"], entry["dataSourceId"])
+        self.assertEqual(reused["rowIds"], entry["rowIds"])
+        self.assertEqual(reused["viewIds"], entry["viewIds"])
+        self.assertEqual(self.writes_since(count), [])
+        databases = [obj for obj in self.remote()["objects"].values() if obj.get("object") == "database"]
+        self.assertEqual(len(databases), 1)
 
     def test_document_trash_preserves_id(self):
         _, entry = self.run_fixture(self.doc)

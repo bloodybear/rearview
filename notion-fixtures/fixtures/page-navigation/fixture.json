@@ -1,0 +1,43 @@
+{
+  "kind": "document",
+  "page": {
+    "properties": {
+      "title": {
+        "title": [
+          {
+            "text": {
+              "content": "文書の参照と並列表示 | page-navigation"
+            }
+          }
+        ]
+      }
+    }
+  },
+  "content": "content.md",
+  "pageLinks": [
+    {
+      "after": "N01｜参照する文書：rich-document",
+      "fixtureId": "rich-document"
+    },
+    {
+      "after": "N02｜参照する文書：layout-stress",
+      "fixtureId": "layout-stress"
+    },
+    {
+      "after": "N03｜参照する文書：mixed-language",
+      "fixtureId": "mixed-language"
+    },
+    {
+      "after": "N04｜参照する文書：long-reading",
+      "fixtureId": "long-reading"
+    },
+    {
+      "after": "N05｜参照する文書：media-diagrams",
+      "fixtureId": "media-diagrams"
+    },
+    {
+      "after": "N06｜参照する文書：project-database",
+      "fixtureId": "project-database"
+    }
+  ]
+}

@@ -18,6 +18,7 @@ def main():
         command.add_argument("fixture_name", nargs="?")
         if name == "ensure":
             command.add_argument("--parent", help="Dedicated test page URL or UUID (first run only)")
+            command.add_argument("--sandbox", action="store_true", help="Ensure only fixtures marked mutablePresentation")
     commands.add_parser("list")
     add_parser(commands)
     args = parser.parse_args()
@@ -25,7 +26,14 @@ def main():
     try:
         if args.command == "scenario":
             return dispatch(root, args)
-        fixtures = definitions(root, getattr(args, "fixture_name", None)) if args.command != "list" else []
+        if getattr(args, "sandbox", False) and getattr(args, "fixture_name", None):
+            parser.error("choose either --sandbox or one fixture name")
+        if getattr(args, "sandbox", False):
+            fixtures = [item for item in definitions(root) if item.mutable_presentation]
+            if not fixtures:
+                raise FixtureError("No mutable-presentation sandbox fixtures are defined")
+        else:
+            fixtures = definitions(root, getattr(args, "fixture_name", None)) if args.command != "list" else []
         with State(root) as state:
             if args.command == "list":
                 management = state.data.get("root", {})
@@ -40,10 +48,28 @@ def main():
                         print(f"  database={entry['databaseId']} dataSource={entry.get('dataSourceId', '-')}")
                         print(f"  rows={','.join(entry.get('rowIds', []))} views={','.join(entry.get('viewIds', []))}")
                 return 0
+            all_definitions = {d.name: d for d in definitions(root)}
+            ordered, visiting, visited = [], set(), set()
+            def visit(definition):
+                if definition.name in visiting:
+                    raise ValueError("Circular Fixture pageLinks")
+                if definition.name in visited:
+                    return
+                visiting.add(definition.name)
+                for link in definition.page_links:
+                    if link["fixtureId"] not in all_definitions:
+                        raise ValueError("Unknown linked Fixture: " + link["fixtureId"])
+                    visit(all_definitions[link["fixtureId"]])
+                visiting.remove(definition.name)
+                visited.add(definition.name)
+                ordered.append(definition)
+            requested = {d.name for d in fixtures}
+            for definition in fixtures:
+                visit(definition)
             manager = Manager(Notion(), state)
             manager.initialize(getattr(args, "parent", None))
-            for definition in fixtures:
-                action, entry = manager.ensure(definition, force=args.command == "reset")
+            for definition in ordered:
+                action, entry = manager.ensure(definition, force=args.command == "reset" and definition.name in requested)
                 print(f"{definition.name}\t{action}\t{entry.get('url') or entry['pageId']}")
         return 0
     except (FixtureError, OSError, KeyError, TypeError, ValueError) as exc:

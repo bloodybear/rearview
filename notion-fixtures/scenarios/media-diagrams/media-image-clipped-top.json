@@ -1,0 +1,62 @@
+{
+  "schemaVersion": 2,
+  "id": "media-image-clipped-top",
+  "name": "Media Image Clipped Top",
+  "version": 2,
+  "fixtureId": "media-diagrams",
+  "fixtureVersion": "896a5a3cf10dec24a51e3e57236f23e1c55ee409c4f43ff9a57068517e14cfc2",
+  "fixtureVersions": {
+    "media-diagrams": "896a5a3cf10dec24a51e3e57236f23e1c55ee409c4f43ff9a57068517e14cfc2"
+  },
+  "state": {
+    "coordinateSystem": "screen-top-left-points",
+    "window": {
+      "x": 0,
+      "y": 60,
+      "width": 1024,
+      "height": 700
+    },
+    "zoomPercent": 100,
+    "sidebar": {
+      "mode": "closed"
+    },
+    "presentation": {
+      "mode": "none"
+    },
+    "focus": {
+      "mode": "clear"
+    },
+    "scrolls": [
+      {
+        "scope": "main",
+        "axis": "y",
+        "mode": "anchor",
+        "anchor": {
+          "text": "I02｜画像に焼き込まれた文字と、隣接する本文"
+        },
+        "offset": 80
+      }
+    ],
+    "captureRegion": {
+      "scope": "main",
+      "anchor": {
+        "text": "I02｜画像に焼き込まれた文字と、隣接する本文"
+      },
+      "target": "followingImage",
+      "cutEdge": "top",
+      "fraction": 0.5
+    },
+    "required": [
+      "target",
+      "window",
+      "zoom",
+      "sidebar",
+      "focus",
+      "screenshot",
+      "finalState",
+      "captureRegion",
+      "presentation",
+      "scroll.0"
+    ]
+  }
+}

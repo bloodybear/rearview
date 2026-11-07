@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "layout-narrow",
-  "name": "狭いウィンドウ・100%・先頭",
+  "name": "[legacy] Narrow",
   "version": 1,
   "fixtureId": "layout-stress",
   "fixtureVersion": "e4fb079951259477037a1b889db20cdaa4b345f6c8e9a93df3ba47d5a3a9bc8c",

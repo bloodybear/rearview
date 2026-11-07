@@ -80,6 +80,11 @@ elif len(parts) >= 3:
         fail(404)
     obj = objects[identifier]
     if len(parts) == 4 and parts[3] == "children":
+        if method == "PATCH" and "children" in body:
+            for child in body["children"]:
+                block = new("block", {"page_id": identifier})
+                block.update(child)
+            touch(obj)
         # Inline child database blocks share their database ID.
         result = []
         for v in objects.values():
@@ -93,6 +98,14 @@ elif len(parts) >= 3:
                 result.append(dict(v, type="child_page"))
     elif len(parts) == 4 and parts[3] == "markdown":
         obj["markdown"] = body["replace_content"]["new_str"]
+        if remote.get("materialize_markdown"):
+            for block in list(objects.values()):
+                if block["object"] == "block" and block["parent"].get("page_id") == identifier:
+                    block["in_trash"] = True
+            for paragraph in obj["markdown"].split("\n\n"):
+                if paragraph.strip():
+                    block = new("block", {"page_id": identifier})
+                    block.update(type="paragraph", paragraph={"rich_text": [{"type": "text", "text": {"content": paragraph}, "plain_text": paragraph}]})
         touch(obj)
         result = {"object": "page_markdown", "markdown": obj["markdown"]}
         if remote.pop("warning_next_update", False):

@@ -1,15 +1,42 @@
 import AppKit
+import CryptoKit
+import CoreFoundation
 import SwiftUI
+import UniformTypeIdentifiers
 import NotionScenarioCore
 
 @main
 struct Main {
     @MainActor static func main() async {
         let args = CommandLine.arguments
+        if args.contains("--inspect") {
+            do {
+                let data = try ScenarioRunner.inspectCurrentWindow()
+                if let index = args.firstIndex(of: "--output"), args.indices.contains(index + 1) {
+                    try data.write(to: URL(fileURLWithPath: args[index + 1]), options: .atomic)
+                } else { FileHandle.standardOutput.write(data) }
+                exit(0)
+            } catch { FileHandle.standardError.write(Data("\(error)\n".utf8)); exit(3) }
+        }
+        if args.contains("--resolve-current-page") {
+            do {
+                let page = try ScenarioRunner.resolveCurrentPageID()
+                if let index = args.firstIndex(of: "--output"), args.indices.contains(index + 1) {
+                    try Data(page.utf8).write(to: URL(fileURLWithPath: args[index + 1]), options: .atomic)
+                } else { print(page) }
+                exit(0)
+            } catch let failure as ScenarioFailure {
+                FileHandle.standardError.write(Data("\(failure.code): \(failure.description)\n".utf8)); exit(3)
+            } catch {
+                FileHandle.standardError.write(Data("current_page_unavailable: \(error)\n".utf8)); exit(3)
+            }
+        }
         if let index = args.firstIndex(of: "--request"), args.indices.contains(index + 1),
            let out = args.firstIndex(of: "--output"), args.indices.contains(out + 1) {
             do {
                 let request = try JSONDecoder().decode(RunRequest.self, from: Data(contentsOf: URL(fileURLWithPath: args[index + 1])))
+                let identity: [String: Any] = ["pid": ProcessInfo.processInfo.processIdentifier, "runId": request.runId]
+                try JSONSerialization.data(withJSONObject: identity).write(to: URL(fileURLWithPath: args[out + 1]).appendingPathComponent("native-process.json"), options: .atomic)
                 let result = await ScenarioRunner().run(request, directory: URL(fileURLWithPath: args[out + 1])) { step in
                     if let data = try? JSONEncoder().encode(step) { FileHandle.standardError.write(data + Data([10])) }
                 }
@@ -135,7 +162,7 @@ private final class ScreenshotComparisonWindow: NSWindow {
         ScreenshotComparisonWindowView(
             savedImage: saved,
             appliedImage: applied,
-            savedLabel: "Saved capture · v\(model.lastRunScenarioVersion ?? 0) · \(model.savedCaptureTimeLabel)",
+            savedLabel: "Reference capture · v\(model.lastRunScenarioVersion ?? 0) · \(model.savedCaptureTimeLabel)",
             appliedLabel: "Latest apply · v\(model.lastRunScenarioVersion ?? 0) · \(model.screenshotTimeLabel)",
             comparison: model.screenshotComparison,
             savedCaptureDirectory: model.savedCaptureDirectory,
@@ -164,7 +191,6 @@ private struct DeletedScenario {
     @Published var root: URL?
     @Published var fixtures: [FixtureItem] = []
     @Published var scenarios: [Scenario] = []
-    @Published var fixtureId = "layout-stress"
     @Published var selected: String?
     @Published var editor = ""
     @Published var savedEditor = ""
@@ -177,6 +203,7 @@ private struct DeletedScenario {
     @Published var summary = ""
     @Published var runStatus = ""
     @Published var image: NSImage?
+    @Published var regionImage: NSImage?
     @Published var runDirectory: URL?
     @Published var lastRunOperation = ""
     @Published var lastRunFixtureId = ""
@@ -192,6 +219,7 @@ private struct DeletedScenario {
     @Published var savedCaptureImage: NSImage?
     @Published var savedCaptureAt = ""
     @Published var screenshotComparison = ""
+    @Published var baselineRegistrationMessage = ""
     @Published var undoDeleteMessage: String?
     private var pendingDeletion: DeletedScenario?
     private var undoExpirationTask: Task<Void, Never>?
@@ -264,6 +292,136 @@ private struct DeletedScenario {
             applyRoot(url)
         }
     }
+    func chooseBaselineSummary() {
+        guard let root, !busy else { return }
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowedContentTypes = [.json]
+        panel.directoryURL = root.appendingPathComponent("runs", isDirectory: true)
+        panel.message = "Choose an all-scenarios replay summary JSON"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        registerBaselines(from: url)
+    }
+    private func registerBaselines(from summaryURL: URL) {
+        guard let root else { return }
+        do {
+            let summaryData = try Data(contentsOf: summaryURL)
+            guard let summary = try JSONSerialization.jsonObject(with: summaryData) as? [String: Any],
+                  summary["suite"] as? String == "all",
+                  let runs = summary["runs"] as? [[String: Any]] else {
+                throw NSError(domain: "NotionScenarios", code: 1, userInfo: [NSLocalizedDescriptionKey: "Choose a replay summary created with --suite all."])
+            }
+            let catalogURL = root.appendingPathComponent("scenario-catalog.json")
+            guard let catalog = try JSONSerialization.jsonObject(with: Data(contentsOf: catalogURL)) as? [String: Any],
+                  let cases = catalog["cases"] as? [String: [String: Any]] else {
+                throw NSError(domain: "NotionScenarios", code: 2, userInfo: [NSLocalizedDescriptionKey: "scenario-catalog.json is missing or invalid."])
+            }
+            let runRecords = Dictionary(grouping: runs, by: { $0["scenarioId"] as? String ?? "" })
+            var registered = 0, existing = 0, skipped = 0, rejected = 0
+            for (scenarioId, caseInfo) in cases {
+                guard caseInfo["replaySupport"] as? String != "unsupported" else { skipped += 1; continue }
+                guard let scenario = scenarios.first(where: { $0.id == scenarioId }) else { skipped += 1; continue }
+                let scenarioURL = root.appendingPathComponent("scenarios", isDirectory: true)
+                    .appendingPathComponent(scenario.fixtureId, isDirectory: true)
+                    .appendingPathComponent("\(scenarioId).json")
+                guard let scenarioData = try? Data(contentsOf: scenarioURL),
+                      let scenarioObject = try? JSONSerialization.jsonObject(with: scenarioData),
+                      let scenarioDictionary = scenarioObject as? [String: Any] else {
+                    skipped += 1; continue
+                }
+                let scenarioHash = Self.sha256(try Self.canonicalJSON(scenarioDictionary))
+                guard let matchingRun = (runRecords[scenarioId] ?? []).reversed().first(where: {
+                    $0["accepted"] as? Bool == true && $0["scenarioSHA256"] as? String == scenarioHash
+                }),
+                let runDirectoryPath = matchingRun["runDirectory"] as? String,
+                let runId = matchingRun["runId"] as? String else { skipped += 1; continue }
+                let runDirectory = URL(fileURLWithPath: runDirectoryPath)
+                let resultURL = runDirectory.appendingPathComponent("result.json")
+                guard let resultData = try? Data(contentsOf: resultURL),
+                      let result = try? JSONSerialization.jsonObject(with: resultData) as? [String: Any],
+                      result["runId"] as? String == runId,
+                      result["scenarioId"] as? String == scenarioId,
+                      result["scenarioVersion"] as? Int == scenario.version,
+                      result["fixtureId"] as? String == scenario.fixtureId,
+                      result["fixtureVersion"] as? String == scenario.fixtureVersion,
+                      result["documentUnchanged"] as? Bool == true,
+                      result["status"] as? String != "failed",
+                      let screenshot = result["screenshot"] as? [String: Any],
+                      let capturedAt = screenshot["capturedAt"] as? String else { skipped += 1; continue }
+                let imageName = screenshot["file"] as? String ?? "screen.png"
+                let sourceURL = runDirectory.appendingPathComponent(imageName)
+                guard let expectedWidth = screenshot["pixelWidth"] as? Int,
+                      let expectedHeight = screenshot["pixelHeight"] as? Int else { rejected += 1; continue }
+                guard let imageData = try? Data(contentsOf: sourceURL),
+                      let dimensions = Self.pngDimensions(imageData),
+                      dimensions.width == expectedWidth,
+                      dimensions.height == expectedHeight else { rejected += 1; continue }
+                let imageHash = Self.sha256(imageData)
+                let destination = root.appendingPathComponent("captures", isDirectory: true)
+                    .appendingPathComponent(scenario.fixtureId, isDirectory: true)
+                    .appendingPathComponent(scenarioId, isDirectory: true)
+                    .appendingPathComponent("v\(scenario.version)", isDirectory: true)
+                let imageURL = destination.appendingPathComponent("screen.png")
+                let manifestURL = destination.appendingPathComponent("manifest.json")
+                if let oldData = try? Data(contentsOf: manifestURL),
+                   let old = try? JSONSerialization.jsonObject(with: oldData) as? [String: Any] {
+                    if old["scenarioSHA256"] as? String == scenarioHash,
+                       old["imageSHA256"] as? String == imageHash,
+                       FileManager.default.fileExists(atPath: imageURL.path) { existing += 1 }
+                    else { rejected += 1 }
+                    continue
+                }
+                let manifest: [String: Any] = [
+                    "schemaVersion": 1, "scenarioId": scenarioId, "fixtureId": scenario.fixtureId,
+                    "scenarioVersion": scenario.version, "fixtureVersion": scenario.fixtureVersion,
+                    "scenarioSHA256": scenarioHash, "sourceRunId": runId, "capturedAt": capturedAt,
+                    "frame": screenshot["frame"] ?? NSNull(), "pixelWidth": dimensions.width,
+                    "pixelHeight": dimensions.height, "imageSHA256": imageHash,
+                    "replayStatus": result["status"] ?? "verified", "documentUnchanged": true,
+                ]
+                try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
+                try imageData.write(to: imageURL, options: .atomic)
+                let manifestData = try JSONSerialization.data(withJSONObject: manifest, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
+                try (manifestData + Data([0x0A])).write(to: manifestURL, options: .atomic)
+                registered += 1
+            }
+            baselineRegistrationMessage = "Baseline registration: \(registered) created, \(existing) already current, \(skipped) skipped, \(rejected) rejected."
+        } catch {
+            baselineRegistrationMessage = "Baseline registration failed: \(error.localizedDescription)"
+        }
+    }
+    private static func sha256(_ data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+    private static func canonicalJSON(_ value: Any) throws -> Data {
+        func encode(_ value: Any) throws -> String {
+            if value is NSNull { return "null" }
+            if let string = value as? String {
+                let data = try JSONSerialization.data(withJSONObject: string, options: [.fragmentsAllowed, .withoutEscapingSlashes])
+                return String(decoding: data, as: UTF8.self)
+            }
+            if let number = value as? NSNumber {
+                if CFGetTypeID(number) == CFBooleanGetTypeID() { return number.boolValue ? "true" : "false" }
+                return number.stringValue
+            }
+            if let array = value as? [Any] { return "[" + (try array.map(encode).joined(separator: ", ")) + "]" }
+            if let object = value as? [String: Any] {
+                let keys = object.keys.sorted()
+                return "{" + (try keys.map { key in "\(try encode(key)): \(try encode(object[key]!))" }.joined(separator: ", ")) + "}"
+            }
+            throw NSError(domain: "NotionScenarios", code: 3, userInfo: [NSLocalizedDescriptionKey: "Unsupported JSON value in scenario."])
+        }
+        return Data(try encode(value).utf8)
+    }
+    private static func pngDimensions(_ data: Data) -> (width: Int, height: Int)? {
+        guard data.count >= 24, data.prefix(8) == Data([137, 80, 78, 71, 13, 10, 26, 10]),
+              data[12..<16] == Data("IHDR".utf8) else { return nil }
+        func integer(_ range: Range<Int>) -> Int {
+            range.reduce(0) { ($0 << 8) | Int(data[$1]) }
+        }
+        return (integer(16..<20), integer(20..<24))
+    }
     private func applyRoot(_ url: URL) {
         clearPendingDeletion()
         root = url
@@ -284,12 +442,6 @@ private struct DeletedScenario {
         guard !blockActionForUnsavedEditorChanges() else { return }
         select(id)
     }
-    func requestFixtureSelection(_ id: String) {
-        guard id != fixtureId else { return }
-        guard !blockActionForUnsavedEditorChanges() else { return }
-        fixtureId = id
-        select(nil)
-    }
     func discardEditorChanges() {
         guard hasUnsavedEditorChanges else { return }
         editor = savedEditor
@@ -309,7 +461,6 @@ private struct DeletedScenario {
                         self.select(nil)
                     }
                 }
-                if !self.fixtures.contains(where: { $0.id == self.fixtureId }) { self.fixtureId = self.fixtures.first?.id ?? "" }
             } catch { self.messages += "\n\(error)" }
         }
     }
@@ -319,7 +470,7 @@ private struct DeletedScenario {
         runErrorSummary = ""
         savedScenarioId = nil; screenshotCapturedAt = ""
         savedCaptureDirectory = nil; savedCaptureImage = nil; savedCaptureAt = ""; screenshotComparison = ""
-        runStatus = ""; stepResults = []; summary = ""; runDirectory = nil; image = nil
+        runStatus = ""; stepResults = []; summary = ""; runDirectory = nil; image = nil; regionImage = nil
         guard let root,
               let directories = try? FileManager.default.contentsOfDirectory(
                 at: root.appendingPathComponent("runs"), includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]
@@ -362,7 +513,8 @@ private struct DeletedScenario {
         }
         guard value["status"] as? String == "failed" else { return nil }
         let requestedScenario = request?["scenario"] as? [String: Any] ?? [:]
-        let fixtureId = value["fixtureId"] as? String ?? requestedScenario["fixtureId"] as? String ?? "selected document"
+        let fixtureId = [value["fixtureId"] as? String, requestedScenario["fixtureId"] as? String]
+            .compactMap { $0 }.first(where: { !$0.isEmpty }) ?? "current Notion page"
         if let saveError = value["captureSaveError"] as? String {
             return "The screen was captured, but the scenario could not be saved: \(saveError)"
         }
@@ -373,8 +525,20 @@ private struct DeletedScenario {
         let code = failure["code"] as? String ?? ""
         let detail = failure["detail"] as? String ?? "The scenario failed. See Progress & item results for details."
         switch code {
+        case "current_page_unregistered":
+            return "The focused Notion page is not registered as a ready Fixture in this folder. Nothing was saved."
+        case "current_page_ambiguous":
+            return "The focused Notion page could not be mapped to exactly one Fixture. Nothing was saved."
+        case "current_page_unavailable":
+            return "Could not determine the focused Notion page. Open a Fixture page in Notion and try again."
+        case "current_page_changed", "document_mismatch":
+            return "The focused Notion page changed before capture completed. Nothing was saved; focus the intended Fixture page and try again."
+        case "fixture_not_ready":
+            return "Fixture '\(fixtureId)' is not ready. Run fixture ensure before capturing it."
+        case "fixture_version_mismatch":
+            return "Fixture '\(fixtureId)' changed since it was registered. Run fixture ensure and review its scenarios before capturing."
         case "selected_document_not_found":
-            return "Could not find selected document '\(fixtureId)' in a Notion window. This action only captures the selected document. Open that page and try again."
+            return "Could not find Fixture page '\(fixtureId)' in a Notion window. Open that page and try again."
         case "notion_not_running":
             return "Notion desktop is not open. Open Notion and try again."
         case "target_window_focus_failed":
@@ -385,8 +549,6 @@ private struct DeletedScenario {
             return "Notion Scenarios needs Accessibility permission. Enable it in System Settings, then try again."
         case "screen_capture_permission":
             return "Notion Scenarios needs Screen Recording permission to save a screenshot. Enable it in System Settings, then try again."
-        case "document_mismatch":
-            return "The Notion document or foreground window changed during the run. Keep the selected document open and try again."
         case "target_window_missing":
             return "Notion did not expose the selected page in time. Make sure the page is open, then try again."
         default:
@@ -400,6 +562,31 @@ private struct DeletedScenario {
               let directories = try? FileManager.default.contentsOfDirectory(
                 at: root.appendingPathComponent("runs"), includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]
               ) else { return }
+        if let scenario = scenarios.first(where: {
+            $0.id == lastRunScenarioId && $0.version == expectedVersion && $0.fixtureId == lastRunFixtureId
+        }) {
+            let referenceDirectory = root
+                .appendingPathComponent("captures", isDirectory: true)
+                .appendingPathComponent(scenario.fixtureId, isDirectory: true)
+                .appendingPathComponent(scenario.id, isDirectory: true)
+                .appendingPathComponent("v\(scenario.version)", isDirectory: true)
+            let manifestURL = referenceDirectory.appendingPathComponent("manifest.json")
+            let screenshotURL = referenceDirectory.appendingPathComponent("screen.png")
+            if let manifestData = try? Data(contentsOf: manifestURL),
+               let manifest = try? JSONSerialization.jsonObject(with: manifestData) as? [String: Any],
+               manifest["scenarioId"] as? String == scenario.id,
+               manifest["scenarioVersion"] as? Int == scenario.version,
+               manifest["fixtureId"] as? String == scenario.fixtureId,
+               manifest["fixtureVersion"] as? String == scenario.fixtureVersion,
+               let capturedAt = manifest["capturedAt"] as? String,
+               let captureImage = NSImage(contentsOf: screenshotURL) {
+                savedCaptureDirectory = referenceDirectory
+                savedCaptureImage = captureImage
+                savedCaptureAt = capturedAt
+                screenshotComparison = compareImages(captureImage, currentImage)
+                return
+            }
+        }
         for directory in directories.sorted(by: { $0.lastPathComponent > $1.lastPathComponent }) {
             let resultURL = directory.appendingPathComponent("result.json")
             let requestURL = directory.appendingPathComponent("request.json")
@@ -655,7 +842,7 @@ private struct DeletedScenario {
         guard !blockActionForUnsavedEditorChanges() else { return }
         guard canUseNewId else { messages = newIdIssue ?? "Enter a scenario ID"; return }
         let requestedID = newId
-        command(["capture", fixtureId, "--id", requestedID, "--json"]) { data in
+        command(["capture-current", "--id", requestedID, "--json"]) { data in
             self.showResult(data)
             let savedID = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["savedScenario"] as? String
             if savedID == requestedID {
@@ -687,10 +874,13 @@ private struct DeletedScenario {
         if let steps = value["steps"], let encoded = try? JSONSerialization.data(withJSONObject: steps),
            let decoded = try? JSONDecoder().decode([StepResult].self, from: encoded) { stepResults = decoded }
         summary = String(data: (try? JSONSerialization.data(withJSONObject: value, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])) ?? data, encoding: .utf8) ?? ""
-        runDirectory = nil; image = nil
+        runDirectory = nil; image = nil; regionImage = nil
         if let path = value["runDirectory"] as? String {
             runDirectory = URL(fileURLWithPath: path)
             image = NSImage(contentsOf: runDirectory!.appendingPathComponent("screen.png"))
+            if let region = value["regionScreenshot"] as? [String:Any], let file = region["file"] as? String {
+                regionImage = NSImage(contentsOf:runDirectory!.appendingPathComponent(file))
+            }
         }
         loadSavedCaptureComparison()
     }
@@ -699,20 +889,28 @@ private struct DeletedScenario {
         busy = true
         if resetProgress {
             stepResults = []; messages = "Running: scenario " + arguments.joined(separator: " ") + "\n"
-            let operation = arguments.first ?? ""
+            let commandName = arguments.first ?? ""
+            let operation = commandName == "capture-current" ? "capture" : commandName
             runStatus = ["apply", "capture"].contains(operation) ? "running" : ""
             if ["apply", "capture"].contains(operation) {
                 lastRunOperation = operation
-                let scenarioID = arguments.count > 1 ? arguments[1] : (selected ?? "")
+                let scenarioID: String
+                if operation == "apply" {
+                    scenarioID = arguments.count > 1 ? arguments[1] : (selected ?? "")
+                } else if let idIndex = arguments.firstIndex(of: "--id"), arguments.indices.contains(idIndex + 1) {
+                    scenarioID = arguments[idIndex + 1]
+                } else {
+                    scenarioID = newId
+                }
                 lastRunFixtureId = operation == "apply"
-                    ? (scenarios.first(where: { $0.id == scenarioID })?.fixtureId ?? fixtureId)
-                    : fixtureId
-                lastRunScenarioId = operation == "capture" ? newId : scenarioID
+                    ? (scenarios.first(where: { $0.id == scenarioID })?.fixtureId ?? "")
+                    : ""
+                lastRunScenarioId = scenarioID
                 lastRunScenarioVersion = nil
                 lastRunId = ""; lastRunStartedAt = ""; lastRunStatus = "running"
                 savedScenarioId = nil; screenshotCapturedAt = ""
                 savedCaptureDirectory = nil; savedCaptureImage = nil; savedCaptureAt = ""; screenshotComparison = ""
-                summary = ""; runDirectory = nil; image = nil
+                summary = ""; runDirectory = nil; image = nil; regionImage = nil
                 runErrorSummary = ""
             }
         }
@@ -936,6 +1134,16 @@ struct ScenarioView: View {
                     .focused($chooseFolderFocused)
                     .scenarioHoverHighlight()
                 Text(model.root?.path ?? "Select notion-fixtures folder").font(.caption).textSelection(.enabled)
+                Button("Register baselines from run summary…") { model.chooseBaselineSummary() }
+                    .disabled(model.root == nil || model.busy)
+                    .scenarioHoverHighlight()
+                if !model.baselineRegistrationMessage.isEmpty {
+                    Text(model.baselineRegistrationMessage)
+                        .font(.caption)
+                        .foregroundStyle(model.baselineRegistrationMessage.contains("failed") ? .red : .secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
+                }
                 if !fixturePrompt.isEmpty {
                     Text(fixturePrompt).font(.caption).foregroundStyle(.red)
                 }
@@ -1017,6 +1225,9 @@ struct ScenarioView: View {
                         }
                     }
                     .onChange(of: model.selected) { _, _ in capturePrompt = "" }
+                Text("Capture uses the focused Notion page when it matches one ready Fixture.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 if !capturePrompt.isEmpty || model.newIdIssue != nil {
                     let issue = capturePrompt.isEmpty ? model.newIdIssue! : capturePrompt
                     Text(issue)
@@ -1108,7 +1319,7 @@ struct ScenarioView: View {
                                     .scenarioHoverHighlight()
                             }
                         }
-                        Text("Document: \(model.lastRunFixtureId) · Scenario: \(model.lastRunScenarioId)\(model.lastRunScenarioVersion.map { " · v\($0)" } ?? "")")
+                        Text("Fixture: \(model.lastRunFixtureId.isEmpty ? "—" : model.lastRunFixtureId) · Scenario: \(model.lastRunScenarioId)\(model.lastRunScenarioVersion.map { " · v\($0)" } ?? "")")
                             .font(.caption).textSelection(.enabled)
                         if !model.lastRunStartedAt.isEmpty || !model.lastRunId.isEmpty {
                             Text([model.lastRunTimeLabel.isEmpty ? nil : "Started: \(model.lastRunTimeLabel)",
@@ -1152,7 +1363,7 @@ struct ScenarioView: View {
                         if model.lastRunOperation == "apply", let saved = model.savedCaptureImage, let applied = model.image {
                             Text(model.screenshotComparison).font(.caption).bold()
                             HStack(alignment: .top, spacing: 10) {
-                                comparisonThumbnail(saved, label: "Saved capture · v\(model.lastRunScenarioVersion ?? 0)", time: model.savedCaptureTimeLabel) {
+                                comparisonThumbnail(saved, label: "Reference capture · v\(model.lastRunScenarioVersion ?? 0)", time: model.savedCaptureTimeLabel) {
                                     showComparisonWindow(saved: saved, applied: applied)
                                 }
                                 Divider()
@@ -1162,7 +1373,7 @@ struct ScenarioView: View {
                             }
                         } else if let image = model.image {
                             if model.lastRunOperation == "apply" {
-                                Text("No saved capture screenshot is available for this scenario version.")
+                                Text("No reference capture screenshot is available for this scenario version.")
                                     .font(.caption).foregroundStyle(.secondary)
                             }
                             Text("Screenshot from this run\(model.screenshotTimeLabel.isEmpty ? "" : " · \(model.screenshotTimeLabel)")")
@@ -1177,6 +1388,13 @@ struct ScenarioView: View {
                                 .font(.caption).foregroundStyle(.secondary)
                         }
                     }.tabItem { Text("Screenshot") }
+                    if let region = model.regionImage {
+                        VStack(alignment:.leading,spacing:8) {
+                            Text("Selected region from this run").font(.caption).foregroundStyle(.secondary)
+                            Image(nsImage:region).resizable().scaledToFit()
+                                .accessibilityLabel("Selected region from latest run")
+                        }.tabItem { Text("Selected region") }
+                    }
                 }.frame(minHeight: 250)
             }.padding().frame(minWidth: 620)
         }

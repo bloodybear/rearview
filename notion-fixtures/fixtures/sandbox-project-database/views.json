@@ -1,0 +1,163 @@
+[
+  {
+    "name": "表：一行で省略",
+    "type": "table",
+    "sorts": [
+      {
+        "property": "見積時間",
+        "direction": "ascending"
+      }
+    ],
+    "configuration": {
+      "type": "table",
+      "wrap_cells": false,
+      "properties": [
+        {
+          "property_id": "件名",
+          "visible": true,
+          "width": 180,
+          "wrap": false
+        },
+        {
+          "property_id": "備考",
+          "visible": true,
+          "width": 240,
+          "wrap": false
+        },
+        {
+          "property_id": "状態",
+          "visible": true
+        },
+        {
+          "property_id": "優先度",
+          "visible": true
+        },
+        {
+          "property_id": "予定",
+          "visible": true
+        },
+        {
+          "property_id": "参照先",
+          "visible": true,
+          "width": 220
+        }
+      ]
+    }
+  },
+  {
+    "name": "ボード：状態ごとのカード",
+    "type": "board",
+    "configuration": {
+      "type": "board",
+      "group_by": {
+        "type": "status",
+        "property_id": "状態",
+        "group_by": "group",
+        "sort": {
+          "type": "manual"
+        },
+        "hide_empty_groups": false
+      },
+      "properties": [
+        {
+          "property_id": "優先度",
+          "visible": true
+        }
+      ]
+    }
+  },
+  {
+    "name": "ギャラリー：長い見出し",
+    "type": "gallery",
+    "configuration": {
+      "type": "gallery",
+      "cover": {
+        "type": "page_content"
+      },
+      "cover_size": "medium",
+      "properties": [
+        {
+          "property_id": "状態",
+          "visible": true
+        },
+        {
+          "property_id": "分類",
+          "visible": true
+        },
+        {
+          "property_id": "備考",
+          "visible": true,
+          "wrap": true
+        }
+      ]
+    }
+  },
+  {
+    "name": "タイムライン：期間と重なり",
+    "type": "timeline",
+    "configuration": {
+      "type": "timeline",
+      "date_property_id": "予定",
+      "show_table": true,
+      "preference": {
+        "zoom_level": "month",
+        "center_timestamp": 1791849600000
+      },
+      "table_properties": [
+        {
+          "property_id": "件名",
+          "visible": true
+        },
+        {
+          "property_id": "状態",
+          "visible": true
+        }
+      ]
+    }
+  },
+  {
+    "name": "表：複数行で折り返し",
+    "type": "table",
+    "sorts": [
+      {
+        "property": "見積時間",
+        "direction": "ascending"
+      }
+    ],
+    "configuration": {
+      "type": "table",
+      "wrap_cells": true,
+      "properties": [
+        {
+          "property_id": "件名",
+          "visible": true,
+          "width": 300,
+          "wrap": true
+        },
+        {
+          "property_id": "備考",
+          "visible": true,
+          "width": 300,
+          "wrap": true
+        },
+        {
+          "property_id": "状態",
+          "visible": true
+        },
+        {
+          "property_id": "優先度",
+          "visible": true
+        },
+        {
+          "property_id": "予定",
+          "visible": true
+        },
+        {
+          "property_id": "参照先",
+          "visible": true,
+          "width": 220
+        }
+      ]
+    }
+  }
+]

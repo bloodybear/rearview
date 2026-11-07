@@ -1,6 +1,20 @@
 import AppKit
 import ApplicationServices
 
+enum NotionPageURL {
+    static func id(from raw: String) -> String? {
+        guard let components = URLComponents(string: raw),
+              ["app.notion.com", "www.notion.so", "notion.so", "www.notion.com"].contains(components.host ?? ""),
+              let tail = components.path.split(separator: "/").last else { return nil }
+        let compact = tail.filter { $0 != "-" }
+        guard compact.count >= 32 else { return nil }
+        let suffix = String(compact.suffix(32))
+        guard suffix.unicodeScalars.allSatisfy({ CharacterSet(charactersIn: "0123456789abcdefABCDEF").contains($0) }) else { return nil }
+        let formatted = "\(suffix.prefix(8))-\(suffix.dropFirst(8).prefix(4))-\(suffix.dropFirst(12).prefix(4))-\(suffix.dropFirst(16).prefix(4))-\(suffix.suffix(12))"
+        return UUID(uuidString: formatted)?.uuidString.lowercased()
+    }
+}
+
 // Public Accessibility API only. AXDOMIdentifier is intentionally never persisted.
 @MainActor
 final class Accessibility {
@@ -41,8 +55,12 @@ final class Accessibility {
     }
     func nodes(_ root: AXUIElement) -> [AXUIElement] {
         var result: [AXUIElement] = [], stack: [(AXUIElement, Int)] = [(root, 0)]
+        var visited: [CFHashCode: [AXUIElement]] = [:]
         let deadline = Date().addingTimeInterval(2)
         while let (e, depth) = stack.popLast(), result.count < 3500, Date() < deadline {
+            let hash = CFHash(e)
+            if visited[hash]?.contains(where: { CFEqual($0, e) }) == true { continue }
+            visited[hash, default: []].append(e)
             result.append(e)
             if depth < 40 { stack.append(contentsOf: children(e).reversed().map { ($0, depth + 1) }) }
         }
@@ -61,12 +79,13 @@ final class Accessibility {
         try set(window, "AXPosition", AXValueCreate(.cgPoint, &point)!)
         try set(window, "AXSize", AXValueCreate(.cgSize, &size)!)
     }
-    func isPage(_ web: AXUIElement, pageId: String) -> Bool {
+    func pageID(_ web: AXUIElement) -> String? {
         let raw = (get(web, "AXURL") as? URL)?.absoluteString ?? text(web, "AXURL")
-        guard let url = URL(string: raw), ["app.notion.com", "www.notion.so", "notion.so", "www.notion.com"].contains(url.host ?? "") else { return false }
-        let tail = url.path.split(separator: "/").last.map(String.init) ?? ""
-        let wanted = pageId.replacingOccurrences(of: "-", with: "").lowercased()
-        return tail.replacingOccurrences(of: "-", with: "").lowercased().hasSuffix(wanted)
+        return NotionPageURL.id(from: raw)
+    }
+    func isPage(_ web: AXUIElement, pageId: String) -> Bool {
+        guard let actual = pageID(web), let wanted = UUID(uuidString: pageId)?.uuidString.lowercased() else { return false }
+        return actual == wanted
     }
     func targets(pageId: String) -> [(AXUIElement, AXUIElement)] {
         var result: [(AXUIElement, AXUIElement)] = []
@@ -74,6 +93,25 @@ final class Accessibility {
             for web in nodes(window) where text(web, "AXRole") == "AXWebArea" && isPage(web, pageId: pageId) { result.append((window, web)) }
         }
         return result
+    }
+    func focusedTarget() throws -> (window: AXUIElement, web: AXUIElement, pageId: String) {
+        guard let raw = get(app, "AXFocusedWindow"), CFGetTypeID(raw) == AXUIElementGetTypeID() else {
+            throw ScenarioFailure("current_page_unavailable", "Notion has no focused page window")
+        }
+        let window = raw as! AXUIElement
+        guard (get(app, "AXWindows") as? [AXUIElement] ?? []).contains(where: { CFEqual($0, window) }) else {
+            throw ScenarioFailure("current_page_unavailable", "Notion's focused page window is unavailable")
+        }
+        let pages = nodes(window).compactMap { web -> (AXUIElement, String)? in
+            guard text(web, "AXRole") == "AXWebArea", let pageId = pageID(web) else { return nil }
+            return (web, pageId)
+        }
+        guard pages.count == 1, let page = pages.first else {
+            let code = pages.isEmpty ? "current_page_unavailable" : "current_page_ambiguous"
+            let detail = pages.isEmpty ? "Could not read a Notion page URL from the focused window" : "The focused window exposes multiple Notion pages"
+            throw ScenarioFailure(code, detail)
+        }
+        return (window, page.0, page.1)
     }
     func editor(_ web: AXUIElement) -> AXUIElement? {
         nodes(web).first { classes($0).contains("whenContentEditable") }
@@ -91,8 +129,11 @@ final class Accessibility {
         nodes(root).filter { text($0, "AXRole") == "AXTextArea" && classes($0).contains("notranslate") }
     }
     func matching(_ anchor: Anchor, in root: AXUIElement) -> [AXUIElement] {
-        leaves(root).filter { e in
-            guard text(e, "AXValue") == anchor.text else { return false }
+        let editable = leaves(root).filter { text($0, "AXValue") == anchor.text }
+        let candidates = editable.isEmpty ? nodes(root).filter {
+            ["AXStaticText", "AXCell", "AXColumn", "AXButton"].contains(text($0, "AXRole")) && label($0) == anchor.text
+        } : editable
+        return candidates.filter { e in
             var current: AXUIElement? = e
             var blockMatches = anchor.blockClass == nil, ancestorMatches = anchor.ancestorText == nil
             for _ in 0..<15 {
@@ -107,7 +148,14 @@ final class Accessibility {
         }
     }
     func unique(_ anchor: Anchor, in root: AXUIElement) throws -> AXUIElement? {
-        let hits = matching(anchor, in: root)
+        let candidates = matching(anchor, in: root)
+        let hits = candidates.filter { candidate in
+            !candidates.contains { other in !CFEqual(candidate, other) && contains(candidate, other) }
+        }
+        // Sticky headers may retain an offscreen clone of one authored label.
+        // A unique visible instance is a deterministic navigation target.
+        let visible = hits.filter { frame($0).map { $0.width > 0 && $0.height > 0 } ?? false }
+        if visible.count == 1 { return visible[0] }
         guard hits.count <= 1 else { throw ScenarioFailure("ambiguous_anchor", "More than one loaded element matches: \(anchor.text.prefix(60))") }
         return hits.first
     }
@@ -118,21 +166,29 @@ final class Accessibility {
             event?.post(tap: .cghidEventTap)
         }
     }
-    func click(_ e: AXUIElement) throws {
+    func click(_ e: AXUIElement, flags: CGEventFlags = []) throws {
         guard let r = frame(e), r.width > 0, r.height > 0 else { throw ScenarioFailure("unsupported", "Control has no clickable frame") }
         let point = CGPoint(x: r.midX, y: r.midY)
         for type in [CGEventType.leftMouseDown, .leftMouseUp] {
             let event = CGEvent(mouseEventSource: inputSource, mouseType: type, mouseCursorPosition: point, mouseButton: .left)
+            event?.flags = flags
             event?.post(tap: .cghidEventTap)
         }
     }
+    func rightClick(_ element: AXUIElement) throws {
+        guard let frame = frame(element), frame.width > 0, frame.height > 0 else { throw ScenarioFailure("unsupported", "Context menu target has no visible frame") }
+        let point = CGPoint(x: frame.midX, y: frame.midY)
+        for type in [CGEventType.rightMouseDown, .rightMouseUp] {
+            CGEvent(mouseEventSource: inputSource, mouseType: type, mouseCursorPosition: point, mouseButton: .right)?.post(tap: .cghidEventTap)
+        }
+    }
     @discardableResult
-    func wheel(_ delta: Int, viewport: AXUIElement) throws -> CGPoint {
+    func wheel(_ delta: Int, viewport: AXUIElement, horizontal: Bool = false) throws -> CGPoint {
         guard let rect = frame(viewport), rect.width > 0, rect.height > 0 else {
             throw ScenarioFailure("unsupported", "Cannot read body viewport for scroll input")
         }
         let system = AXUIElementCreateSystemWide()
-        let candidates: [(CGFloat, CGFloat)] = [(0.5,0.5),(0.12,0.5),(0.88,0.5),(0.5,0.8),(0.25,0.25),(0.75,0.75)]
+        let candidates: [(CGFloat, CGFloat)] = [(0.12,0.5),(0.88,0.5),(0.5,0.1),(0.5,0.5),(0.5,0.8),(0.25,0.25),(0.75,0.75)]
         var destination: CGPoint?
         for (x,y) in candidates {
             let point = CGPoint(x: rect.minX + rect.width*x, y: rect.minY + rect.height*y)
@@ -146,6 +202,11 @@ final class Accessibility {
             for _ in 0..<40 {
                 guard let current = node else { break }
                 if CFEqual(current, viewport) { destination = point; break }
+                // Timeline canvases can consume a vertical wheel as a saved
+                // date pan. Tables still need body scroll input when their
+                // rows fill the viewport after a reverse boundary probe.
+                if !horizontal, classes(viewport).contains("vertical"),
+                   classes(current).contains(where: { $0.contains("timeline") }) { break }
                 node = parent(current)
             }
             if destination != nil { break }
@@ -156,10 +217,47 @@ final class Accessibility {
         CGWarpMouseCursorPosition(point)
         let move = CGEvent(mouseEventSource: inputSource, mouseType: .mouseMoved, mouseCursorPosition: point, mouseButton: .left)
         move?.flags = .maskNonCoalesced; move?.post(tap: .cghidEventTap)
-        let event = CGEvent(scrollWheelEvent2Source: inputSource, units: .pixel, wheelCount: 1, wheel1: Int32(delta), wheel2: 0, wheel3: 0)
+        let event = CGEvent(scrollWheelEvent2Source: inputSource, units: .pixel, wheelCount: horizontal ? 2 : 1,
+                            wheel1: horizontal ? 0 : Int32(delta), wheel2: horizontal ? Int32(delta) : 0, wheel3: 0)
         event?.flags = .maskNonCoalesced; event?.location = point
         event?.post(tap: .cghidEventTap)
         return point
+    }
+    func url(_ element: AXUIElement) -> String {
+        (get(element, "AXURL") as? URL)?.absoluteString ?? text(element, "AXURL")
+    }
+    func label(_ element: AXUIElement) -> String {
+        for name in ["AXTitle", "AXDescription", "AXValue"] {
+            let value = text(element, name)
+            if !value.isEmpty { return value }
+        }
+        return ""
+    }
+    func contains(_ ancestor: AXUIElement, _ element: AXUIElement) -> Bool {
+        var node: AXUIElement? = element
+        for _ in 0..<45 {
+            guard let current = node else { return false }
+            if CFEqual(current, ancestor) { return true }
+            node = parent(current)
+        }
+        return false
+    }
+    func move(_ point: CGPoint) {
+        CGWarpMouseCursorPosition(point)
+        CGEvent(mouseEventSource: inputSource, mouseType: .mouseMoved, mouseCursorPosition: point, mouseButton: .left)?.post(tap: .cghidEventTap)
+    }
+    func drag(from: CGPoint, to: CGPoint) async throws {
+        move(from)
+        try await Task.sleep(for: .milliseconds(60))
+        CGEvent(mouseEventSource: inputSource, mouseType: .leftMouseDown, mouseCursorPosition: from, mouseButton: .left)?.post(tap: .cghidEventTap)
+        try await Task.sleep(for: .milliseconds(60))
+        for index in 1...12 {
+            let fraction = Double(index) / 12
+            let point = CGPoint(x: from.x + (to.x - from.x) * fraction, y: from.y + (to.y - from.y) * fraction)
+            CGEvent(mouseEventSource: inputSource, mouseType: .leftMouseDragged, mouseCursorPosition: point, mouseButton: .left)?.post(tap: .cghidEventTap)
+            try await Task.sleep(for: .milliseconds(16))
+        }
+        CGEvent(mouseEventSource: inputSource, mouseType: .leftMouseUp, mouseCursorPosition: to, mouseButton: .left)?.post(tap: .cghidEventTap)
     }
     func menu(_ title: String) throws {
         guard let bar = get(app, "AXMenuBar"), CFGetTypeID(bar) == AXUIElementGetTypeID() else { throw ScenarioFailure("unsupported", "No application menu") }

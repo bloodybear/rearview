@@ -1,0 +1,52 @@
+{
+  "schemaVersion": 2,
+  "id": "media-i01",
+  "name": "Media I01",
+  "version": 1,
+  "fixtureId": "media-diagrams",
+  "fixtureVersion": "896a5a3cf10dec24a51e3e57236f23e1c55ee409c4f43ff9a57068517e14cfc2",
+  "fixtureVersions": {
+    "media-diagrams": "896a5a3cf10dec24a51e3e57236f23e1c55ee409c4f43ff9a57068517e14cfc2"
+  },
+  "state": {
+    "coordinateSystem": "screen-top-left-points",
+    "window": {
+      "x": 0,
+      "y": 60,
+      "width": 1024,
+      "height": 700
+    },
+    "zoomPercent": 100,
+    "sidebar": {
+      "mode": "closed"
+    },
+    "presentation": {
+      "mode": "none"
+    },
+    "focus": {
+      "mode": "clear"
+    },
+    "scrolls": [
+      {
+        "scope": "main",
+        "axis": "y",
+        "mode": "anchor",
+        "anchor": {
+          "text": "I01｜日本語の分岐図と、その前後の文章"
+        },
+        "offset": 80
+      }
+    ],
+    "required": [
+      "target",
+      "window",
+      "zoom",
+      "sidebar",
+      "focus",
+      "screenshot",
+      "finalState",
+      "presentation",
+      "scroll.0"
+    ]
+  }
+}

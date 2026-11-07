@@ -46,6 +46,8 @@ cd notion-fixtures
 ```sh
 ./fixture ensure                       # 모든 Fixture 생성 / 재사용 / 복구
 ./fixture ensure rich-document         # 하나만 처리
+./fixture ensure --sandbox             # 화면 표시 변경을 허용한 두 Sandbox만 처리
+./fixture ensure sandbox-project-database # Sandbox 하나만 처리
 ./fixture reset                        # 모든 Fixture 강제 복구
 ./fixture reset project-database       # 하나만 강제 복구
 ./fixture list                         # 로컬 ID, URL, 마지막 완료 상태
@@ -178,3 +180,22 @@ API 서버 검증 성공은 실제 Notion 화면이나 AX 트리 검증을 대�
 독립 macOS 앱과 `fixture scenario` CLI로 창·스크롤·토글 등의 상태를 저장하고 재현한다. 사용법과 실제 지원 범위는 [SCREEN_SCENARIOS.md](SCREEN_SCENARIOS.md)를 참고한다. 기존 문서 생성·복구와 별도로 실행되며 원문을 수정하지 않는다.
 
 앱의 버튼별 사용법과 저장 위치는 [NotionScenarios 화면 사용법](NOTION_SCENARIOS_GUIDE.md)을 참고한다.
+
+## 문서 간 참조 Fixture
+
+`page-navigation`은 기존 여섯 Fixture를 페이지 mention으로 연결하는 일본어 배경 문서다.
+모든 문서는 관리 루트의 직계 자식으로 유지된다. 관리 루트 캡처나 실제 하위 페이지 생성은 추가하지 않는다.
+
+```sh
+./fixture ensure page-navigation
+```
+
+문서 manifest의 `pageLinks`는 `after`(본문의 고유한 최상위 문단)와 `fixtureId`를 가진 배열이다.
+참조 대상은 먼저 일반 ensure로 준비하며, reset의 강제 복구는 명시한 대상에만 적용한다.
+정의 해시에는 링크 정의를 포함하고 실제 페이지 ID는 로컬 `resolvedLinks`에 기록한다.
+재사용 시 실제 mention 대상도 관측하고, 복구 시 본문을 교체한 뒤 링크를 재삽입한다.
+순환 참조와 존재하지 않는 Fixture 참조는 생성 전에 거부한다.
+
+화면 상태는 시나리오 v2의 `presentation`, `sidebar`, `scrolls`로 지정한다.
+공유 정의와 검증 항목은 `scenario-catalog.json`에, 실제 실행 증거는 로컬 `runs/`에 둔다.
+정의 생성과 실화면 재현 검증은 별도 단계이며, 카탈로그에 있는 것만으로 검증 완료를 뜻하지 않는다.

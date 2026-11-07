@@ -18,4 +18,6 @@ notion-fixtures/**/__pycache__/
 
 # Local screen scenario runs (screenshots and AX observations)
 notion-fixtures/runs/
+notion-fixtures/captures/
 notion-fixtures/scenarios/**/.scenario-*
+notion-fixtures/scenarios/**/*test*.json

@@ -13,21 +13,66 @@ open dist/NotionScenarios.app --args --root "$PWD/notion-fixtures"
 
 macOS 15 이상, Swift 6.2 이상, 기존 `ntn login`과 생성 완료된 Fixture가 필요하다. 패키징은 로컬 `Rearview Development` 인증서를 사용한다. 다른 인증서는 `NOTION_SCENARIOS_SIGNING_IDENTITY`로 지정한다. 앱 자체는 Rearview와 독립된 bundle ID를 사용하며, 개발용 로컬 서명이다.
 
-시스템 설정 → 개인정보 보호 및 보안에서 실행 주체의 **손쉬운 사용**과 **화면 및 시스템 오디오 녹음** 권한이 필요하다. 권한을 자동으로 부여하거나 우회하지 않는다. CLI를 터미널에서 실행할 때는 macOS가 해당 터미널을 실행 주체로 표시할 수도 있다.
+시스템 설정 → 개인정보 보호 및 보안에서 **NotionScenarios**의 **손쉬운 사용**과 **화면 및 시스템 오디오 녹음** 권한이 필요하다. 권한을 자동으로 부여하거나 우회하지 않는다. CLI는 패키징된 앱을 LaunchServices로 실행해 GUI와 같은 앱 권한을 사용한다. 번들 내부 바이너리를 직접 실행하면 터미널의 권한으로 판정될 수 있다.
 
-앱에서 `notion-fixtures` 폴더를 선택하고 문서별 시나리오를 고른다. 시나리오 행의 복사 아이콘은 저장본을 새 ID와 이름으로 즉시 복제하고, 재생 아이콘은 해당 저장본을 적용하며, 휴지통 아이콘은 삭제한다. 삭제 후 8초 동안 목록의 **Undo**로 복원할 수 있다. 새 화면 상태는 ID를 입력하고 **Capture as new**를 눌러 저장한다. JSON 편집기에서 값을 수정하고 **Save**를 누르면 버전이 증가한다. 편집 중인 시나리오는 저장 전까지 적용·삭제할 수 없고, 저장하지 않은 JSON 수정 중에는 복제나 화면 캡처를 시작할 수 없다. 진행 탭은 항목별 상태·오류·시간, 결과 탭은 요청/관측 JSON, 스크린샷 탭은 실제 캡처를 보여준다.
+앱에서 `notion-fixtures` 폴더를 선택하면 모든 Fixture가 제목·폴더 ID별 접이식 그룹으로 표시되고, 각 그룹의 시나리오는 이름순으로 나온다. 시나리오 행의 복사 아이콘은 저장본을 새 ID와 이름으로 즉시 복제하고, 재생 아이콘은 해당 저장본을 적용하며, 휴지통 아이콘은 삭제한다. 삭제 후 8초 동안 목록의 **Undo**로 복원할 수 있다. 새 화면 상태는 ID를 입력하고 **Capture as new**를 누르면 현재 포커스된 Notion 페이지에 맞는 Fixture로 저장된다. 이 페이지가 선택한 폴더에 준비 완료된 Fixture 하나와 일치하지 않으면 저장하지 않는다. JSON 편집기에서 값을 수정하고 **Save**를 누르면 버전이 증가한다. 편집 중인 시나리오는 저장 전까지 적용·삭제할 수 없고, 저장하지 않은 JSON 수정 중에는 복제나 화면 캡처를 시작할 수 없다. 진행 탭은 항목별 상태·오류·시간, 결과 탭은 요청/관측 JSON, 스크린샷 탭은 실제 캡처를 보여준다.
 
 ```sh
 ./notion-fixtures/fixture scenario list
 ./notion-fixtures/fixture scenario apply layout-default --json
 ./notion-fixtures/fixture scenario capture layout-stress --id my-current-screen --json
+./notion-fixtures/fixture scenario capture-current --id my-current-screen --json
 ./notion-fixtures/fixture scenario save /path/to/scenario.json
 ./notion-fixtures/fixture scenario delete my-current-screen
 ```
 
-CLI 기본 실행 파일은 `dist/NotionScenarios.app/Contents/MacOS/NotionScenarios`다. 개발 중에는 `NOTION_SCENARIO_EXECUTABLE`로 다른 빌드를 지정할 수 있다. GUI와 CLI 모두 같은 Python 사전 검사와 Swift 실행 모듈을 사용한다.
+CLI 기본 실행 파일은 `dist/NotionScenarios.app/Contents/MacOS/NotionScenarios`다. 이 경로는 `/usr/bin/open -g -n -W <앱 번들> --args …`로 실행한다. `-g`는 보조 앱이 Notion의 포커스를 빼앗지 않도록 한다. 개발 중에는 `NOTION_SCENARIO_EXECUTABLE`로 다른 빌드를 지정할 수 있다. 앱 번들이 아닌 바이너리는 직접 실행하므로 해당 실행 주체의 권한이 필요하다. GUI와 CLI 모두 같은 Python 사전 검사와 Swift 실행 모듈을 사용한다.
 
 ## 정의와 좌표
+
+새 카탈로그는 `schemaVersion: 2`를 사용하며 기존 v1도 읽는다. v2는 `fixtureVersions`에 참여하는 문서의 해시를 고정한다. `page-navigation`은 여섯 링크 대상도 포함한다. 실제 Notion ID는 공유 JSON에 저장하지 않고 실행 시 로컬 상태에서 해석한다.
+
+| v2 상태 | 요청 |
+| --- | --- |
+| `sidebar` | `mode`: `closed` / `pinned` / `floating`, 선택적 `width`(pt) |
+| `presentation` | `mode`: `none` / `side` / `center` / `full`, `fixtureId`, DB 레코드는 0부터 시작하는 `rowIndex`, side의 `widthFraction` |
+| `scrolls` | `scope`: `main` / `preview` / `database` / `code` / `table` / `sidebar`, `axis`: `x` / `y`, `mode`: `start` / `end` / `anchor` |
+| `tabs` | 문서 내 탭의 `anchor`, `selectedText`, 선택 후 확인할 `contentAnchor`, `scope` |
+| `blockDisplays` | Mermaid 블록의 Source/Diagram 표시 상태. 원본 fixture는 건드리지 않고 `sandbox-media-diagrams`에서 재생한다. |
+| `captureRegion` | 창 내부 기준 `rect`, 또는 `scope` 전체 viewport, 또는 `anchor`의 `cutEdge`와 `fraction`. `target: followingImage`는 앵커 다음 이미지의 실제 AX 영역을 사용 |
+| `overlay` | `kind`: `menu` / `tooltip`, 대상 컨트롤의 `text`, 선택적 `expectedText` |
+
+anchor 스크롤은 해당 축의 viewport 시작점에서 `offset`만큼 떨어진 위치에 맞춘다. 음수는 텍스트 일부를 viewport 밖으로 보낸다. 긴 한 문단의 일부를 맞출 때는 UTF-16 단위 `rangeLocation` / `rangeLength`를 함께 지정한다. 여러 scope를 사용해 배경과 미리보기를 독립적으로 스크롤한다. 요청한 상태를 필수 항목에서 빼서 성공 처리할 수 없도록 v2 검사에서 강제한다.
+
+캡처 대상은 실행 시작에 선택한 Notion 창 하나다. `screen.png`는 전체 창이며 다른 창의 가림을 포함하지 않는다. `region.png`는 그 이미지에서 선택 영역을 별도로 잘라 저장한다. 창 프레임, 실제 픽셀 크기, 축별 points→pixels 배율을 결과에 기록한다. 영역 안에 보이는 사이드바·도구·문서·미리보기 모두 후속 AX 평가 대상이다.
+
+시나리오 생성과 반복 재생:
+
+```sh
+python3 -u notion-fixtures/tests/live_scenarios.py --suite core --repeat 2 --return-pass --sequences
+python3 -u notion-fixtures/tests/live_scenarios.py --suite extended --repeat 2 --return-pass
+python3 -u notion-fixtures/tests/live_scenarios.py --suite legacy --repeat 2 --return-pass
+./notion-fixtures/fixture ensure --sandbox
+python3 notion-fixtures/tools/review_scenario_runs.py notion-fixtures/runs/<실행-요약>.json
+```
+
+`scenario-catalog.json`은 사례의 목적·확인 항목·상태 전환 순서를 담는다. 실행 요약의 `replay_verified`는 필수 화면 상태와 문서 무변경 검사를 통과했다는 뜻이다. `visualReview: pending`은 스크린샷 검토가 남았다는 뜻이며 AX 원문·좌표 정확성의 합격 판정이 아니다. 수치 줌 readback만 예외적으로 미지원 상태를 허용하며, 실제 크기 명령을 보낸 증거가 필요하다. 다른 필수 상태 실패는 허용하지 않는다.
+
+재생 시나리오 전체를 한 번 실행해 기준 이미지를 만들려면 먼저 `./notion-fixtures/fixture ensure --sandbox`로 두 샌드박스만 준비한 뒤 `python3 -u notion-fixtures/tests/live_scenarios.py --suite all --repeat 1 --continue-on-error`를 실행한다. 앱의 **Register baselines from run summary…** 버튼에서 생성된 요약 JSON을 선택하면 검증된 캡처를 등록한다. Mermaid와 Timeline 시나리오는 각각 `sandbox-media-diagrams`, `sandbox-project-database`를 사용한다. 기본 `fixture ensure`에도 두 샌드박스가 포함되며, `--sandbox`는 샌드박스만 선택한다. 샌드박스는 생성 시 페이지·DB·Data Source·레코드·뷰 ID를 기록하고 수정 시각은 재사용 판단에서 제외한다. 표시 상태 변경은 샌드박스 안에서만 허용한다. 앱의 **Capture as new**와 일괄 등록 기능은 검증된 `screen.png`와 동일한 형식의 `manifest.json`을 `captures/<fixture-id>/<scenario-id>/v<version>/`에 저장한다. 이후 앱에서 같은 버전의 Apply를 실행하면 기준 캡처와 최신 이미지를 나란히 보여주고 픽셀 차이를 계산한다. 실패 실행은 등록하지 않는다. 별도 인덱스 파일은 만들거나 읽지 않는다.
+
+Mermaid 표시 전환과 Timeline 이동은 원본 fixture의 저장 상태를 바꿀 수 있다. 이 8개 시나리오는 복제된 두 샌드박스에서만 실행하며, 원본 fixture의 수정 시각이나 콘텐츠는 변경하지 않는다. 샌드박스 ID는 일반 fixture와 함께 `state.json`에서 재사용하므로 시나리오마다 새 페이지나 DB가 쌓이지 않는다. 샌드박스에는 저장된 표시 설정 변경을 허용하므로 `ensure`는 해당 fixture들의 ID와 객체 구성을 확인하고 수정 시각은 검사하지 않는다.
+
+검토 도구는 `runs/review/index.html`에 전체 창·선택 영역·요청 상태를 나란히 연결한다. 실제 PNG를 확인한 실행만 `--record <run-id> --verdict pass|fail --note '<구체적인 관찰>'`로 기록한다. 재생 실패는 육안 검토에서 pass로 바꿀 수 없다. 실행 요약에는 앱 바이너리와 카탈로그의 SHA-256, 각 시나리오의 SHA-256을 기록하며 PNG 헤더의 실제 크기도 결과 메타데이터와 대조한다.
+
+Notion의 Actions 메뉴는 배경 AX 노드를 숨긴다. 메뉴 사례는 열기 전 `backgroundState`를 필수로 검증하고, 최종 단계에서는 같은 창과 열린 메뉴를 확인한다. 숨겨진 배경 노드의 최종 AX 가시성을 검증했다고 표시하지 않는다. AX에 노출되지 않는 툴팁은 `expectedText`가 있을 때 선택 창의 픽셀을 Apple Vision으로 읽어 확인하며, 최종 판정은 저장된 `screen.png`에서 같은 문구를 다시 확인한다. 이는 표시 조건 검증이며 Rearview의 AX 추출기를 구현하는 것은 아니다.
+
+전체 완료 여부는 현재 정의와 실행 요청의 해시까지 대조해 확인한다:
+
+```sh
+python3 notion-fixtures/tools/audit_scenario_coverage.py notion-fixtures/runs/<요약1>.json notion-fixtures/runs/<요약2>.json --require-current-build
+```
+
+사례마다 반복 실행·다른 상태 후 재방문·명시적 스크린샷 검토가 있어야 완료로 집계한다. 상태 전환 시퀀스도 별도로 확인한다. 오래된 정의나 다른 빌드의 결과를 최신 검증으로 혼동하지 않도록 미충족 항목을 `runs/coverage.json`과 같은 이름의 Markdown 파일에 남긴다.
 
 `scenarios/<fixture-id>/<scenario-id>.json`은 Git으로 공유한다. 실제 페이지 ID는 기존 로컬 `state.json`에서 조회한다. `fixtureVersion`은 기존 문서 정의의 `source_hash` SHA-256이며, 변경되면 묵시적으로 재지정하지 않고 중단한다. 기존 시나리오를 검토하고 해당 해시를 갱신해 저장한다. 원격 문서가 baseline과 다르거나 관리 루트 밖으로 이동해도 재현하지 않는다.
 
@@ -61,13 +106,13 @@ CLI 기본 실행 파일은 `dist/NotionScenarios.app/Contents/MacOS/NotionScena
 
 부분 잘림은 음수 오프셋으로 요청한다. 먼저 동일 요소가 완전히 보이는 상태에서 높이를 측정하고, 잘린 상태의 하단과 측정 높이로 상단 오프셋을 계산한다. `observedGeometry`에 측정 당시 프레임, 최종 잘린 프레임과 viewport를 남긴다. 이는 실행 중 동일 요소의 기하 관측이며, 기대 텍스트 box 정답을 생성하는 기능이 아니다. 전체 높이를 측정하지 못하거나 목표 위치를 검증하지 못하면 성공 처리하지 않는다.
 
-토글은 `toggles: [{"anchor":{"text":"開く前に見えている見出し","blockClass":"notion-toggle-block"},"expanded":true}]`로 요청한다. 공개 AX의 disclosure 버튼 `AXExpanded`를 읽고 목표 상태와 다를 때만 누른다. 원문을 교체하지 않는다.
+토글은 `toggles: [{"anchor":{"text":"開く前に見えている見出し","blockClass":"notion-toggle-block"},"expanded":true}]`로 요청한다. 공개 AX의 disclosure 버튼 `AXExpanded`를 읽고 목표 상태와 다를 때만 `AXPress`를 시도한다. 0.75초 안에 상태가 바뀌지 않으면 현재 버튼의 접근성 프레임에 마우스 클릭을 보낸 뒤 상태를 다시 읽는다. 토글 단계는 최대 6초 동안 한 번만 시도해, 상태가 바뀌지 않을 때 동작을 반복하지 않는다. 원문은 교체하지 않는다.
 
 포커스는 `clear` 또는 `selection`이다. `selection`은 `anchor`, `location`, `length`를 가지며 오프셋은 원본 한 텍스트 요소 안의 UTF-16 code units다. 여러 블록에 걸친 선택은 지원하지 않는다. 선택 적용 후 스크롤이 달라지면 최종 검증이 실패한다.
 
 ## 관측, 결과와 제약
 
-대상 URL과 창을 확인한 후 창·줌·사이드바·토글을 적용하고, 레이아웃 안정화를 관측한 뒤 스크롤과 포커스를 맞춘다. 입력 직후 성공으로 기록하지 않고 상태를 연속 관측한다. 일반 상태 적용 단계는 최대 10초, timeout 재시도는 최대 2회다. 현재 화면 저장은 선택한 Fixture의 페이지를 한 번 조회하며, 찾지 못하면 다른 Fixture를 탐색하지 않고 즉시 실패한다. CLI 전체는 API 검사와 후처리를 포함해 120초 예산을 사용하며 native subprocess에도 남은 예산을 전달한다. 공개 AX 호출과 캡처가 반환하지 않으면 subprocess watchdog이 종료하고 실패를 기록한다.
+대상 URL과 창을 확인한 후 창·줌·사이드바·토글을 적용하고 레이아웃 안정화를 관측한 뒤 스크롤과 포커스를 맞춘다. 입력 직후 성공으로 기록하지 않고 상태를 연속 관측한다. 일반 상태 적용 단계는 최대 10초, timeout 재시도는 최대 2회다. 토글 단계는 최대 6초 동안 한 번만 시도한다. `capture-current`는 Notion의 포커스된 창에서 페이지 URL을 읽고, 선택 폴더의 `state.json`에서 해당 페이지 ID가 등록된 준비 완료 Fixture를 하나만 찾는다. 미등록·중복 등록·미준비·Fixture 정의 변경은 저장 전에 실패하며, 네이티브 실행 직전에도 페이지 ID를 다시 확인한다. 기존 `capture <fixture-id>` CLI는 지정한 Fixture를 대상으로 계속 사용할 수 있다. CLI 전체는 API 검사와 후처리를 포함해 120초 예산을 사용하며 native subprocess에도 남은 예산을 전달한다. 공개 AX 호출과 캡처가 반환하지 않으면 subprocess watchdog이 종료하고 실패를 기록한다.
 
 - **verified**: 모든 필수 항목이 검증됐고 실행한 항목에 실패·미지원이 없다.
 - **partial**: 일부 항목은 검증됐으나 실패·미지원·확인 불가능한 항목이 남았다.

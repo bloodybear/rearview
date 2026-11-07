@@ -1,0 +1,65 @@
+{
+  "schemaVersion": 2,
+  "id": "layout-tab-a",
+  "name": "Layout Tab A",
+  "version": 1,
+  "fixtureId": "layout-stress",
+  "fixtureVersion": "e4fb079951259477037a1b889db20cdaa4b345f6c8e9a93df3ba47d5a3a9bc8c",
+  "fixtureVersions": {
+    "layout-stress": "e4fb079951259477037a1b889db20cdaa4b345f6c8e9a93df3ba47d5a3a9bc8c"
+  },
+  "state": {
+    "coordinateSystem": "screen-top-left-points",
+    "window": {
+      "x": 0,
+      "y": 60,
+      "width": 1024,
+      "height": 700
+    },
+    "zoomPercent": 100,
+    "sidebar": {
+      "mode": "closed"
+    },
+    "presentation": {
+      "mode": "none"
+    },
+    "focus": {
+      "mode": "clear"
+    },
+    "scrolls": [
+      {
+        "scope": "main",
+        "axis": "y",
+        "mode": "anchor",
+        "anchor": {
+          "text": "L10｜非アクティブなタブ"
+        },
+        "offset": 80
+      }
+    ],
+    "tabs": [
+      {
+        "scope": "main",
+        "anchor": {
+          "text": "L10｜非アクティブなタブ"
+        },
+        "selectedText": "一番目",
+        "contentAnchor": {
+          "text": "L10-A｜一番目のタブだけにある文章です。"
+        }
+      }
+    ],
+    "required": [
+      "target",
+      "window",
+      "zoom",
+      "sidebar",
+      "focus",
+      "screenshot",
+      "finalState",
+      "presentation",
+      "scroll.0",
+      "tab.0"
+    ]
+  }
+}

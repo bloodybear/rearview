@@ -1,0 +1,3179 @@
+{
+  "schemaVersion": 1,
+  "cases": {
+    "navigation-default": {
+      "suite": "core",
+      "purpose": "[core] Navigation Default",
+      "visibilityChecks": [],
+      "sourceReferences": [],
+      "checks": [
+        "背景文書・基本画面が画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "layout-wrap-1024-closed": {
+      "suite": "core",
+      "purpose": "[core] Layout Wrap 1024 Closed",
+      "visibilityChecks": [
+        {
+          "scope": "main",
+          "text": "L01｜自然な折り返しと、文末の否定",
+          "expectation": "present"
+        }
+      ],
+      "sourceReferences": [
+        {
+          "scope": "main",
+          "fixtureId": "layout-stress",
+          "anchor": {
+            "text": "L01｜自然な折り返しと、文末の否定"
+          }
+        }
+      ],
+      "checks": [
+        "L01・幅1024・sidebar closedが画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "layout-wrap-1024-pinned": {
+      "suite": "core",
+      "purpose": "[core] Layout Wrap 1024 Pinned",
+      "visibilityChecks": [
+        {
+          "scope": "main",
+          "text": "L01｜自然な折り返しと、文末の否定",
+          "expectation": "present"
+        }
+      ],
+      "sourceReferences": [
+        {
+          "scope": "main",
+          "fixtureId": "layout-stress",
+          "anchor": {
+            "text": "L01｜自然な折り返しと、文末の否定"
+          }
+        }
+      ],
+      "checks": [
+        "L01・幅1024・sidebar pinnedが画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "layout-wrap-640-closed": {
+      "suite": "core",
+      "purpose": "[core] Layout Wrap 640 Closed",
+      "visibilityChecks": [
+        {
+          "scope": "main",
+          "text": "L01｜自然な折り返しと、文末の否定",
+          "expectation": "present"
+        }
+      ],
+      "sourceReferences": [
+        {
+          "scope": "main",
+          "fixtureId": "layout-stress",
+          "anchor": {
+            "text": "L01｜自然な折り返しと、文末の否定"
+          }
+        }
+      ],
+      "checks": [
+        "L01・幅640・sidebar closedが画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "layout-wrap-640-pinned": {
+      "suite": "core",
+      "purpose": "[core] Layout Wrap 640 Pinned",
+      "visibilityChecks": [
+        {
+          "scope": "main",
+          "text": "L01｜自然な折り返しと、文末の否定",
+          "expectation": "present"
+        }
+      ],
+      "sourceReferences": [
+        {
+          "scope": "main",
+          "fixtureId": "layout-stress",
+          "anchor": {
+            "text": "L01｜自然な折り返しと、文末の否定"
+          }
+        }
+      ],
+      "checks": [
+        "L01・幅640・sidebar pinnedが画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "navigation-sidebar-pinned-270": {
+      "suite": "core",
+      "purpose": "[core] Navigation Sidebar Pinned 270",
+      "visibilityChecks": [],
+      "sourceReferences": [],
+      "checks": [
+        "サイドバー pinned・幅270が画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "navigation-sidebar-pinned-320": {
+      "suite": "core",
+      "purpose": "[core] Navigation Sidebar Pinned 320",
+      "visibilityChecks": [],
+      "sourceReferences": [],
+      "checks": [
+        "サイドバー pinned・幅320が画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "navigation-sidebar-floating-270": {
+      "suite": "core",
+      "purpose": "[core] Navigation Sidebar Floating 270",
+      "visibilityChecks": [],
+      "sourceReferences": [],
+      "checks": [
+        "サイドバー floating・幅270が画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "navigation-peek-narrow": {
+      "suite": "core",
+      "purpose": "[core] Navigation Peek Narrow",
+      "visibilityChecks": [],
+      "sourceReferences": [],
+      "checks": [
+        "一般文書・サイドプレビュー narrowが画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "navigation-peek-wide": {
+      "suite": "core",
+      "purpose": "[core] Navigation Peek Wide",
+      "visibilityChecks": [],
+      "sourceReferences": [],
+      "checks": [
+        "一般文書・サイドプレビュー wideが画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "navigation-peek-layout-stress": {
+      "suite": "core",
+      "purpose": "[core] Navigation Peek Layout Stress",
+      "visibilityChecks": [],
+      "sourceReferences": [],
+      "checks": [
+        "一般文書プレビュー・layout-stressが画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "navigation-peek-long-reading": {
+      "suite": "core",
+      "purpose": "[core] Navigation Peek Long Reading",
+      "visibilityChecks": [],
+      "sourceReferences": [],
+      "checks": [
+        "一般文書プレビュー・long-readingが画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "navigation-background-middle": {
+      "suite": "core",
+      "purpose": "[core] Navigation Background Middle",
+      "visibilityChecks": [
+        {
+          "scope": "main",
+          "text": "N04｜参照する文書：long-reading",
+          "expectation": "present"
+        }
+      ],
+      "sourceReferences": [
+        {
+          "scope": "main",
+          "fixtureId": "page-navigation",
+          "anchor": {
+            "text": "N04｜参照する文書：long-reading"
+          }
+        }
+      ],
+      "checks": [
+        "独立スクロール・background-middleが画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "navigation-preview-middle": {
+      "suite": "core",
+      "purpose": "[core] Navigation Preview Middle",
+      "visibilityChecks": [
+        {
+          "scope": "preview",
+          "text": "R04｜一文の中で何度も変わる書式",
+          "expectation": "present"
+        }
+      ],
+      "sourceReferences": [
+        {
+          "scope": "preview",
+          "fixtureId": "rich-document",
+          "anchor": {
+            "text": "R04｜一文の中で何度も変わる書式"
+          }
+        }
+      ],
+      "checks": [
+        "独立スクロール・preview-middleが画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "navigation-both-middle": {
+      "suite": "core",
+      "purpose": "[core] Navigation Both Middle",
+      "visibilityChecks": [
+        {
+          "scope": "main",
+          "text": "N04｜参照する文書：long-reading",
+          "expectation": "present"
+        },
+        {
+          "scope": "preview",
+          "text": "R09｜左右の文章を混ぜない",
+          "expectation": "present"
+        }
+      ],
+      "sourceReferences": [
+        {
+          "scope": "main",
+          "fixtureId": "page-navigation",
+          "anchor": {
+            "text": "N04｜参照する文書：long-reading"
+          }
+        },
+        {
+          "scope": "preview",
+          "fixtureId": "rich-document",
+          "anchor": {
+            "text": "R09｜左右の文章を混ぜない"
+          }
+        }
+      ],
+      "checks": [
+        "独立スクロール・both-middleが画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "navigation-sidebar-peek": {
+      "suite": "core",
+      "purpose": "[core] Navigation Sidebar Peek",
+      "visibilityChecks": [],
+      "sourceReferences": [],
+      "checks": [
+        "サイドバーと一般文書の同時表示が画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "navigation-region-main": {
+      "suite": "core",
+      "purpose": "[core] Navigation Region Main",
+      "visibilityChecks": [],
+      "sourceReferences": [],
+      "checks": [
+        "mainだけを選択領域に含めるが画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "navigation-region-preview": {
+      "suite": "core",
+      "purpose": "[core] Navigation Region Preview",
+      "visibilityChecks": [],
+      "sourceReferences": [],
+      "checks": [
+        "previewだけを選択領域に含めるが画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "layout-region-left": {
+      "suite": "core",
+      "purpose": "[core] Layout Region Left",
+      "visibilityChecks": [
+        {
+          "scope": "main",
+          "text": "L11-LEFT｜この文章の左端を選択領域の外へ出します。残った右側の文字の矩形が、画面外へ伸びていないか確認します。",
+          "expectation": "present"
+        },
+        {
+          "scope": "region",
+          "text": "L11-LEFT｜この文章の左端を選択領域の外へ出します。残った右側の文字の矩形が、画面外へ伸びていないか確認します。",
+          "target": "text",
+          "expectation": "partiallyVisible"
+        }
+      ],
+      "sourceReferences": [
+        {
+          "scope": "main",
+          "fixtureId": "layout-stress",
+          "anchor": {
+            "text": "L11-LEFT｜この文章の左端を選択領域の外へ出します。残った右側の文字の矩形が、画面外へ伸びていないか確認します。"
+          }
+        }
+      ],
+      "checks": [
+        "L11・選択領域のleft境界・0.5が画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "layout-region-left-glyph": {
+      "suite": "core",
+      "purpose": "[core] Layout Region Left Glyph",
+      "visibilityChecks": [
+        {
+          "scope": "main",
+          "text": "L11-LEFT｜この文章の左端を選択領域の外へ出します。残った右側の文字の矩形が、画面外へ伸びていないか確認します。",
+          "expectation": "present"
+        },
+        {
+          "scope": "region",
+          "text": "L11-LEFT｜この文章の左端を選択領域の外へ出します。残った右側の文字の矩形が、画面外へ伸びていないか確認します。",
+          "target": "text",
+          "expectation": "partiallyVisible"
+        }
+      ],
+      "sourceReferences": [
+        {
+          "scope": "main",
+          "fixtureId": "layout-stress",
+          "anchor": {
+            "text": "L11-LEFT｜この文章の左端を選択領域の外へ出します。残った右側の文字の矩形が、画面外へ伸びていないか確認します。"
+          }
+        }
+      ],
+      "checks": [
+        "L11・選択領域のleft境界・0.37が画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "layout-region-right": {
+      "suite": "core",
+      "purpose": "[core] Layout Region Right",
+      "visibilityChecks": [
+        {
+          "scope": "main",
+          "text": "L11-RIGHT｜この文章の右端を選択領域の外へ出します。表示されていない文末の「禁止」を推測して追加してはいけません。",
+          "expectation": "present"
+        },
+        {
+          "scope": "region",
+          "text": "L11-RIGHT｜この文章の右端を選択領域の外へ出します。表示されていない文末の「禁止」を推測して追加してはいけません。",
+          "target": "text",
+          "expectation": "partiallyVisible"
+        }
+      ],
+      "sourceReferences": [
+        {
+          "scope": "main",
+          "fixtureId": "layout-stress",
+          "anchor": {
+            "text": "L11-RIGHT｜この文章の右端を選択領域の外へ出します。表示されていない文末の「禁止」を推測して追加してはいけません。"
+          }
+        }
+      ],
+      "checks": [
+        "L11・選択領域のright境界・0.5が画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "layout-region-right-glyph": {
+      "suite": "core",
+      "purpose": "[core] Layout Region Right Glyph",
+      "visibilityChecks": [
+        {
+          "scope": "main",
+          "text": "L11-RIGHT｜この文章の右端を選択領域の外へ出します。表示されていない文末の「禁止」を推測して追加してはいけません。",
+          "expectation": "present"
+        },
+        {
+          "scope": "region",
+          "text": "L11-RIGHT｜この文章の右端を選択領域の外へ出します。表示されていない文末の「禁止」を推測して追加してはいけません。",
+          "target": "text",
+          "expectation": "partiallyVisible"
+        }
+      ],
+      "sourceReferences": [
+        {
+          "scope": "main",
+          "fixtureId": "layout-stress",
+          "anchor": {
+            "text": "L11-RIGHT｜この文章の右端を選択領域の外へ出します。表示されていない文末の「禁止」を推測して追加してはいけません。"
+          }
+        }
+      ],
+      "checks": [
+        "L11・選択領域のright境界・0.37が画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "layout-region-top": {
+      "suite": "core",
+      "purpose": "[core] Layout Region Top",
+      "visibilityChecks": [
+        {
+          "scope": "main",
+          "text": "L11-TOP｜この段落の上半分だけを選択領域から外してください。見切れた文字を、完全に見えた原文として補完しないでください。",
+          "expectation": "present"
+        },
+        {
+          "scope": "region",
+          "text": "L11-TOP｜この段落の上半分だけを選択領域から外してください。見切れた文字を、完全に見えた原文として補完しないでください。",
+          "target": "text",
+          "expectation": "partiallyVisible"
+        }
+      ],
+      "sourceReferences": [
+        {
+          "scope": "main",
+          "fixtureId": "layout-stress",
+          "anchor": {
+            "text": "L11-TOP｜この段落の上半分だけを選択領域から外してください。見切れた文字を、完全に見えた原文として補完しないでください。"
+          }
+        }
+      ],
+      "checks": [
+        "L11・選択領域のtop境界・0.5が画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "layout-region-top-glyph": {
+      "suite": "core",
+      "purpose": "[core] Layout Region Top Glyph",
+      "visibilityChecks": [
+        {
+          "scope": "main",
+          "text": "L11-TOP｜この段落の上半分だけを選択領域から外してください。見切れた文字を、完全に見えた原文として補完しないでください。",
+          "expectation": "present"
+        },
+        {
+          "scope": "region",
+          "text": "L11-TOP｜この段落の上半分だけを選択領域から外してください。見切れた文字を、完全に見えた原文として補完しないでください。",
+          "target": "text",
+          "expectation": "partiallyVisible"
+        }
+      ],
+      "sourceReferences": [
+        {
+          "scope": "main",
+          "fixtureId": "layout-stress",
+          "anchor": {
+            "text": "L11-TOP｜この段落の上半分だけを選択領域から外してください。見切れた文字を、完全に見えた原文として補完しないでください。"
+          }
+        }
+      ],
+      "checks": [
+        "L11・選択領域のtop境界・0.37が画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "layout-region-bottom": {
+      "suite": "core",
+      "purpose": "[core] Layout Region Bottom",
+      "visibilityChecks": [
+        {
+          "scope": "main",
+          "text": "L11-BOTTOM｜この段落の下半分が画面の下端に重なるようにスクロールします。表示されていない次の行を含めないでください。",
+          "expectation": "present"
+        },
+        {
+          "scope": "region",
+          "text": "L11-BOTTOM｜この段落の下半分が画面の下端に重なるようにスクロールします。表示されていない次の行を含めないでください。",
+          "target": "text",
+          "expectation": "partiallyVisible"
+        }
+      ],
+      "sourceReferences": [
+        {
+          "scope": "main",
+          "fixtureId": "layout-stress",
+          "anchor": {
+            "text": "L11-BOTTOM｜この段落の下半分が画面の下端に重なるようにスクロールします。表示されていない次の行を含めないでください。"
+          }
+        }
+      ],
+      "checks": [
+        "L11・選択領域のbottom境界・0.5が画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "layout-region-bottom-glyph": {
+      "suite": "core",
+      "purpose": "[core] Layout Region Bottom Glyph",
+      "visibilityChecks": [
+        {
+          "scope": "main",
+          "text": "L11-BOTTOM｜この段落の下半分が画面の下端に重なるようにスクロールします。表示されていない次の行を含めないでください。",
+          "expectation": "present"
+        },
+        {
+          "scope": "region",
+          "text": "L11-BOTTOM｜この段落の下半分が画面の下端に重なるようにスクロールします。表示されていない次の行を含めないでください。",
+          "target": "text",
+          "expectation": "partiallyVisible"
+        }
+      ],
+      "sourceReferences": [
+        {
+          "scope": "main",
+          "fixtureId": "layout-stress",
+          "anchor": {
+            "text": "L11-BOTTOM｜この段落の下半分が画面の下端に重なるようにスクロールします。表示されていない次の行を含めないでください。"
+          }
+        }
+      ],
+      "checks": [
+        "L11・選択領域のbottom境界・0.37が画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "database-nowrap-left": {
+      "suite": "core",
+      "purpose": "[core] Database Nowrap Left",
+      "visibilityChecks": [],
+      "sourceReferences": [],
+      "checks": [
+        "ビュー名と列の位置を確認する。",
+        "省略記号と横スクロールによる切り取りを区別する。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "database-nowrap-middle": {
+      "suite": "core",
+      "purpose": "[core] Database Nowrap Middle",
+      "visibilityChecks": [
+        {
+          "scope": "database",
+          "text": "備考",
+          "expectation": "partiallyVisible"
+        }
+      ],
+      "sourceReferences": [
+        {
+          "scope": "database",
+          "fixtureId": "project-database",
+          "anchor": {
+            "text": "備考",
+            "blockClass": "notion-table-view-header-row"
+          }
+        }
+      ],
+      "checks": [
+        "ビュー名と列の位置を確認する。",
+        "省略記号と横スクロールによる切り取りを区別する。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "database-nowrap-right": {
+      "suite": "core",
+      "purpose": "[core] Database Nowrap Right",
+      "visibilityChecks": [],
+      "sourceReferences": [],
+      "checks": [
+        "ビュー名と列の位置を確認する。",
+        "省略記号と横スクロールによる切り取りを区別する。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "database-wrap-left": {
+      "suite": "core",
+      "purpose": "[core] Database Wrap Left",
+      "visibilityChecks": [],
+      "sourceReferences": [],
+      "checks": [
+        "ビュー名と列の位置を確認する。",
+        "省略記号と横スクロールによる切り取りを区別する。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "database-wrap-middle": {
+      "suite": "core",
+      "purpose": "[core] Database Wrap Middle",
+      "visibilityChecks": [
+        {
+          "scope": "database",
+          "text": "備考",
+          "expectation": "partiallyVisible"
+        }
+      ],
+      "sourceReferences": [
+        {
+          "scope": "database",
+          "fixtureId": "project-database",
+          "anchor": {
+            "text": "備考",
+            "blockClass": "notion-table-view-header-row"
+          }
+        }
+      ],
+      "checks": [
+        "ビュー名と列の位置を確認する。",
+        "省略記号と横スクロールによる切り取りを区別する。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "database-wrap-right": {
+      "suite": "core",
+      "purpose": "[core] Database Wrap Right",
+      "visibilityChecks": [],
+      "sourceReferences": [],
+      "checks": [
+        "ビュー名と列の位置を確認する。",
+        "省略記号と横スクロールによる切り取りを区別する。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "database-peek-b08": {
+      "suite": "core",
+      "purpose": "[core] Database Peek B08",
+      "visibilityChecks": [],
+      "sourceReferences": [],
+      "checks": [
+        "B08・レコードのサイドプレビューが画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "database-peek-b18": {
+      "suite": "core",
+      "purpose": "[core] Database Peek B18",
+      "visibilityChecks": [],
+      "sourceReferences": [],
+      "checks": [
+        "B18・レコードのサイドプレビューが画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "database-peek-b09": {
+      "suite": "core",
+      "purpose": "[core] Database Peek B09",
+      "visibilityChecks": [],
+      "sourceReferences": [],
+      "checks": [
+        "B09・レコードのサイドプレビューが画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "database-peek-b10": {
+      "suite": "core",
+      "purpose": "[core] Database Peek B10",
+      "visibilityChecks": [],
+      "sourceReferences": [],
+      "checks": [
+        "B10・レコードのサイドプレビューが画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "database-row-clipped-top": {
+      "suite": "core",
+      "purpose": "[core] Database Row Clipped Top",
+      "visibilityChecks": [
+        {
+          "scope": "database",
+          "text": "年間料金ではありません。途中解約による日割り返金はありません。ただし、誤請求の返金は別です。",
+          "expectation": "partiallyVisible"
+        },
+        {
+          "scope": "database",
+          "text": "備考",
+          "expectation": "partiallyVisible"
+        }
+      ],
+      "sourceReferences": [
+        {
+          "scope": "database",
+          "fixtureId": "project-database",
+          "anchor": {
+            "text": "年間料金ではありません。途中解約による日割り返金はありません。ただし、誤請求の返金は別です。"
+          }
+        },
+        {
+          "scope": "database",
+          "fixtureId": "project-database",
+          "anchor": {
+            "text": "備考",
+            "blockClass": "notion-table-view-header-row"
+          }
+        }
+      ],
+      "checks": [
+        "DB行のtop部分切り取りが画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "database-row-clipped-bottom": {
+      "suite": "core",
+      "purpose": "[core] Database Row Clipped Bottom",
+      "visibilityChecks": [
+        {
+          "scope": "database",
+          "text": "行の上半分だけが見える場合や、スクロールによって完全に消えた場合に、表示されないセルの内容まで翻訳対象へ含めないでください。",
+          "expectation": "present"
+        },
+        {
+          "scope": "database",
+          "text": "備考",
+          "expectation": "partiallyVisible"
+        }
+      ],
+      "sourceReferences": [
+        {
+          "scope": "database",
+          "fixtureId": "project-database",
+          "anchor": {
+            "text": "行の上半分だけが見える場合や、スクロールによって完全に消えた場合に、表示されないセルの内容まで翻訳対象へ含めないでください。"
+          }
+        },
+        {
+          "scope": "database",
+          "fixtureId": "project-database",
+          "anchor": {
+            "text": "備考",
+            "blockClass": "notion-table-view-header-row"
+          }
+        }
+      ],
+      "checks": [
+        "DB行のbottom部分切り取りが画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "database-sidebar-peek-horizontal": {
+      "suite": "core",
+      "purpose": "[core] Database Sidebar Peek Horizontal",
+      "visibilityChecks": [
+        {
+          "scope": "database",
+          "text": "備考",
+          "expectation": "partiallyVisible"
+        }
+      ],
+      "sourceReferences": [
+        {
+          "scope": "database",
+          "fixtureId": "project-database",
+          "anchor": {
+            "text": "備考",
+            "blockClass": "notion-table-view-header-row"
+          }
+        }
+      ],
+      "checks": [
+        "サイドバー・プレビュー・DB横スクロールの組合せが画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "rich-r04": {
+      "suite": "extended",
+      "purpose": "Rich R04",
+      "visibilityChecks": [
+        {
+          "scope": "main",
+          "text": "R04｜一文の中で何度も変わる書式",
+          "expectation": "present"
+        }
+      ],
+      "sourceReferences": [
+        {
+          "scope": "main",
+          "fixtureId": "rich-document",
+          "anchor": {
+            "text": "R04｜一文の中で何度も変わる書式"
+          }
+        }
+      ],
+      "checks": [
+        "R04・文書構造と原文の対応が画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "rich-r05": {
+      "suite": "extended",
+      "purpose": "Rich R05",
+      "visibilityChecks": [
+        {
+          "scope": "main",
+          "text": "R05｜絵文字・記号・入れ子の箇条書き",
+          "expectation": "present"
+        }
+      ],
+      "sourceReferences": [
+        {
+          "scope": "main",
+          "fixtureId": "rich-document",
+          "anchor": {
+            "text": "R05｜絵文字・記号・入れ子の箇条書き"
+          }
+        }
+      ],
+      "checks": [
+        "R05・文書構造と原文の対応が画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "rich-r06": {
+      "suite": "extended",
+      "purpose": "Rich R06",
+      "visibilityChecks": [
+        {
+          "scope": "main",
+          "text": "R06｜コールアウト・引用・親子の段落",
+          "expectation": "present"
+        }
+      ],
+      "sourceReferences": [
+        {
+          "scope": "main",
+          "fixtureId": "rich-document",
+          "anchor": {
+            "text": "R06｜コールアウト・引用・親子の段落"
+          }
+        }
+      ],
+      "checks": [
+        "R06・文書構造と原文の対応が画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "rich-r08": {
+      "suite": "extended",
+      "purpose": "Rich R08",
+      "visibilityChecks": [
+        {
+          "scope": "main",
+          "text": "R08｜表の行・列を取り違えない",
+          "expectation": "present"
+        }
+      ],
+      "sourceReferences": [
+        {
+          "scope": "main",
+          "fixtureId": "rich-document",
+          "anchor": {
+            "text": "R08｜表の行・列を取り違えない"
+          }
+        }
+      ],
+      "checks": [
+        "R08・文書構造と原文の対応が画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "rich-r09": {
+      "suite": "extended",
+      "purpose": "Rich R09",
+      "visibilityChecks": [
+        {
+          "scope": "main",
+          "text": "R09｜左右の文章を混ぜない",
+          "expectation": "present"
+        }
+      ],
+      "sourceReferences": [
+        {
+          "scope": "main",
+          "fixtureId": "rich-document",
+          "anchor": {
+            "text": "R09｜左右の文章を混ぜない"
+          }
+        }
+      ],
+      "checks": [
+        "R09・文書構造と原文の対応が画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "rich-r11": {
+      "suite": "extended",
+      "purpose": "Rich R11",
+      "visibilityChecks": [
+        {
+          "scope": "main",
+          "text": "R11｜数式・日付・コードの境界",
+          "expectation": "present"
+        }
+      ],
+      "sourceReferences": [
+        {
+          "scope": "main",
+          "fixtureId": "rich-document",
+          "anchor": {
+            "text": "R11｜数式・日付・コードの境界"
+          }
+        }
+      ],
+      "checks": [
+        "R11・文書構造と原文の対応が画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "rich-r12": {
+      "suite": "extended",
+      "purpose": "Rich R12",
+      "visibilityChecks": [
+        {
+          "scope": "main",
+          "text": "R12｜会話の省略と、話した人の区別",
+          "expectation": "present"
+        }
+      ],
+      "sourceReferences": [
+        {
+          "scope": "main",
+          "fixtureId": "rich-document",
+          "anchor": {
+            "text": "R12｜会話の省略と、話した人の区別"
+          }
+        }
+      ],
+      "checks": [
+        "R12・文書構造と原文の対応が画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "rich-r13": {
+      "suite": "extended",
+      "purpose": "Rich R13",
+      "visibilityChecks": [
+        {
+          "scope": "main",
+          "text": "R13｜調理の順番と、数値の単位",
+          "expectation": "present"
+        }
+      ],
+      "sourceReferences": [
+        {
+          "scope": "main",
+          "fixtureId": "rich-document",
+          "anchor": {
+            "text": "R13｜調理の順番と、数値の単位"
+          }
+        }
+      ],
+      "checks": [
+        "R13・文書構造と原文の対応が画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "rich-r14": {
+      "suite": "extended",
+      "purpose": "Rich R14",
+      "visibilityChecks": [
+        {
+          "scope": "main",
+          "text": "R14｜推測・引用・未確定の情報",
+          "expectation": "present"
+        }
+      ],
+      "sourceReferences": [
+        {
+          "scope": "main",
+          "fixtureId": "rich-document",
+          "anchor": {
+            "text": "R14｜推測・引用・未確定の情報"
+          }
+        }
+      ],
+      "checks": [
+        "R14・文書構造と原文の対応が画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "rich-r15": {
+      "suite": "extended",
+      "purpose": "Rich R15",
+      "visibilityChecks": [
+        {
+          "scope": "main",
+          "text": "R15｜遠慮した依頼・二重否定・対比",
+          "expectation": "present"
+        }
+      ],
+      "sourceReferences": [
+        {
+          "scope": "main",
+          "fixtureId": "rich-document",
+          "anchor": {
+            "text": "R15｜遠慮した依頼・二重否定・対比"
+          }
+        }
+      ],
+      "checks": [
+        "R15・文書構造と原文の対応が画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "rich-r16": {
+      "suite": "extended",
+      "purpose": "Rich R16",
+      "visibilityChecks": [],
+      "sourceReferences": [],
+      "checks": [
+        "R16・文書構造と原文の対応が画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "rich-tab-overview": {
+      "suite": "extended",
+      "purpose": "Rich Tab Overview",
+      "visibilityChecks": [
+        {
+          "scope": "main",
+          "text": "R10｜タブの切り替え",
+          "expectation": "present"
+        },
+        {
+          "scope": "main",
+          "text": "現在のタブ：概要。ここには申請の目的だけを記載しています。",
+          "expectation": "present"
+        },
+        {
+          "scope": "main",
+          "text": "現在のタブ：確認事項。概要タブには表示されない別の文章です。",
+          "expectation": "absent"
+        },
+        {
+          "scope": "main",
+          "text": "現在のタブ：対象外。承認前の公開は認められません。",
+          "expectation": "absent"
+        }
+      ],
+      "sourceReferences": [
+        {
+          "scope": "main",
+          "fixtureId": "rich-document",
+          "anchor": {
+            "text": "R10｜タブの切り替え"
+          }
+        },
+        {
+          "scope": "main",
+          "fixtureId": "rich-document",
+          "anchor": {
+            "text": "R10｜タブの切り替え"
+          }
+        }
+      ],
+      "checks": [
+        "R10・概要が画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "rich-tab-checks": {
+      "suite": "extended",
+      "purpose": "Rich Tab Checks",
+      "visibilityChecks": [
+        {
+          "scope": "main",
+          "text": "R10｜タブの切り替え",
+          "expectation": "present"
+        },
+        {
+          "scope": "main",
+          "text": "現在のタブ：概要。ここには申請の目的だけを記載しています。",
+          "expectation": "absent"
+        },
+        {
+          "scope": "main",
+          "text": "現在のタブ：確認事項。概要タブには表示されない別の文章です。",
+          "expectation": "present"
+        },
+        {
+          "scope": "main",
+          "text": "現在のタブ：対象外。承認前の公開は認められません。",
+          "expectation": "absent"
+        }
+      ],
+      "sourceReferences": [
+        {
+          "scope": "main",
+          "fixtureId": "rich-document",
+          "anchor": {
+            "text": "R10｜タブの切り替え"
+          }
+        },
+        {
+          "scope": "main",
+          "fixtureId": "rich-document",
+          "anchor": {
+            "text": "R10｜タブの切り替え"
+          }
+        }
+      ],
+      "checks": [
+        "R10・確認事項が画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "rich-tab-excluded": {
+      "suite": "extended",
+      "purpose": "Rich Tab Excluded",
+      "visibilityChecks": [
+        {
+          "scope": "main",
+          "text": "R10｜タブの切り替え",
+          "expectation": "present"
+        },
+        {
+          "scope": "main",
+          "text": "現在のタブ：概要。ここには申請の目的だけを記載しています。",
+          "expectation": "absent"
+        },
+        {
+          "scope": "main",
+          "text": "現在のタブ：確認事項。概要タブには表示されない別の文章です。",
+          "expectation": "absent"
+        },
+        {
+          "scope": "main",
+          "text": "現在のタブ：対象外。承認前の公開は認められません。",
+          "expectation": "present"
+        }
+      ],
+      "sourceReferences": [
+        {
+          "scope": "main",
+          "fixtureId": "rich-document",
+          "anchor": {
+            "text": "R10｜タブの切り替え"
+          }
+        },
+        {
+          "scope": "main",
+          "fixtureId": "rich-document",
+          "anchor": {
+            "text": "R10｜タブの切り替え"
+          }
+        }
+      ],
+      "checks": [
+        "R10・対象外が画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "layout-l02": {
+      "suite": "extended",
+      "purpose": "Layout L02",
+      "visibilityChecks": [
+        {
+          "scope": "main",
+          "text": "L02｜同じ段落の中の明示的な改行",
+          "expectation": "present"
+        }
+      ],
+      "sourceReferences": [
+        {
+          "scope": "main",
+          "fixtureId": "layout-stress",
+          "anchor": {
+            "text": "L02｜同じ段落の中の明示的な改行"
+          }
+        }
+      ],
+      "checks": [
+        "L02・改行と配置が画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "layout-l04": {
+      "suite": "extended",
+      "purpose": "Layout L04",
+      "visibilityChecks": [
+        {
+          "scope": "main",
+          "text": "L04｜句読点・括弧・単位の折り返し",
+          "expectation": "present"
+        }
+      ],
+      "sourceReferences": [
+        {
+          "scope": "main",
+          "fixtureId": "layout-stress",
+          "anchor": {
+            "text": "L04｜句読点・括弧・単位の折り返し"
+          }
+        }
+      ],
+      "checks": [
+        "L04・改行と配置が画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "layout-l05": {
+      "suite": "extended",
+      "purpose": "Layout L05",
+      "visibilityChecks": [
+        {
+          "scope": "main",
+          "text": "L05｜幅の違う三つのカラム",
+          "expectation": "present"
+        }
+      ],
+      "sourceReferences": [
+        {
+          "scope": "main",
+          "fixtureId": "layout-stress",
+          "anchor": {
+            "text": "L05｜幅の違う三つのカラム"
+          }
+        }
+      ],
+      "checks": [
+        "L05・改行と配置が画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "layout-l06": {
+      "suite": "extended",
+      "purpose": "Layout L06",
+      "visibilityChecks": [
+        {
+          "scope": "main",
+          "text": "L06｜同じ文字列が異なる位置に繰り返される",
+          "expectation": "present"
+        }
+      ],
+      "sourceReferences": [
+        {
+          "scope": "main",
+          "fixtureId": "layout-stress",
+          "anchor": {
+            "text": "L06｜同じ文字列が異なる位置に繰り返される"
+          }
+        }
+      ],
+      "checks": [
+        "L06・改行と配置が画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "layout-l11": {
+      "suite": "extended",
+      "purpose": "Layout L11",
+      "visibilityChecks": [
+        {
+          "scope": "main",
+          "text": "L11｜部分的な切り抜きの対象",
+          "expectation": "present"
+        }
+      ],
+      "sourceReferences": [
+        {
+          "scope": "main",
+          "fixtureId": "layout-stress",
+          "anchor": {
+            "text": "L11｜部分的な切り抜きの対象"
+          }
+        }
+      ],
+      "checks": [
+        "L11・改行と配置が画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "layout-columns-narrow": {
+      "suite": "extended",
+      "purpose": "Layout Columns Narrow",
+      "visibilityChecks": [
+        {
+          "scope": "main",
+          "text": "L05｜幅の違う三つのカラム",
+          "expectation": "present"
+        }
+      ],
+      "sourceReferences": [
+        {
+          "scope": "main",
+          "fixtureId": "layout-stress",
+          "anchor": {
+            "text": "L05｜幅の違う三つのカラム"
+          }
+        }
+      ],
+      "checks": [
+        "L05・狭い不均等3列が画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "layout-toggle-depth-0": {
+      "suite": "extended",
+      "purpose": "Layout Toggle Depth 0",
+      "visibilityChecks": [
+        {
+          "scope": "main",
+          "text": "L09-HIDDEN｜閉じている間、この原文には画面上の矩形がありません。",
+          "expectation": "absent"
+        },
+        {
+          "scope": "main",
+          "text": "L09-DEEP｜両方を開いたときだけ表示されます。",
+          "expectation": "absent"
+        },
+        {
+          "scope": "main",
+          "text": "L09｜折りたたまれた領域",
+          "expectation": "present"
+        }
+      ],
+      "sourceReferences": [
+        {
+          "scope": "main",
+          "fixtureId": "layout-stress",
+          "anchor": {
+            "text": "L09｜折りたたまれた領域"
+          }
+        }
+      ],
+      "checks": [
+        "L09・トグル0段階が画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "layout-toggle-depth-1": {
+      "suite": "extended",
+      "purpose": "Layout Toggle Depth 1",
+      "visibilityChecks": [
+        {
+          "scope": "main",
+          "text": "L09-HIDDEN｜閉じている間、この原文には画面上の矩形がありません。",
+          "expectation": "present"
+        },
+        {
+          "scope": "main",
+          "text": "L09-DEEP｜両方を開いたときだけ表示されます。",
+          "expectation": "absent"
+        },
+        {
+          "scope": "main",
+          "text": "L09｜折りたたまれた領域",
+          "expectation": "present"
+        }
+      ],
+      "sourceReferences": [
+        {
+          "scope": "main",
+          "fixtureId": "layout-stress",
+          "anchor": {
+            "text": "L09｜折りたたまれた領域"
+          }
+        }
+      ],
+      "checks": [
+        "L09・トグル1段階が画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "layout-toggle-depth-2": {
+      "suite": "extended",
+      "purpose": "Layout Toggle Depth 2",
+      "visibilityChecks": [
+        {
+          "scope": "main",
+          "text": "L09-HIDDEN｜閉じている間、この原文には画面上の矩形がありません。",
+          "expectation": "present"
+        },
+        {
+          "scope": "main",
+          "text": "L09-DEEP｜両方を開いたときだけ表示されます。",
+          "expectation": "present"
+        },
+        {
+          "scope": "main",
+          "text": "L09｜折りたたまれた領域",
+          "expectation": "present"
+        }
+      ],
+      "sourceReferences": [
+        {
+          "scope": "main",
+          "fixtureId": "layout-stress",
+          "anchor": {
+            "text": "L09｜折りたたまれた領域"
+          }
+        }
+      ],
+      "checks": [
+        "L09・トグル2段階が画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "layout-tab-a": {
+      "suite": "extended",
+      "purpose": "Layout Tab A",
+      "visibilityChecks": [
+        {
+          "scope": "main",
+          "text": "L10｜非アクティブなタブ",
+          "expectation": "present"
+        },
+        {
+          "scope": "main",
+          "text": "L10-A｜一番目のタブだけにある文章です。",
+          "expectation": "present"
+        },
+        {
+          "scope": "main",
+          "text": "L10-B｜二番目のタブだけにある文章です。",
+          "expectation": "absent"
+        }
+      ],
+      "sourceReferences": [
+        {
+          "scope": "main",
+          "fixtureId": "layout-stress",
+          "anchor": {
+            "text": "L10｜非アクティブなタブ"
+          }
+        },
+        {
+          "scope": "main",
+          "fixtureId": "layout-stress",
+          "anchor": {
+            "text": "L10｜非アクティブなタブ"
+          }
+        }
+      ],
+      "checks": [
+        "L10・一番目が画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "layout-tab-b": {
+      "suite": "extended",
+      "purpose": "Layout Tab B",
+      "visibilityChecks": [
+        {
+          "scope": "main",
+          "text": "L10｜非アクティブなタブ",
+          "expectation": "present"
+        },
+        {
+          "scope": "main",
+          "text": "L10-A｜一番目のタブだけにある文章です。",
+          "expectation": "absent"
+        },
+        {
+          "scope": "main",
+          "text": "L10-B｜二番目のタブだけにある文章です。",
+          "expectation": "present"
+        }
+      ],
+      "sourceReferences": [
+        {
+          "scope": "main",
+          "fixtureId": "layout-stress",
+          "anchor": {
+            "text": "L10｜非アクティブなタブ"
+          }
+        },
+        {
+          "scope": "main",
+          "fixtureId": "layout-stress",
+          "anchor": {
+            "text": "L10｜非アクティブなタブ"
+          }
+        }
+      ],
+      "checks": [
+        "L10・二番目が画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "layout-list-l13-16": {
+      "suite": "extended",
+      "purpose": "Layout List L13 16",
+      "visibilityChecks": [
+        {
+          "scope": "main",
+          "text": "L13-16｜確認項目 16：申請が承認されるまでは公開しないでください。",
+          "expectation": "present"
+        },
+        {
+          "scope": "main",
+          "text": "L13-16｜確認項目 16：申請が承認されるまでは公開しないでください。",
+          "expectation": "present"
+        }
+      ],
+      "sourceReferences": [
+        {
+          "scope": "main",
+          "fixtureId": "layout-stress",
+          "anchor": {
+            "text": "L13-16｜確認項目 16：申請が承認されるまでは公開しないでください。"
+          }
+        }
+      ],
+      "checks": [
+        "L13-16・画面外の項目が画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "layout-list-l-end": {
+      "suite": "extended",
+      "purpose": "Layout List L End",
+      "visibilityChecks": [
+        {
+          "scope": "main",
+          "text": "L-END｜一覧の末尾です。先頭が画面外へ移動した後も、先頭の矩形を残さないでください。",
+          "expectation": "present"
+        }
+      ],
+      "sourceReferences": [],
+      "checks": [
+        "L-END・画面外の項目が画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "mixed-m01": {
+      "suite": "extended",
+      "purpose": "Mixed M01",
+      "visibilityChecks": [
+        {
+          "scope": "main",
+          "text": "M01｜一行に日本語と韓国語を併記",
+          "expectation": "present"
+        }
+      ],
+      "sourceReferences": [
+        {
+          "scope": "main",
+          "fixtureId": "mixed-language",
+          "anchor": {
+            "text": "M01｜一行に日本語と韓国語を併記"
+          }
+        }
+      ],
+      "checks": [
+        "M01・言語と文字範囲が画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "mixed-m03": {
+      "suite": "extended",
+      "purpose": "Mixed M03",
+      "visibilityChecks": [
+        {
+          "scope": "main",
+          "text": "M03｜文の途中で言語が切り替わる",
+          "expectation": "present"
+        }
+      ],
+      "sourceReferences": [
+        {
+          "scope": "main",
+          "fixtureId": "mixed-language",
+          "anchor": {
+            "text": "M03｜文の途中で言語が切り替わる"
+          }
+        }
+      ],
+      "checks": [
+        "M03・言語と文字範囲が画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "mixed-m04": {
+      "suite": "extended",
+      "purpose": "Mixed M04",
+      "visibilityChecks": [
+        {
+          "scope": "main",
+          "text": "M04｜製品名・API・URL・変数名",
+          "expectation": "present"
+        }
+      ],
+      "sourceReferences": [
+        {
+          "scope": "main",
+          "fixtureId": "mixed-language",
+          "anchor": {
+            "text": "M04｜製品名・API・URL・変数名"
+          }
+        }
+      ],
+      "checks": [
+        "M04・言語と文字範囲が画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "mixed-m05": {
+      "suite": "extended",
+      "purpose": "Mixed M05",
+      "visibilityChecks": [
+        {
+          "scope": "main",
+          "text": "M05｜漢字だけの短い表示",
+          "expectation": "present"
+        }
+      ],
+      "sourceReferences": [
+        {
+          "scope": "main",
+          "fixtureId": "mixed-language",
+          "anchor": {
+            "text": "M05｜漢字だけの短い表示"
+          }
+        }
+      ],
+      "checks": [
+        "M05・言語と文字範囲が画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "mixed-m06": {
+      "suite": "extended",
+      "purpose": "Mixed M06",
+      "visibilityChecks": [
+        {
+          "scope": "main",
+          "text": "M06｜かな・半角・結合文字・似ている字",
+          "expectation": "present"
+        }
+      ],
+      "sourceReferences": [
+        {
+          "scope": "main",
+          "fixtureId": "mixed-language",
+          "anchor": {
+            "text": "M06｜かな・半角・結合文字・似ている字"
+          }
+        }
+      ],
+      "checks": [
+        "M06・言語と文字範囲が画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "mixed-m07": {
+      "suite": "extended",
+      "purpose": "Mixed M07",
+      "visibilityChecks": [
+        {
+          "scope": "main",
+          "text": "M07｜数字・単位・比較・否定",
+          "expectation": "present"
+        }
+      ],
+      "sourceReferences": [
+        {
+          "scope": "main",
+          "fixtureId": "mixed-language",
+          "anchor": {
+            "text": "M07｜数字・単位・比較・否定"
+          }
+        }
+      ],
+      "checks": [
+        "M07・言語と文字範囲が画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "mixed-m08": {
+      "suite": "extended",
+      "purpose": "Mixed M08",
+      "visibilityChecks": [
+        {
+          "scope": "main",
+          "text": "M08｜絵文字と合成された文字",
+          "expectation": "present"
+        }
+      ],
+      "sourceReferences": [
+        {
+          "scope": "main",
+          "fixtureId": "mixed-language",
+          "anchor": {
+            "text": "M08｜絵文字と合成された文字"
+          }
+        }
+      ],
+      "checks": [
+        "M08・言語と文字範囲が画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "mixed-m09": {
+      "suite": "extended",
+      "purpose": "Mixed M09",
+      "visibilityChecks": [
+        {
+          "scope": "main",
+          "text": "M09｜韓国語だけの対照群",
+          "expectation": "present"
+        }
+      ],
+      "sourceReferences": [
+        {
+          "scope": "main",
+          "fixtureId": "mixed-language",
+          "anchor": {
+            "text": "M09｜韓国語だけの対照群"
+          }
+        }
+      ],
+      "checks": [
+        "M09・言語と文字範囲が画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "mixed-m10": {
+      "suite": "extended",
+      "purpose": "Mixed M10",
+      "visibilityChecks": [
+        {
+          "scope": "main",
+          "text": "M10｜英語だけの対照群",
+          "expectation": "present"
+        }
+      ],
+      "sourceReferences": [
+        {
+          "scope": "main",
+          "fixtureId": "mixed-language",
+          "anchor": {
+            "text": "M10｜英語だけの対照群"
+          }
+        }
+      ],
+      "checks": [
+        "M10・言語と文字範囲が画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "mixed-m11": {
+      "suite": "extended",
+      "purpose": "Mixed M11",
+      "visibilityChecks": [
+        {
+          "scope": "main",
+          "text": "M11｜左右に並ぶ日韓対訳",
+          "expectation": "present"
+        }
+      ],
+      "sourceReferences": [
+        {
+          "scope": "main",
+          "fixtureId": "mixed-language",
+          "anchor": {
+            "text": "M11｜左右に並ぶ日韓対訳"
+          }
+        }
+      ],
+      "checks": [
+        "M11・言語と文字範囲が画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "reading-d01": {
+      "suite": "extended",
+      "purpose": "Reading D01",
+      "visibilityChecks": [
+        {
+          "scope": "main",
+          "text": "D01｜調査の目的",
+          "expectation": "present"
+        }
+      ],
+      "sourceReferences": [
+        {
+          "scope": "main",
+          "fixtureId": "long-reading",
+          "anchor": {
+            "text": "D01｜調査の目的"
+          }
+        }
+      ],
+      "checks": [
+        "D01・長文の表示範囲が画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "reading-d08": {
+      "suite": "extended",
+      "purpose": "Reading D08",
+      "visibilityChecks": [
+        {
+          "scope": "main",
+          "text": "D08｜性能の比較",
+          "expectation": "present"
+        }
+      ],
+      "sourceReferences": [
+        {
+          "scope": "main",
+          "fixtureId": "long-reading",
+          "anchor": {
+            "text": "D08｜性能の比較"
+          }
+        }
+      ],
+      "checks": [
+        "D08・長文の表示範囲が画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "reading-d16": {
+      "suite": "extended",
+      "purpose": "Reading D16",
+      "visibilityChecks": [],
+      "sourceReferences": [],
+      "checks": [
+        "D16・長文の表示範囲が画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "reading-big-start": {
+      "suite": "extended",
+      "purpose": "Reading Big Start",
+      "visibilityChecks": [
+        {
+          "scope": "main",
+          "text": "月額料金は一千二百八十円です。途中で利用を停止しても当月分の日割り返金は行いません。ただし、重複して請求したことが確認された場合は、その重複分を返金します。 返金の対象外なのは、通常の途中解約に伴う残りの日数分です。誤請求の返金まで拒否するという意味ではありません。例外条件を文末まで読まずに省略しないでください。 変更前の平均処理時間は十二秒、変更後は八秒でした。短縮されたのは四秒であり、処理時間が四倍になったわけではありません。 一部の申請では処理時間が延びています。平均が改善したからといって、すべての申請で同じ改善があったと結論づけることはできません。 通信が切れた場合でも、サーバーが申請を受け付けている可能性があります。画面に完了通知が出なかったことだけを根拠に、同じ申請を再送しないでください。 まず申請一覧を確認し、受付番号が発行されていないことを確かめます。確認できない場合は、再送を繰り返さず担当者へ連絡します。 保存は下書きを記録する操作です。公開は、保存した内容をほかの利用者へ表示する操作です。保存しただけで、自動的に全員へ公開されることはありません。 公開範囲を限定した場合も、範囲内の利用者には内容が見えます。「全員に見えない」と「誰にも見えない」は同じ意味ではありません。 別の端末で作業を続ける場合は、最初の端末で保存が完了したことを確認してください。表示されている内容が新しく見えても、サーバーへの保存が終わっていないことがあります。 後から開いた端末で古い内容を上書きしないよう、更新時刻と担当者を確認します。端末の時刻が一致しているだけでは、同じ版を見ている証拠にはなりません。 通常の申請履歴は九十日間保持します。監査対象の申請は、九十日を過ぎても担当者が解除するまで保持します。すべての履歴を九十日後に一律削除する運用ではありません。 削除予定の通知が届いても、その場で内容が削除されるわけではありません。通知から実際の削除までには、必要な記録を保存するための猶予期間があります。 別の端末で作業を続ける場合は、最初の端末で保存が完了したことを確認してください。表示されている内容が新しく見えても、サーバーへの保存が終わっていないことがあります。通常の申請履歴は九十日間保持します。監査対象の申請は、九十日を過ぎても担当者が解除するまで保持します。すべての履歴を九十日後に一律削除する運用ではありません。閲覧者は公開済みの内容を読むことができますが、下書きを編集することはできません。編集者であっても、最終承認を行う権限が自動的に付与されるわけではありません。最後にもう一度確認します。これらの条件が満たされるまでは、既存のデータを削除してはいけません。",
+          "expectation": "partiallyVisible",
+          "portion": "start"
+        },
+        {
+          "scope": "main",
+          "text": "D06-BIG｜改行のない大きな段落",
+          "expectation": "referenceBeforeAdvance",
+          "advancePixels": 100
+        }
+      ],
+      "sourceReferences": [
+        {
+          "scope": "main",
+          "fixtureId": "long-reading",
+          "anchor": {
+            "text": "D06-BIG｜改行のない大きな段落"
+          }
+        }
+      ],
+      "checks": [
+        "D06-BIG・startが画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "reading-big-middle": {
+      "suite": "extended",
+      "purpose": "Reading Big Middle",
+      "visibilityChecks": [
+        {
+          "scope": "main",
+          "text": "月額料金は一千二百八十円です。途中で利用を停止しても当月分の日割り返金は行いません。ただし、重複して請求したことが確認された場合は、その重複分を返金します。 返金の対象外なのは、通常の途中解約に伴う残りの日数分です。誤請求の返金まで拒否するという意味ではありません。例外条件を文末まで読まずに省略しないでください。 変更前の平均処理時間は十二秒、変更後は八秒でした。短縮されたのは四秒であり、処理時間が四倍になったわけではありません。 一部の申請では処理時間が延びています。平均が改善したからといって、すべての申請で同じ改善があったと結論づけることはできません。 通信が切れた場合でも、サーバーが申請を受け付けている可能性があります。画面に完了通知が出なかったことだけを根拠に、同じ申請を再送しないでください。 まず申請一覧を確認し、受付番号が発行されていないことを確かめます。確認できない場合は、再送を繰り返さず担当者へ連絡します。 保存は下書きを記録する操作です。公開は、保存した内容をほかの利用者へ表示する操作です。保存しただけで、自動的に全員へ公開されることはありません。 公開範囲を限定した場合も、範囲内の利用者には内容が見えます。「全員に見えない」と「誰にも見えない」は同じ意味ではありません。 別の端末で作業を続ける場合は、最初の端末で保存が完了したことを確認してください。表示されている内容が新しく見えても、サーバーへの保存が終わっていないことがあります。 後から開いた端末で古い内容を上書きしないよう、更新時刻と担当者を確認します。端末の時刻が一致しているだけでは、同じ版を見ている証拠にはなりません。 通常の申請履歴は九十日間保持します。監査対象の申請は、九十日を過ぎても担当者が解除するまで保持します。すべての履歴を九十日後に一律削除する運用ではありません。 削除予定の通知が届いても、その場で内容が削除されるわけではありません。通知から実際の削除までには、必要な記録を保存するための猶予期間があります。 別の端末で作業を続ける場合は、最初の端末で保存が完了したことを確認してください。表示されている内容が新しく見えても、サーバーへの保存が終わっていないことがあります。通常の申請履歴は九十日間保持します。監査対象の申請は、九十日を過ぎても担当者が解除するまで保持します。すべての履歴を九十日後に一律削除する運用ではありません。閲覧者は公開済みの内容を読むことができますが、下書きを編集することはできません。編集者であっても、最終承認を行う権限が自動的に付与されるわけではありません。最後にもう一度確認します。これらの条件が満たされるまでは、既存のデータを削除してはいけません。",
+          "expectation": "partiallyVisible",
+          "portion": "middle"
+        },
+        {
+          "scope": "main",
+          "text": "D06-BIG｜改行のない大きな段落",
+          "expectation": "referenceBeforeAdvance",
+          "advancePixels": 460
+        }
+      ],
+      "sourceReferences": [
+        {
+          "scope": "main",
+          "fixtureId": "long-reading",
+          "anchor": {
+            "text": "D06-BIG｜改行のない大きな段落"
+          }
+        }
+      ],
+      "checks": [
+        "D06-BIG・middleが画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "reading-big-end": {
+      "suite": "extended",
+      "purpose": "Reading Big End",
+      "visibilityChecks": [
+        {
+          "scope": "main",
+          "text": "月額料金は一千二百八十円です。途中で利用を停止しても当月分の日割り返金は行いません。ただし、重複して請求したことが確認された場合は、その重複分を返金します。 返金の対象外なのは、通常の途中解約に伴う残りの日数分です。誤請求の返金まで拒否するという意味ではありません。例外条件を文末まで読まずに省略しないでください。 変更前の平均処理時間は十二秒、変更後は八秒でした。短縮されたのは四秒であり、処理時間が四倍になったわけではありません。 一部の申請では処理時間が延びています。平均が改善したからといって、すべての申請で同じ改善があったと結論づけることはできません。 通信が切れた場合でも、サーバーが申請を受け付けている可能性があります。画面に完了通知が出なかったことだけを根拠に、同じ申請を再送しないでください。 まず申請一覧を確認し、受付番号が発行されていないことを確かめます。確認できない場合は、再送を繰り返さず担当者へ連絡します。 保存は下書きを記録する操作です。公開は、保存した内容をほかの利用者へ表示する操作です。保存しただけで、自動的に全員へ公開されることはありません。 公開範囲を限定した場合も、範囲内の利用者には内容が見えます。「全員に見えない」と「誰にも見えない」は同じ意味ではありません。 別の端末で作業を続ける場合は、最初の端末で保存が完了したことを確認してください。表示されている内容が新しく見えても、サーバーへの保存が終わっていないことがあります。 後から開いた端末で古い内容を上書きしないよう、更新時刻と担当者を確認します。端末の時刻が一致しているだけでは、同じ版を見ている証拠にはなりません。 通常の申請履歴は九十日間保持します。監査対象の申請は、九十日を過ぎても担当者が解除するまで保持します。すべての履歴を九十日後に一律削除する運用ではありません。 削除予定の通知が届いても、その場で内容が削除されるわけではありません。通知から実際の削除までには、必要な記録を保存するための猶予期間があります。 別の端末で作業を続ける場合は、最初の端末で保存が完了したことを確認してください。表示されている内容が新しく見えても、サーバーへの保存が終わっていないことがあります。通常の申請履歴は九十日間保持します。監査対象の申請は、九十日を過ぎても担当者が解除するまで保持します。すべての履歴を九十日後に一律削除する運用ではありません。閲覧者は公開済みの内容を読むことができますが、下書きを編集することはできません。編集者であっても、最終承認を行う権限が自動的に付与されるわけではありません。最後にもう一度確認します。これらの条件が満たされるまでは、既存のデータを削除してはいけません。",
+          "expectation": "partiallyVisible",
+          "portion": "end"
+        },
+        {
+          "scope": "main",
+          "text": "D06-BIG｜改行のない大きな段落",
+          "expectation": "referenceBeforeAdvance",
+          "advancePixels": 850
+        }
+      ],
+      "sourceReferences": [
+        {
+          "scope": "main",
+          "fixtureId": "long-reading",
+          "anchor": {
+            "text": "D06-BIG｜改行のない大きな段落"
+          }
+        }
+      ],
+      "checks": [
+        "D06-BIG・endが画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "media-i01": {
+      "suite": "extended",
+      "purpose": "Media I01",
+      "visibilityChecks": [
+        {
+          "scope": "main",
+          "text": "I01｜日本語の分岐図と、その前後の文章",
+          "expectation": "present"
+        }
+      ],
+      "sourceReferences": [
+        {
+          "scope": "main",
+          "fixtureId": "media-diagrams",
+          "anchor": {
+            "text": "I01｜日本語の分岐図と、その前後の文章"
+          }
+        }
+      ],
+      "checks": [
+        "I01・本文と画像の領域が画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "media-i02": {
+      "suite": "extended",
+      "purpose": "Media I02",
+      "visibilityChecks": [
+        {
+          "scope": "main",
+          "text": "I02｜画像に焼き込まれた文字と、隣接する本文",
+          "expectation": "present"
+        }
+      ],
+      "sourceReferences": [
+        {
+          "scope": "main",
+          "fixtureId": "media-diagrams",
+          "anchor": {
+            "text": "I02｜画像に焼き込まれた文字と、隣接する本文"
+          }
+        }
+      ],
+      "checks": [
+        "I02・本文と画像の領域が画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "media-i03": {
+      "suite": "extended",
+      "purpose": "Media I03",
+      "visibilityChecks": [
+        {
+          "scope": "main",
+          "text": "I03｜グラフの軸・凡例・数値・注釈",
+          "expectation": "present"
+        }
+      ],
+      "sourceReferences": [
+        {
+          "scope": "main",
+          "fixtureId": "media-diagrams",
+          "anchor": {
+            "text": "I03｜グラフの軸・凡例・数値・注釈"
+          }
+        }
+      ],
+      "checks": [
+        "I03・本文と画像の領域が画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "media-i06": {
+      "suite": "extended",
+      "purpose": "Media I06",
+      "visibilityChecks": [
+        {
+          "scope": "main",
+          "text": "I06｜等幅の図と、通常の文章",
+          "expectation": "present"
+        }
+      ],
+      "sourceReferences": [
+        {
+          "scope": "main",
+          "fixtureId": "media-diagrams",
+          "anchor": {
+            "text": "I06｜等幅の図と、通常の文章"
+          }
+        }
+      ],
+      "checks": [
+        "I06・本文と画像の領域が画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "media-image-clipped-top": {
+      "suite": "extended",
+      "purpose": "Media Image Clipped Top",
+      "visibilityChecks": [
+        {
+          "scope": "main",
+          "text": "I02｜画像に焼き込まれた文字と、隣接する本文",
+          "expectation": "present"
+        },
+        {
+          "scope": "region",
+          "text": "I02｜画像に焼き込まれた文字と、隣接する本文",
+          "target": "followingImage",
+          "expectation": "partiallyVisible"
+        }
+      ],
+      "sourceReferences": [
+        {
+          "scope": "main",
+          "fixtureId": "media-diagrams",
+          "anchor": {
+            "text": "I02｜画像に焼き込まれた文字と、隣接する本文"
+          }
+        }
+      ],
+      "checks": [
+        "I02・画像のtop部分表示が画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "media-image-clipped-bottom": {
+      "suite": "extended",
+      "purpose": "Media Image Clipped Bottom",
+      "visibilityChecks": [
+        {
+          "scope": "main",
+          "text": "I02｜画像に焼き込まれた文字と、隣接する本文",
+          "expectation": "present"
+        },
+        {
+          "scope": "region",
+          "text": "I02｜画像に焼き込まれた文字と、隣接する本文",
+          "target": "followingImage",
+          "expectation": "partiallyVisible"
+        }
+      ],
+      "sourceReferences": [
+        {
+          "scope": "main",
+          "fixtureId": "media-diagrams",
+          "anchor": {
+            "text": "I02｜画像に焼き込まれた文字と、隣接する本文"
+          }
+        }
+      ],
+      "checks": [
+        "I02・画像のbottom部分表示が画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "media-i04-source": {
+      "suite": "extended",
+      "purpose": "Media I04 Source",
+      "visibilityChecks": [
+        {
+          "scope": "main",
+          "text": "I04｜編集可能な Mermaid の分岐図",
+          "expectation": "present"
+        }
+      ],
+      "sourceReferences": [
+        {
+          "scope": "main",
+          "fixtureId": "sandbox-media-diagrams",
+          "anchor": {
+            "text": "I04｜編集可能な Mermaid の分岐図"
+          }
+        },
+        {
+          "scope": "main",
+          "fixtureId": "sandbox-media-diagrams",
+          "anchor": {
+            "text": "I04｜編集可能な Mermaid の分岐図"
+          }
+        }
+      ],
+      "checks": [
+        "I04・sourceが画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "media-i04-diagram": {
+      "suite": "extended",
+      "purpose": "Media I04 Diagram",
+      "visibilityChecks": [
+        {
+          "scope": "main",
+          "text": "I04｜編集可能な Mermaid の分岐図",
+          "expectation": "present"
+        }
+      ],
+      "sourceReferences": [
+        {
+          "scope": "main",
+          "fixtureId": "sandbox-media-diagrams",
+          "anchor": {
+            "text": "I04｜編集可能な Mermaid の分岐図"
+          }
+        },
+        {
+          "scope": "main",
+          "fixtureId": "sandbox-media-diagrams",
+          "anchor": {
+            "text": "I04｜編集可能な Mermaid の分岐図"
+          }
+        }
+      ],
+      "checks": [
+        "I04・diagramが画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "media-i05-source": {
+      "suite": "extended",
+      "purpose": "Media I05 Source",
+      "visibilityChecks": [
+        {
+          "scope": "main",
+          "text": "I05｜発言者と時間の向きがある図",
+          "expectation": "present"
+        }
+      ],
+      "sourceReferences": [
+        {
+          "scope": "main",
+          "fixtureId": "sandbox-media-diagrams",
+          "anchor": {
+            "text": "I05｜発言者と時間の向きがある図"
+          }
+        },
+        {
+          "scope": "main",
+          "fixtureId": "sandbox-media-diagrams",
+          "anchor": {
+            "text": "I05｜発言者と時間の向きがある図"
+          }
+        }
+      ],
+      "checks": [
+        "I05・sourceが画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "media-i05-diagram": {
+      "suite": "extended",
+      "purpose": "Media I05 Diagram",
+      "visibilityChecks": [
+        {
+          "scope": "main",
+          "text": "I05｜発言者と時間の向きがある図",
+          "expectation": "present"
+        }
+      ],
+      "sourceReferences": [
+        {
+          "scope": "main",
+          "fixtureId": "sandbox-media-diagrams",
+          "anchor": {
+            "text": "I05｜発言者と時間の向きがある図"
+          }
+        },
+        {
+          "scope": "main",
+          "fixtureId": "sandbox-media-diagrams",
+          "anchor": {
+            "text": "I05｜発言者と時間の向きがある図"
+          }
+        }
+      ],
+      "checks": [
+        "I05・diagramが画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "layout-code-left": {
+      "suite": "extended",
+      "purpose": "Layout Code Left",
+      "visibilityChecks": [
+        {
+          "scope": "main",
+          "text": "L07｜長い識別子・狭い幅・水平にはみ出す内容",
+          "expectation": "present"
+        }
+      ],
+      "sourceReferences": [
+        {
+          "scope": "main",
+          "fixtureId": "layout-stress",
+          "anchor": {
+            "text": "L07｜長い識別子・狭い幅・水平にはみ出す内容"
+          }
+        }
+      ],
+      "checks": [
+        "L07・code横位置leftが画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "layout-code-middle": {
+      "suite": "extended",
+      "purpose": "Layout Code Middle",
+      "visibilityChecks": [
+        {
+          "scope": "main",
+          "text": "L07｜長い識別子・狭い幅・水平にはみ出す内容",
+          "expectation": "present"
+        }
+      ],
+      "sourceReferences": [
+        {
+          "scope": "main",
+          "fixtureId": "layout-stress",
+          "anchor": {
+            "text": "L07｜長い識別子・狭い幅・水平にはみ出す内容"
+          }
+        }
+      ],
+      "checks": [
+        "L07・code横位置middleが画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "layout-code-right": {
+      "suite": "extended",
+      "purpose": "Layout Code Right",
+      "visibilityChecks": [
+        {
+          "scope": "main",
+          "text": "L07｜長い識別子・狭い幅・水平にはみ出す内容",
+          "expectation": "present"
+        }
+      ],
+      "sourceReferences": [
+        {
+          "scope": "main",
+          "fixtureId": "layout-stress",
+          "anchor": {
+            "text": "L07｜長い識別子・狭い幅・水平にはみ出す内容"
+          }
+        }
+      ],
+      "checks": [
+        "L07・code横位置rightが画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "layout-table-left": {
+      "suite": "extended",
+      "purpose": "Layout Table Left",
+      "visibilityChecks": [
+        {
+          "scope": "main",
+          "text": "L08｜横に長い表・複数行になるセル",
+          "expectation": "present"
+        }
+      ],
+      "sourceReferences": [
+        {
+          "scope": "main",
+          "fixtureId": "layout-stress",
+          "anchor": {
+            "text": "L08｜横に長い表・複数行になるセル"
+          }
+        }
+      ],
+      "checks": [
+        "L08・table横位置leftが画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "layout-table-middle": {
+      "suite": "extended",
+      "purpose": "Layout Table Middle",
+      "visibilityChecks": [
+        {
+          "scope": "main",
+          "text": "L08｜横に長い表・複数行になるセル",
+          "expectation": "present"
+        },
+        {
+          "scope": "table",
+          "text": "申請内容",
+          "expectation": "present"
+        }
+      ],
+      "sourceReferences": [
+        {
+          "scope": "main",
+          "fixtureId": "layout-stress",
+          "anchor": {
+            "text": "L08｜横に長い表・複数行になるセル"
+          }
+        },
+        {
+          "scope": "table",
+          "fixtureId": "layout-stress",
+          "anchor": {
+            "text": "申請内容"
+          }
+        }
+      ],
+      "checks": [
+        "L08・table横位置middleが画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "layout-table-right": {
+      "suite": "extended",
+      "purpose": "Layout Table Right",
+      "visibilityChecks": [
+        {
+          "scope": "main",
+          "text": "L08｜横に長い表・複数行になるセル",
+          "expectation": "present"
+        }
+      ],
+      "sourceReferences": [
+        {
+          "scope": "main",
+          "fixtureId": "layout-stress",
+          "anchor": {
+            "text": "L08｜横に長い表・複数行になるセル"
+          }
+        }
+      ],
+      "checks": [
+        "L08・table横位置rightが画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "database-board-default": {
+      "suite": "extended",
+      "purpose": "Database Board Default",
+      "visibilityChecks": [],
+      "sourceReferences": [],
+      "checks": [
+        "ボード：状態ごとのカード・defaultが画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "database-board-narrow": {
+      "suite": "extended",
+      "purpose": "Database Board Narrow",
+      "visibilityChecks": [],
+      "sourceReferences": [],
+      "checks": [
+        "ボード：状態ごとのカード・narrowが画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "database-board-left": {
+      "suite": "extended",
+      "purpose": "Database Board Left",
+      "visibilityChecks": [],
+      "sourceReferences": [],
+      "checks": [
+        "ボード：状態ごとのカード・横位置 leftが画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "database-board-right": {
+      "suite": "extended",
+      "purpose": "Database Board Right",
+      "visibilityChecks": [],
+      "sourceReferences": [],
+      "checks": [
+        "ボード：状態ごとのカード・横位置 rightが画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "database-gallery-default": {
+      "suite": "extended",
+      "purpose": "Database Gallery Default",
+      "visibilityChecks": [],
+      "sourceReferences": [],
+      "checks": [
+        "ギャラリー：長い見出し・defaultが画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "database-gallery-narrow": {
+      "suite": "extended",
+      "purpose": "Database Gallery Narrow",
+      "visibilityChecks": [],
+      "sourceReferences": [],
+      "checks": [
+        "ギャラリー：長い見出し・narrowが画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "database-gallery-bottom": {
+      "suite": "extended",
+      "purpose": "Database Gallery Bottom",
+      "visibilityChecks": [],
+      "sourceReferences": [],
+      "checks": [
+        "ギャラリー：長い見出し・下端が画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "database-timeline-default": {
+      "suite": "extended",
+      "purpose": "Database Timeline Default",
+      "visibilityChecks": [
+        {
+          "scope": "main",
+          "text": "日本語の申請一覧｜表・カード・長いセル | AX Sandbox",
+          "expectation": "present"
+        }
+      ],
+      "sourceReferences": [
+        {
+          "scope": "main",
+          "fixtureId": "sandbox-project-database",
+          "anchor": {
+            "text": "日本語の申請一覧｜表・カード・長いセル | AX Sandbox"
+          }
+        }
+      ],
+      "checks": [
+        "タイムライン：期間と重なり・defaultが画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "database-timeline-narrow": {
+      "suite": "extended",
+      "purpose": "Database Timeline Narrow",
+      "visibilityChecks": [
+        {
+          "scope": "main",
+          "text": "日本語の申請一覧｜表・カード・長いセル | AX Sandbox",
+          "expectation": "present"
+        }
+      ],
+      "sourceReferences": [
+        {
+          "scope": "main",
+          "fixtureId": "sandbox-project-database",
+          "anchor": {
+            "text": "日本語の申請一覧｜表・カード・長いセル | AX Sandbox"
+          }
+        }
+      ],
+      "checks": [
+        "タイムライン：期間と重なり・narrowが画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "database-timeline-left": {
+      "suite": "extended",
+      "purpose": "Database Timeline Left",
+      "visibilityChecks": [
+        {
+          "scope": "database",
+          "text": "左右のカラムに表示された同じ文章を別々の矩形として扱い、画面外へ移動した文章の古い座標を残さないことを確認するための長い申請名",
+          "expectation": "present"
+        },
+        {
+          "scope": "database",
+          "text": "左右のカラムに表示された同じ文章を別々の矩形として扱い、画面外へ移動した文章の古い座標を残さないことを確認するための長い申請名",
+          "expectation": "present"
+        }
+      ],
+      "sourceReferences": [
+        {
+          "scope": "database",
+          "fixtureId": "sandbox-project-database",
+          "anchor": {
+            "text": "左右のカラムに表示された同じ文章を別々の矩形として扱い、画面外へ移動した文章の古い座標を残さないことを確認するための長い申請名",
+            "blockClass": "notion-collection-item"
+          }
+        },
+        {
+          "scope": "database",
+          "fixtureId": "sandbox-project-database",
+          "anchor": {
+            "text": "左右のカラムに表示された同じ文章を別々の矩形として扱い、画面外へ移動した文章の古い座標を残さないことを確認するための長い申請名",
+            "blockClass": "notion-timeline-item-properties"
+          }
+        }
+      ],
+      "checks": [
+        "タイムライン：期間と重なり・横位置 leftが画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "database-timeline-right": {
+      "suite": "extended",
+      "purpose": "Database Timeline Right",
+      "visibilityChecks": [
+        {
+          "scope": "database",
+          "text": "左右のカラムに表示された同じ文章を別々の矩形として扱い、画面外へ移動した文章の古い座標を残さないことを確認するための長い申請名",
+          "expectation": "present"
+        },
+        {
+          "scope": "database",
+          "text": "左右のカラムに表示された同じ文章を別々の矩形として扱い、画面外へ移動した文章の古い座標を残さないことを確認するための長い申請名",
+          "expectation": "present"
+        }
+      ],
+      "sourceReferences": [
+        {
+          "scope": "database",
+          "fixtureId": "sandbox-project-database",
+          "anchor": {
+            "text": "左右のカラムに表示された同じ文章を別々の矩形として扱い、画面外へ移動した文章の古い座標を残さないことを確認するための長い申請名",
+            "blockClass": "notion-collection-item"
+          }
+        },
+        {
+          "scope": "database",
+          "fixtureId": "sandbox-project-database",
+          "anchor": {
+            "text": "左右のカラムに表示された同じ文章を別々の矩形として扱い、画面外へ移動した文章の古い座標を残さないことを確認するための長い申請名",
+            "blockClass": "notion-timeline-item-properties"
+          }
+        }
+      ],
+      "checks": [
+        "タイムライン：期間と重なり・横位置 rightが画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "navigation-peek-center": {
+      "suite": "extended",
+      "purpose": "Navigation Peek Center",
+      "visibilityChecks": [],
+      "sourceReferences": [],
+      "checks": [
+        "一般文書・centerが画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "navigation-peek-full": {
+      "suite": "extended",
+      "purpose": "Navigation Peek Full",
+      "visibilityChecks": [],
+      "sourceReferences": [],
+      "checks": [
+        "一般文書・fullが画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "database-record-full-b08": {
+      "suite": "extended",
+      "purpose": "Database Record Full B08",
+      "visibilityChecks": [],
+      "sourceReferences": [],
+      "checks": [
+        "B08・レコードの全ページ表示が画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "navigation-menu": {
+      "suite": "extended",
+      "purpose": "Navigation Menu",
+      "visibilityChecks": [],
+      "sourceReferences": [],
+      "checks": [
+        "対象ウィンドウ内のメニューが画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "navigation-tooltip": {
+      "suite": "extended",
+      "purpose": "Navigation Tooltip",
+      "visibilityChecks": [],
+      "sourceReferences": [],
+      "checks": [
+        "対象ウィンドウ内のツールチップが画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "mixed-utf16-selection": {
+      "suite": "extended",
+      "purpose": "Mixed Utf16 Selection",
+      "visibilityChecks": [
+        {
+          "scope": "main",
+          "text": "M08｜絵文字と合成された文字",
+          "expectation": "present"
+        }
+      ],
+      "sourceReferences": [
+        {
+          "scope": "main",
+          "fixtureId": "mixed-language",
+          "anchor": {
+            "text": "M08｜絵文字と合成された文字"
+          }
+        }
+      ],
+      "checks": [
+        "M08・UTF-16範囲の選択が画面に再現されていること。",
+        "表示された文字の改行・省略・切り取りを原本と照合する。",
+        "画面外・非表示の全文を可視原文として扱わない。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "layout-default": {
+      "suite": "legacy",
+      "purpose": "[legacy] Layout Default",
+      "checks": [
+        "既存定義の画面状態が再現されていること。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "layout-narrow": {
+      "suite": "legacy",
+      "purpose": "[legacy] Layout Narrow",
+      "checks": [
+        "既存定義の画面状態が再現されていること。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "layout-clipped": {
+      "suite": "legacy",
+      "purpose": "[legacy] Layout Clipped",
+      "checks": [
+        "既存定義の画面状態が再現されていること。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "layout-toggle-open": {
+      "suite": "legacy",
+      "purpose": "[legacy] Layout Toggle Open",
+      "checks": [
+        "既存定義の画面状態が再現されていること。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "layout-toggle-closed": {
+      "suite": "legacy",
+      "purpose": "[legacy] Layout Toggle Closed",
+      "checks": [
+        "既存定義の画面状態が再現されていること。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "layout-zoom": {
+      "suite": "legacy",
+      "purpose": "[legacy] Layout Zoom",
+      "checks": [
+        "既存定義の画面状態が再現されていること。"
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    }
+  },
+  "sequences": {
+    "sidebar-roundtrip": [
+      "layout-wrap-1024-closed",
+      "layout-wrap-1024-pinned",
+      "layout-wrap-1024-closed"
+    ],
+    "window-roundtrip": [
+      "layout-wrap-1024-closed",
+      "layout-wrap-640-closed",
+      "layout-wrap-1024-closed"
+    ],
+    "preview-roundtrip": [
+      "navigation-peek-narrow",
+      "navigation-preview-middle",
+      "navigation-peek-layout-stress",
+      "navigation-peek-wide",
+      "navigation-default"
+    ],
+    "database-horizontal-roundtrip": [
+      "database-nowrap-left",
+      "database-nowrap-middle",
+      "database-nowrap-right",
+      "database-nowrap-left"
+    ],
+    "database-wrap-roundtrip": [
+      "database-nowrap-left",
+      "database-wrap-left",
+      "database-nowrap-left"
+    ],
+    "toggle-roundtrip": [
+      "layout-toggle-depth-0",
+      "layout-toggle-depth-2",
+      "layout-toggle-depth-0"
+    ],
+    "tab-roundtrip": [
+      "layout-tab-a",
+      "layout-tab-b",
+      "layout-tab-a"
+    ],
+    "reading-roundtrip": [
+      "reading-d01",
+      "reading-d16",
+      "reading-d01"
+    ]
+  }
+}
