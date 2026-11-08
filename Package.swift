@@ -6,6 +6,7 @@ let package = Package(
     platforms: [.macOS(.v15)],
     products: [
         .executable(name: "Rearview", targets: ["Rearview"]),
+        .executable(name: "NotionAXEvaluation", targets: ["NotionAXEvaluation"]),
         .executable(name: "BenchmarkFixture", targets: ["BenchmarkFixture"]),
         .executable(name: "NotionScenarios", targets: ["NotionScenarios"])
     ],
@@ -23,6 +24,7 @@ let package = Package(
             ]
         ),
         .executableTarget(name: "BenchmarkFixture"),
+        .executableTarget(name: "NotionAXEvaluation", dependencies: ["NotionScenarioCore"]),
         .target(name: "NotionScenarioCore"),
         .executableTarget(name: "NotionScenarios", dependencies: ["NotionScenarioCore"]),
         .testTarget(name: "NotionScenarioTests", dependencies: ["NotionScenarioCore"]),

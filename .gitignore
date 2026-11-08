@@ -21,3 +21,6 @@ notion-fixtures/runs/
 notion-fixtures/captures/
 notion-fixtures/scenarios/**/.scenario-*
 notion-fixtures/scenarios/**/*test*.json
+
+# Developer-local AX prototype observations
+notion-fixtures/evaluations/
