@@ -39,14 +39,36 @@ def atomic_copy(source, destination):
 
 def publish_baseline(scenario, report, source, output_root, replace=False):
     """Publish verified evidence as screen.png and manifest.json; never writes an index."""
+    destination = Path(output_root) / scenario["fixtureId"] / scenario["id"] / f"v{scenario['version']}"
+    image_path = destination / "screen.png"
+    manifest_path = destination / "manifest.json"
+    if image_path.is_file() and manifest_path.is_file():
+        return dict(directory=str(destination), alreadyRegistered=True)
     screenshot = report.get("screenshot") or {}
     if (report.get("scenarioId") != scenario.get("id")
+            or report.get("fixtureId") != scenario.get("fixtureId")
             or report.get("scenarioVersion") != scenario.get("version")
             or report.get("fixtureVersion") != scenario.get("fixtureVersion")
             or report.get("documentUnchanged") is not True
-            or report.get("status") == "failed"
+            or report.get("status") not in ("verified", "partial", "success")
             or not screenshot.get("capturedAt")):
         raise BaselineError("run evidence does not qualify as a baseline")
+    policy_path = Path(output_root).parent / "scenario-catalog.json"
+    policy = json.loads(policy_path.read_text()).get("cases", {}).get(scenario["id"], {}) if policy_path.exists() else {}
+    allowed = set(policy.get("allowedUnsupported", []))
+    steps = {step.get("item"): step for step in report.get("steps", [])}
+    required = set(scenario.get("state", {}).get("required", [])) | {"target", "preflight", "documentIntegrity", "screenshot"}
+    for item in required:
+        step = steps.get(item, {})
+        if step.get("status") == "verified":
+            continue
+        if item in allowed and step.get("status") == "unsupported":
+            if item == "zoom":
+                expected = {100: "Actual Size", 125: "Actual Size;Zoom In"}.get(scenario.get("state", {}).get("zoomPercent"))
+                if not expected or report.get("environment", {}).get("zoomCommandsApplied") != expected:
+                    raise BaselineError("Missing zoom command evidence")
+            continue
+        raise BaselineError("Missing verified required state: " + item)
     source = Path(source)
     try:
         width, height = png_dimensions(source)
@@ -57,9 +79,6 @@ def publish_baseline(scenario, report, source, output_root, replace=False):
 
     scenario_hash = fingerprint(scenario)
     image_hash = hashlib.sha256(source.read_bytes()).hexdigest()
-    destination = Path(output_root) / scenario["fixtureId"] / scenario["id"] / f"v{scenario['version']}"
-    image_path = destination / "screen.png"
-    manifest_path = destination / "manifest.json"
     manifest = dict(
         schemaVersion=1,
         scenarioId=scenario["id"],
@@ -76,19 +95,6 @@ def publish_baseline(scenario, report, source, output_root, replace=False):
         replayStatus=report.get("status"),
         documentUnchanged=True,
     )
-    existing = None
-    if manifest_path.is_file():
-        try:
-            existing = json.loads(manifest_path.read_text())
-        except (OSError, ValueError):
-            existing = None
-    if existing and not replace:
-        if (existing.get("scenarioSHA256") == scenario_hash
-                and existing.get("imageSHA256") == image_hash
-                and image_path.is_file()):
-            return dict(directory=str(destination), imageSHA256=image_hash, alreadyRegistered=True)
-        raise BaselineError("a different baseline already exists for this scenario version")
-
     atomic_copy(source, image_path)
     from .scenarios import atomic_json
     atomic_json(manifest_path, manifest)

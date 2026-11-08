@@ -48,6 +48,8 @@ anchor 스크롤은 해당 축의 viewport 시작점에서 `offset`만큼 떨어
 
 시나리오 정의와 재생은 Scenario 앱 또는 단일 시나리오용 `fixture scenario apply` 명령으로 수행한다. `scenario-catalog.json`에는 사례의 목적·확인 항목·상태 전환 순서가 기록되어 있다.
 
+앱에서 **Apply**하면 검증을 통과한 실행의 캡처를 누락된 기준으로 저장합니다. **Generate missing baselines**는 저장된 시나리오 중 이미지나 매니페스트가 없는 항목을 순차 Apply하고 진행과 결과를 표시합니다. Fixture와 샌드박스는 먼저 `fixture ensure`로 준비합니다. 기준 PNG와 매니페스트가 둘 다 있으면 보존하고, 하나라도 없으면 검증된 새 실행으로 두 파일을 함께 저장합니다. **Capture as new**도 같은 Python 저장 함수를 사용합니다. 첫 Apply부터 기준과 최신 이미지를 확인하고 픽셀 차이를 계산할 수 있습니다. 같은 실행으로 기준을 만들면 차이는 0이며, 후속 Apply에서는 독립된 실행 사이의 차이를 확인할 수 있습니다.
+
 Mermaid 표시 전환과 Timeline 이동은 원본 fixture의 저장 상태를 바꿀 수 있다. 이 8개 시나리오는 복제된 두 샌드박스에서만 실행하며, 원본 fixture의 수정 시각이나 콘텐츠는 변경하지 않는다. 샌드박스 ID는 일반 fixture와 함께 `state.json`에서 재사용하므로 시나리오마다 새 페이지나 DB가 쌓이지 않는다. 샌드박스에는 저장된 표시 설정 변경을 허용하므로 `ensure`는 해당 fixture들의 ID와 객체 구성을 확인하고 수정 시각은 검사하지 않는다.
 
 Notion의 Actions 메뉴는 배경 AX 노드를 숨긴다. 메뉴 사례는 열기 전 `backgroundState`를 필수로 검증하고, 최종 단계에서는 같은 창과 열린 메뉴를 확인한다. 숨겨진 배경 노드의 최종 AX 가시성을 검증했다고 표시하지 않는다. AX에 노출되지 않는 툴팁은 `expectedText`가 있을 때 선택 창의 픽셀을 Apple Vision으로 읽어 확인하며, 최종 판정은 저장된 `screen.png`에서 같은 문구를 다시 확인한다. 이는 표시 조건 검증이며 Rearview의 AX 추출기를 구현하는 것은 아니다.
@@ -139,3 +141,5 @@ python3 notion-fixtures/tests/live_scenarios.py
 ```
 
 마지막 명령은 가짜 서버 없이 실제 Notion에서 초기 6개 시나리오를 각각 두 번 적용한다. 줌만 `unsupported`, 그 외 단계는 `verified`, 스크린샷 존재, 문서 상태 유지 및 반복 적용 수렴을 확인한다. 실행 중 Notion을 조작하지 않는다. 결과 요약은 로컬 `runs/live-scenarios-summary.json`에 저장한다. 개별 실행 기록은 위의 `runs/<run-id>/`에 자동 저장되며, 이 문서에 날짜별로 추가하지 않는다.
+
+기준 생성 여부는 screen.png와 manifest.json의 존재 여부만 확인합니다. 기존 파일의 내용·해시·크기는 검사하지 않습니다. 새 기준을 저장할 실행은 필수 상태·문서 무변경·Fixture 버전·캡처 크기를 검증하며, 선택 상태 실패는 기준 저장을 막지 않습니다.

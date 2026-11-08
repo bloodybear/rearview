@@ -78,7 +78,7 @@ CLI도 패키징된 NotionScenarios 앱을 통해 실행합니다. 앱에 권한
 
 **Progress & item results**는 해당 실행의 단계별 상태·오류·시간과 실행 로그를 보여줍니다. **Requested / observed JSON**은 해당 실행이 요청한 값과 실제 관측값을 담은 전체 결과입니다. **Screenshot**은 현재 실행의 `screen.png`를 보여줍니다. 최신 실행이 Apply이고 같은 시나리오·버전의 기준 캡처가 있으면 두 이미지를 같은 높이로 나란히 표시하고 픽셀 단위 비교 결과를 보여줍니다. 이미지 크기가 다르면 픽셀 일치 비율은 계산하지 않습니다. 두 미리보기 중 하나를 누르면 큰 비교 창이 열립니다. 비교 창이 열린 상태에서 다른 실행의 미리보기를 누르면 창을 새로 만들지 않고 해당 실행의 이미지와 정보를 표시합니다. 비교 창에서는 픽셀 비교 결과 아래에 각 이미지의 제목을 해당 이미지 바로 위에 왼쪽 정렬해 표시합니다. 제목 옆 폴더 아이콘으로 기준 캡처 폴더와 Latest apply 실행 폴더를 각각 엽니다. 처음에는 화면에 맞게 표시하며, 드래그나 스크롤로 두 이미지를 함께 이동하고 `⌘+` / `⌘−`로 확대·축소, `⌘0`으로 100% 크기를 볼 수 있습니다. 이는 이미지끼리의 비교이며, JSON 상태값과 이미지가 같은지 자동 검증하는 기능은 아닙니다. **Open run folder**는 상단 **Latest run**에 해당하는 폴더를 엽니다.
 
-기존 시나리오의 기준 이미지는 **Register baselines from run summary…** 버튼에서 전체 실행 요약을 선택해 등록합니다. 먼저 `python3 -u notion-fixtures/tests/live_scenarios.py --suite all --repeat 1 --continue-on-error`를 실행해 요약을 만듭니다. Mermaid와 Timeline 화면은 원본 fixture 대신 고정 ID를 가진 Sandbox fixture에서 재생하며, `./notion-fixtures/fixture ensure --sandbox`로 준비할 수 있습니다. 실패한 화면은 기준으로 승격하지 않습니다.
+앱에서 **Apply**하면 검증을 통과한 실행의 캡처를 누락된 기준으로 저장합니다. **Generate missing baselines**는 저장된 시나리오 중 이미지나 매니페스트가 없는 항목을 순차 Apply하고 진행과 결과를 표시합니다. Fixture와 샌드박스는 먼저 `fixture ensure`로 준비합니다. 기준 PNG와 매니페스트가 둘 다 있으면 보존하고, 하나라도 없으면 검증된 새 실행으로 두 파일을 함께 저장합니다. **Capture as new**도 같은 Python 저장 함수를 사용합니다. 첫 Apply부터 기준과 최신 이미지를 확인하고 픽셀 차이를 계산할 수 있습니다. 같은 실행으로 기준을 만들면 차이는 0이며, 후속 Apply에서는 독립된 실행 사이의 차이를 확인할 수 있습니다.
 
 전체 상태 `verified`는 필수 항목을 모두 확인한 경우, `partial`은 일부만 확인된 경우, `failed`는 재현을 안전하게 마치지 못한 경우입니다. Notion의 숫자 줌 배율은 현재 검증할 수 없어 줌이 포함된 시나리오는 `partial`이 될 수 있습니다. 결과의 단계별 `detail`을 함께 확인하세요.
 
@@ -89,3 +89,5 @@ CLI도 패키징된 NotionScenarios 앱을 통해 실행합니다. 앱에 권한
 - **Fixture가 준비되지 않았거나 문서가 바뀜:** 별도로 `./notion-fixtures/fixture ensure`를 실행합니다. 복구가 필요한 문서 수정 사실을 알고 있다면 `reset`을 사용합니다. 시나리오의 `fixtureVersion`도 현재 정의와 일치해야 합니다.
 - **화면 저장은 실행됐지만 JSON이 없음:** 결과 JSON의 `captureSaveError`, `status`, `savedScenario`를 확인합니다. 실행 기록은 `runs/`에 남을 수 있습니다.
 - **현재 페이지를 Fixture와 연결할 수 없음:** Notion 데스크톱에서 대상 페이지를 포커스하고, 선택한 폴더의 Fixture인지 확인합니다. 폴더에 정의는 있지만 준비되지 않았다면 `./notion-fixtures/fixture ensure`를 실행합니다. 하나의 페이지 ID가 여러 Fixture에 등록되어 있다면 `state.json`을 점검합니다.
+
+기준 생성 여부는 screen.png와 manifest.json의 존재 여부만 확인합니다. 기존 파일의 내용·해시·크기는 검사하지 않습니다. 새 기준을 저장할 실행은 필수 상태·문서 무변경·Fixture 버전·캡처 크기를 검증하며, 선택 상태 실패는 기준 저장을 막지 않습니다.

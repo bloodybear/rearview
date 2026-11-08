@@ -1,5 +1,4 @@
 import AppKit
-import CryptoKit
 import CoreFoundation
 import SwiftUI
 import UniformTypeIdentifiers
@@ -292,135 +291,39 @@ private struct DeletedScenario {
             applyRoot(url)
         }
     }
-    func chooseBaselineSummary() {
+    private var baselineQueue: [String] = []
+    private var baselineResults: [String] = []
+    func generateMissingBaselines() {
         guard let root, !busy else { return }
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = true
-        panel.canChooseDirectories = false
-        panel.allowedContentTypes = [.json]
-        panel.directoryURL = root.appendingPathComponent("runs", isDirectory: true)
-        panel.message = "Choose an all-scenarios replay summary JSON"
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        registerBaselines(from: url)
+        baselineResults = []
+        baselineQueue = scenarios.filter { scenario in
+            let directory = root.appendingPathComponent("captures/\(scenario.fixtureId)/\(scenario.id)/v\(scenario.version)")
+            let imageURL = directory.appendingPathComponent("screen.png")
+            let manifestURL = directory.appendingPathComponent("manifest.json")
+            return !FileManager.default.fileExists(atPath: imageURL.path)
+                || !FileManager.default.fileExists(atPath: manifestURL.path)
+        }.map { $0.id }
+        generateNextBaseline()
     }
-    private func registerBaselines(from summaryURL: URL) {
-        guard let root else { return }
-        do {
-            let summaryData = try Data(contentsOf: summaryURL)
-            guard let summary = try JSONSerialization.jsonObject(with: summaryData) as? [String: Any],
-                  summary["suite"] as? String == "all",
-                  let runs = summary["runs"] as? [[String: Any]] else {
-                throw NSError(domain: "NotionScenarios", code: 1, userInfo: [NSLocalizedDescriptionKey: "Choose a replay summary created with --suite all."])
-            }
-            let catalogURL = root.appendingPathComponent("scenario-catalog.json")
-            guard let catalog = try JSONSerialization.jsonObject(with: Data(contentsOf: catalogURL)) as? [String: Any],
-                  let cases = catalog["cases"] as? [String: [String: Any]] else {
-                throw NSError(domain: "NotionScenarios", code: 2, userInfo: [NSLocalizedDescriptionKey: "scenario-catalog.json is missing or invalid."])
-            }
-            let runRecords = Dictionary(grouping: runs, by: { $0["scenarioId"] as? String ?? "" })
-            var registered = 0, existing = 0, skipped = 0, rejected = 0
-            for (scenarioId, caseInfo) in cases {
-                guard caseInfo["replaySupport"] as? String != "unsupported" else { skipped += 1; continue }
-                guard let scenario = scenarios.first(where: { $0.id == scenarioId }) else { skipped += 1; continue }
-                let scenarioURL = root.appendingPathComponent("scenarios", isDirectory: true)
-                    .appendingPathComponent(scenario.fixtureId, isDirectory: true)
-                    .appendingPathComponent("\(scenarioId).json")
-                guard let scenarioData = try? Data(contentsOf: scenarioURL),
-                      let scenarioObject = try? JSONSerialization.jsonObject(with: scenarioData),
-                      let scenarioDictionary = scenarioObject as? [String: Any] else {
-                    skipped += 1; continue
-                }
-                let scenarioHash = Self.sha256(try Self.canonicalJSON(scenarioDictionary))
-                guard let matchingRun = (runRecords[scenarioId] ?? []).reversed().first(where: {
-                    $0["accepted"] as? Bool == true && $0["scenarioSHA256"] as? String == scenarioHash
-                }),
-                let runDirectoryPath = matchingRun["runDirectory"] as? String,
-                let runId = matchingRun["runId"] as? String else { skipped += 1; continue }
-                let runDirectory = URL(fileURLWithPath: runDirectoryPath)
-                let resultURL = runDirectory.appendingPathComponent("result.json")
-                guard let resultData = try? Data(contentsOf: resultURL),
-                      let result = try? JSONSerialization.jsonObject(with: resultData) as? [String: Any],
-                      result["runId"] as? String == runId,
-                      result["scenarioId"] as? String == scenarioId,
-                      result["scenarioVersion"] as? Int == scenario.version,
-                      result["fixtureId"] as? String == scenario.fixtureId,
-                      result["fixtureVersion"] as? String == scenario.fixtureVersion,
-                      result["documentUnchanged"] as? Bool == true,
-                      result["status"] as? String != "failed",
-                      let screenshot = result["screenshot"] as? [String: Any],
-                      let capturedAt = screenshot["capturedAt"] as? String else { skipped += 1; continue }
-                let imageName = screenshot["file"] as? String ?? "screen.png"
-                let sourceURL = runDirectory.appendingPathComponent(imageName)
-                guard let expectedWidth = screenshot["pixelWidth"] as? Int,
-                      let expectedHeight = screenshot["pixelHeight"] as? Int else { rejected += 1; continue }
-                guard let imageData = try? Data(contentsOf: sourceURL),
-                      let dimensions = Self.pngDimensions(imageData),
-                      dimensions.width == expectedWidth,
-                      dimensions.height == expectedHeight else { rejected += 1; continue }
-                let imageHash = Self.sha256(imageData)
-                let destination = root.appendingPathComponent("captures", isDirectory: true)
-                    .appendingPathComponent(scenario.fixtureId, isDirectory: true)
-                    .appendingPathComponent(scenarioId, isDirectory: true)
-                    .appendingPathComponent("v\(scenario.version)", isDirectory: true)
-                let imageURL = destination.appendingPathComponent("screen.png")
-                let manifestURL = destination.appendingPathComponent("manifest.json")
-                if let oldData = try? Data(contentsOf: manifestURL),
-                   let old = try? JSONSerialization.jsonObject(with: oldData) as? [String: Any] {
-                    if old["scenarioSHA256"] as? String == scenarioHash,
-                       old["imageSHA256"] as? String == imageHash,
-                       FileManager.default.fileExists(atPath: imageURL.path) { existing += 1 }
-                    else { rejected += 1 }
-                    continue
-                }
-                let manifest: [String: Any] = [
-                    "schemaVersion": 1, "scenarioId": scenarioId, "fixtureId": scenario.fixtureId,
-                    "scenarioVersion": scenario.version, "fixtureVersion": scenario.fixtureVersion,
-                    "scenarioSHA256": scenarioHash, "sourceRunId": runId, "capturedAt": capturedAt,
-                    "frame": screenshot["frame"] ?? NSNull(), "pixelWidth": dimensions.width,
-                    "pixelHeight": dimensions.height, "imageSHA256": imageHash,
-                    "replayStatus": result["status"] ?? "verified", "documentUnchanged": true,
-                ]
-                try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
-                try imageData.write(to: imageURL, options: .atomic)
-                let manifestData = try JSONSerialization.data(withJSONObject: manifest, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
-                try (manifestData + Data([0x0A])).write(to: manifestURL, options: .atomic)
-                registered += 1
-            }
-            baselineRegistrationMessage = "Baseline registration: \(registered) created, \(existing) already current, \(skipped) skipped, \(rejected) rejected."
-        } catch {
-            baselineRegistrationMessage = "Baseline registration failed: \(error.localizedDescription)"
+    private func generateNextBaseline() {
+        guard !baselineQueue.isEmpty else {
+            baselineRegistrationMessage = "Finished.\n" + baselineResults.joined(separator: "\n")
+            return
         }
-    }
-    private static func sha256(_ data: Data) -> String {
-        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
-    }
-    private static func canonicalJSON(_ value: Any) throws -> Data {
-        func encode(_ value: Any) throws -> String {
-            if value is NSNull { return "null" }
-            if let string = value as? String {
-                let data = try JSONSerialization.data(withJSONObject: string, options: [.fragmentsAllowed, .withoutEscapingSlashes])
-                return String(decoding: data, as: UTF8.self)
-            }
-            if let number = value as? NSNumber {
-                if CFGetTypeID(number) == CFBooleanGetTypeID() { return number.boolValue ? "true" : "false" }
-                return number.stringValue
-            }
-            if let array = value as? [Any] { return "[" + (try array.map(encode).joined(separator: ", ")) + "]" }
-            if let object = value as? [String: Any] {
-                let keys = object.keys.sorted()
-                return "{" + (try keys.map { key in "\(try encode(key)): \(try encode(object[key]!))" }.joined(separator: ", ")) + "}"
-            }
-            throw NSError(domain: "NotionScenarios", code: 3, userInfo: [NSLocalizedDescriptionKey: "Unsupported JSON value in scenario."])
+        let id = baselineQueue.removeFirst()
+        baselineRegistrationMessage = "Applying \(id); \(baselineQueue.count) remaining\n" + baselineResults.joined(separator: "\n")
+        if hasUnsavedChanges(for: id) {
+            baselineResults.append("\(id): unsaved edits")
+            generateNextBaseline()
+            return
         }
-        return Data(try encode(value).utf8)
-    }
-    private static func pngDimensions(_ data: Data) -> (width: Int, height: Int)? {
-        guard data.count >= 24, data.prefix(8) == Data([137, 80, 78, 71, 13, 10, 26, 10]),
-              data[12..<16] == Data("IHDR".utf8) else { return nil }
-        func integer(_ range: Range<Int>) -> Int {
-            range.reduce(0) { ($0 << 8) | Int(data[$1]) }
+        command(["apply", id, "--json"]) { data in
+            self.showResult(data)
+            let value = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+            let outcome = value?["baselineSaveError"] as? String ?? value?["status"] as? String ?? "failed"
+            self.baselineResults.append("\(id): \(outcome)")
+            self.generateNextBaseline()
         }
-        return (integer(16..<20), integer(20..<24))
     }
     private func applyRoot(_ url: URL) {
         clearPendingDeletion()
@@ -864,6 +767,9 @@ private struct DeletedScenario {
         runStatus = value["status"] as? String ?? "failed"
         lastRunStatus = runStatus
         runErrorSummary = userFacingError(value) ?? ""
+        if let warning = value["baselineSaveError"] as? String {
+            runErrorSummary += "\nBaseline storage warning: " + warning
+        }
         lastRunId = value["runId"] as? String ?? lastRunId
         lastRunFixtureId = value["fixtureId"] as? String ?? lastRunFixtureId
         lastRunScenarioId = value["scenarioId"] as? String ?? lastRunScenarioId
@@ -1134,7 +1040,7 @@ struct ScenarioView: View {
                     .focused($chooseFolderFocused)
                     .scenarioHoverHighlight()
                 Text(model.root?.path ?? "Select notion-fixtures folder").font(.caption).textSelection(.enabled)
-                Button("Register baselines from run summary…") { model.chooseBaselineSummary() }
+                Button("Generate missing baselines") { model.generateMissingBaselines() }
                     .disabled(model.root == nil || model.busy)
                     .scenarioHoverHighlight()
                 if !model.baselineRegistrationMessage.isEmpty {

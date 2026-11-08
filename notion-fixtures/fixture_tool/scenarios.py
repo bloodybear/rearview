@@ -501,10 +501,8 @@ def capture_new_scenario(root, scenario_id, name, definition, expected_page_id=N
                     report["savedBaseline"] = baseline
                 except (BaselineError, OSError, ValueError) as exc:
                     report["baselineSaveError"] = str(exc)
-                    report["status"] = "partial"
             elif report.get("savedScenario"):
                 report["baselineSaveError"] = "Capture was not promoted because document integrity was not verified"
-                report["status"] = "partial"
         except (FixtureError, OSError) as exc:
             report["captureSaveError"] = str(exc)
             report["status"] = "failed"
@@ -662,6 +660,16 @@ def execute(root, scenario, operation, expected_page_id=None):
     report["durationMs"] = int((time.monotonic() - start) * 1000)
     report["finishedAt"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
     report["runDirectory"] = str(directory)
+    if operation == "apply" and report["status"] != "failed":
+        try:
+            current = find(root, scenario["id"])
+            replay_fields = ("id", "fixtureId", "version", "fixtureVersion", "fixtureVersions", "state")
+            if current is None or any(current.get(key) != scenario.get(key) for key in replay_fields):
+                raise BaselineError("Scenario changed during Apply")
+            check_source_versions(root, scenario)
+            report["savedBaseline"] = publish_baseline(scenario, report, directory / "screen.png", root / "captures")
+        except (BaselineError, FixtureError, OSError, ValueError) as exc:
+            report["baselineSaveError"] = str(exc)
     atomic_json(directory / "result.json", report)
     return report
 
