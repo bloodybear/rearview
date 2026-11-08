@@ -46,33 +46,11 @@ anchor 스크롤은 해당 축의 viewport 시작점에서 `offset`만큼 떨어
 
 캡처 대상은 실행 시작에 선택한 Notion 창 하나다. `screen.png`는 전체 창이며 다른 창의 가림을 포함하지 않는다. `region.png`는 그 이미지에서 선택 영역을 별도로 잘라 저장한다. 창 프레임, 실제 픽셀 크기, 축별 points→pixels 배율을 결과에 기록한다. 영역 안에 보이는 사이드바·도구·문서·미리보기 모두 후속 AX 평가 대상이다.
 
-시나리오 생성과 반복 재생:
-
-```sh
-python3 -u notion-fixtures/tests/live_scenarios.py --suite core --repeat 2 --return-pass --sequences
-python3 -u notion-fixtures/tests/live_scenarios.py --suite extended --repeat 2 --return-pass
-python3 -u notion-fixtures/tests/live_scenarios.py --suite legacy --repeat 2 --return-pass
-./notion-fixtures/fixture ensure --sandbox
-python3 notion-fixtures/tools/review_scenario_runs.py notion-fixtures/runs/<실행-요약>.json
-```
-
-`scenario-catalog.json`은 사례의 목적·확인 항목·상태 전환 순서를 담는다. 실행 요약의 `replay_verified`는 필수 화면 상태와 문서 무변경 검사를 통과했다는 뜻이다. `visualReview: pending`은 스크린샷 검토가 남았다는 뜻이며 AX 원문·좌표 정확성의 합격 판정이 아니다. 수치 줌 readback만 예외적으로 미지원 상태를 허용하며, 실제 크기 명령을 보낸 증거가 필요하다. 다른 필수 상태 실패는 허용하지 않는다.
-
-재생 시나리오 전체를 한 번 실행해 기준 이미지를 만들려면 먼저 `./notion-fixtures/fixture ensure --sandbox`로 두 샌드박스만 준비한 뒤 `python3 -u notion-fixtures/tests/live_scenarios.py --suite all --repeat 1 --continue-on-error`를 실행한다. 앱의 **Register baselines from run summary…** 버튼에서 생성된 요약 JSON을 선택하면 검증된 캡처를 등록한다. Mermaid와 Timeline 시나리오는 각각 `sandbox-media-diagrams`, `sandbox-project-database`를 사용한다. 기본 `fixture ensure`에도 두 샌드박스가 포함되며, `--sandbox`는 샌드박스만 선택한다. 샌드박스는 생성 시 페이지·DB·Data Source·레코드·뷰 ID를 기록하고 수정 시각은 재사용 판단에서 제외한다. 표시 상태 변경은 샌드박스 안에서만 허용한다. 앱의 **Capture as new**와 일괄 등록 기능은 검증된 `screen.png`와 동일한 형식의 `manifest.json`을 `captures/<fixture-id>/<scenario-id>/v<version>/`에 저장한다. 이후 앱에서 같은 버전의 Apply를 실행하면 기준 캡처와 최신 이미지를 나란히 보여주고 픽셀 차이를 계산한다. 실패 실행은 등록하지 않는다. 별도 인덱스 파일은 만들거나 읽지 않는다.
+시나리오 정의와 재생은 Scenario 앱 또는 단일 시나리오용 `fixture scenario apply` 명령으로 수행한다. `scenario-catalog.json`에는 사례의 목적·확인 항목·상태 전환 순서가 기록되어 있다.
 
 Mermaid 표시 전환과 Timeline 이동은 원본 fixture의 저장 상태를 바꿀 수 있다. 이 8개 시나리오는 복제된 두 샌드박스에서만 실행하며, 원본 fixture의 수정 시각이나 콘텐츠는 변경하지 않는다. 샌드박스 ID는 일반 fixture와 함께 `state.json`에서 재사용하므로 시나리오마다 새 페이지나 DB가 쌓이지 않는다. 샌드박스에는 저장된 표시 설정 변경을 허용하므로 `ensure`는 해당 fixture들의 ID와 객체 구성을 확인하고 수정 시각은 검사하지 않는다.
 
-검토 도구는 `runs/review/index.html`에 전체 창·선택 영역·요청 상태를 나란히 연결한다. 실제 PNG를 확인한 실행만 `--record <run-id> --verdict pass|fail --note '<구체적인 관찰>'`로 기록한다. 재생 실패는 육안 검토에서 pass로 바꿀 수 없다. 실행 요약에는 앱 바이너리와 카탈로그의 SHA-256, 각 시나리오의 SHA-256을 기록하며 PNG 헤더의 실제 크기도 결과 메타데이터와 대조한다.
-
 Notion의 Actions 메뉴는 배경 AX 노드를 숨긴다. 메뉴 사례는 열기 전 `backgroundState`를 필수로 검증하고, 최종 단계에서는 같은 창과 열린 메뉴를 확인한다. 숨겨진 배경 노드의 최종 AX 가시성을 검증했다고 표시하지 않는다. AX에 노출되지 않는 툴팁은 `expectedText`가 있을 때 선택 창의 픽셀을 Apple Vision으로 읽어 확인하며, 최종 판정은 저장된 `screen.png`에서 같은 문구를 다시 확인한다. 이는 표시 조건 검증이며 Rearview의 AX 추출기를 구현하는 것은 아니다.
-
-전체 완료 여부는 현재 정의와 실행 요청의 해시까지 대조해 확인한다:
-
-```sh
-python3 notion-fixtures/tools/audit_scenario_coverage.py notion-fixtures/runs/<요약1>.json notion-fixtures/runs/<요약2>.json --require-current-build
-```
-
-사례마다 반복 실행·다른 상태 후 재방문·명시적 스크린샷 검토가 있어야 완료로 집계한다. 상태 전환 시퀀스도 별도로 확인한다. 오래된 정의나 다른 빌드의 결과를 최신 검증으로 혼동하지 않도록 미충족 항목을 `runs/coverage.json`과 같은 이름의 Markdown 파일에 남긴다.
 
 `scenarios/<fixture-id>/<scenario-id>.json`은 Git으로 공유한다. 실제 페이지 ID는 기존 로컬 `state.json`에서 조회한다. `fixtureVersion`은 기존 문서 정의의 `source_hash` SHA-256이며, 변경되면 묵시적으로 재지정하지 않고 중단한다. 기존 시나리오를 검토하고 해당 해시를 갱신해 저장한다. 원격 문서가 baseline과 다르거나 관리 루트 밖으로 이동해도 재현하지 않는다.
 
