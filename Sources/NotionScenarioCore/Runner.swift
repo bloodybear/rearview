@@ -356,13 +356,18 @@ public final class ScenarioRunner {
         if let side = state.sidebar, side.mode == "floating" {
             await step("sidebar") { try await self.applySidebar(side) }
         }
-        await stabilizeCodeBoundaryBaselines()
+        await stabilizeVisualScrollBaselines()
     }
-    private func stabilizeCodeBoundaryBaselines() async {
+    private func stabilizeVisualScrollBaselines() async {
         for (index, scroll) in (request.scenario.state.scrolls ?? []).enumerated()
         where visualFrames[index] != nil {
             await step("scroll.\(index).stableBaseline") {
-                try await self.hoverCodeBlock(container: scroll.container)
+                // Pixel proofs are also used by ordinary paragraph scrolling
+                // (advancePixels). Only code panes need their hover controls
+                // exposed; requiring a code block here breaks main/preview scrolls.
+                if scroll.scope == "code" {
+                    try await self.hoverCodeBlock(container: scroll.container)
+                }
                 let (viewport, bounds) = try self.scopedViewport(scroll.scope, container: scroll.container, axis: scroll.axis)
                 self.parkPointer()
                 var previous = "", stable = 0
@@ -374,7 +379,7 @@ public final class ScenarioRunner {
                 }
                 self.visualFrames[index] = bounds
                 self.visualBoundaries[index] = previous
-                try await self.saveDiagnosticScreenshot("code-stable-\(index).png")
+                try await self.saveDiagnosticScreenshot("scroll-stable-\(index).png")
                 self.result.environment["scroll.\(index).stableBaseline"] = "Pointer parked and viewport pixels stable after requested focus and overlay state"
             }
         }
