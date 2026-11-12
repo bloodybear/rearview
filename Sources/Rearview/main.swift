@@ -7,6 +7,9 @@ if CommandLine.arguments.contains("--self-test") {
 }
 
 #if !LST_EXCLUDE_DEBUG_FEATURES
+if CommandLine.arguments.contains("--translate-ax-report") {
+    exit(await AXReportTranslationRunner.run())
+}
 if CommandLine.arguments.contains("--translation-provider-smoke") {
     exit(await TranslationProviderSmokeRunner.run())
 }
