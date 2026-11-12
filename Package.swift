@@ -17,17 +17,21 @@ let package = Package(
         .executableTarget(
             name: "Rearview",
             dependencies: [
-                .product(name: "Sparkle", package: "Sparkle")
+                .product(name: "Sparkle", package: "Sparkle"),
+                "NotionAXCore", "NotionAXReportSupport"
             ],
             swiftSettings: [
                 .unsafeFlags(["-Xfrontend", "-strict-concurrency=minimal"])
             ]
         ),
         .executableTarget(name: "BenchmarkFixture"),
-        .executableTarget(name: "NotionAXEvaluation", dependencies: ["NotionScenarioCore"]),
+        .target(name: "NotionAXCore"),
+        .target(name: "NotionAXReportSupport", dependencies: ["NotionAXCore"]),
+        .executableTarget(name: "NotionAXEvaluation", dependencies: ["NotionScenarioCore", "NotionAXCore", "NotionAXReportSupport"]),
         .target(name: "NotionScenarioCore"),
         .executableTarget(name: "NotionScenarios", dependencies: ["NotionScenarioCore"]),
-        .testTarget(name: "NotionAXEvaluationTests", dependencies: ["NotionAXEvaluation"]),
+        .testTarget(name: "NotionAXEvaluationTests", dependencies: ["NotionAXCore"]),
+        .testTarget(name: "NotionAXCoreTests", dependencies: ["NotionAXCore"]),
         .testTarget(name: "NotionScenarioTests", dependencies: ["NotionScenarioCore"]),
         .testTarget(
             name: "RearviewTests",

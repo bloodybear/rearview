@@ -1,3 +1,4 @@
+import NotionAXCore
 import AppKit
 import os
 
@@ -112,6 +113,18 @@ final class SessionCoordinator {
     private let broker: any SessionTranslationProvider
     private let capture: any SessionCaptureProvider
     private let targetResolver: any SessionTargetResolver
+    private let ax: any SessionAXProvider
+    private(set) var textExtractionMode: TextExtractionMode = .ocr
+    struct AXFrameSnapshot {
+        let snapshot: AXExtractionSnapshot
+        let image: CGImage
+        let frameID: UInt64
+        let receivedAt: UInt64
+    }
+    private(set) var latestAXFrame: AXFrameSnapshot?
+    var latestAXSnapshot: AXExtractionSnapshot? { latestAXFrame?.snapshot }
+    var onAXExtraction: ((AXExtractionSnapshot, CGImage, UInt64) -> Void)?
+    var onAXExtractionError: ((Error) -> Void)?
     private let ocr: any SessionOCRProvider
     private let changes = ChangeDetector()
     private let outputSink: (any SessionOutputSink)?
@@ -176,6 +189,7 @@ final class SessionCoordinator {
         capture: any SessionCaptureProvider = ScreenCaptureEngine(),
         targetResolver: any SessionTargetResolver = CaptureApplicationPicker(),
         ocr: any SessionOCRProvider = OCRService(),
+        ax: any SessionAXProvider = NativeSessionAXProvider(),
         outputSink: (any SessionOutputSink)? = nil,
         createsOutputWindow: Bool = true
     ) {
@@ -183,8 +197,64 @@ final class SessionCoordinator {
         self.capture = capture
         self.targetResolver = targetResolver
         self.ocr = ocr
+        self.ax = ax
         self.outputSink = outputSink
         self.createsOutputWindow = createsOutputWindow
+    }
+
+    var usesAXExtraction: Bool {
+        textExtractionMode == .ax && captureTarget.application?.bundleIdentifier == "notion.id"
+    }
+
+    func setTextExtractionMode(_ mode: TextExtractionMode) async {
+        guard mode != textExtractionMode else { return }
+        textExtractionMode = mode
+        invalidateCapturedContent()
+        await ax.endSession()
+    }
+
+    private func axRequest() throws -> AXExtractionRequest {
+        guard let app = captureTarget.application,
+              let windowID = windowTrackingAnchor?.windowID ?? app.anchorWindowID,
+              let windowFrame = windowTrackingAnchor?.lastKnownWindowFrame ?? app.anchorWindowFrame,
+              let screen = selectedScreen, let displayID = Self.displayID(for:screen) else {
+            throw AXExtractionError.windowMappingFailed
+        }
+        return AXExtractionRequest(processID:app.processID,windowID:windowID,windowFrame:windowFrame,
+            selectionRegion:screenCaptureRect(for:selection,screenFrame:screen.frame,displayBounds:CGDisplayBounds(displayID)))
+    }
+
+    private func scheduleAX(_ frame: FrameEnvelope, origin: MirrorStatusOrigin) {
+        let activeGeneration = generation, activeRevision = contentRevision
+        ocrTaskSequence &+= 1
+        let sequence = ocrTaskSequence
+        ocrTaskRevision = activeRevision
+        showProcessingStatus(.recognizing, frameID:frame.id, origin:origin)
+        ocrTask = Task { [weak self] in
+            guard let self else { return }
+            defer {
+                if self.generation == activeGeneration, self.ocrTaskSequence == sequence {
+                    self.ocrTask = nil; self.ocrTaskRevision = nil
+                    _ = self.processPendingAutomaticFrameIfPossible()
+                }
+            }
+            do {
+                let request = try self.axRequest()
+                let result = try await self.ax.collect(request)
+                guard !Task.isCancelled, self.generation == activeGeneration,
+                      self.contentRevision == activeRevision, self.ocrTaskSequence == sequence else { return }
+                self.latestAXFrame = AXFrameSnapshot(snapshot:result,image:frame.image,frameID:frame.id,receivedAt:frame.receivedAt)
+                self.display(MirrorFrame(image:frame.image,translatedItems:[],frameID:frame.id))
+                self.showProcessingStatus(.completed(failures:result.status == .complete ? 0 : 1),frameID:frame.id,origin:origin)
+                self.onAXExtraction?(result, frame.image, frame.id)
+            } catch {
+                guard !Task.isCancelled, self.generation == activeGeneration,
+                      self.contentRevision == activeRevision, self.ocrTaskSequence == sequence else { return }
+                self.display(MirrorFrame(image:frame.image,translatedItems:[],frameID:frame.id))
+                self.showProcessingStatus(.recognitionFailed,frameID:frame.id,origin:origin)
+                self.onAXExtractionError?(error)
+            }
+        }
     }
 
     func start(
@@ -262,6 +332,7 @@ final class SessionCoordinator {
     }
 
     func stop() async {
+        latestAXFrame = nil
         guard !stopping else { return }
         stopping = true
         defer { stopping = false }
@@ -294,6 +365,7 @@ final class SessionCoordinator {
         debugCaptureTranscript?.close()
         debugCaptureTranscript = nil
         await capture.stop()
+        await ax.endSession()
     }
 
     func setMirrorUpdateStyle(_ style: MirrorUpdateStyle) async {
@@ -619,6 +691,7 @@ final class SessionCoordinator {
     }
 
     private func suspendAutomaticProcessing() {
+        latestAXFrame = nil
         contentRevision += 1
         ocrTask?.cancel()
         ocrTask = nil
@@ -858,6 +931,7 @@ final class SessionCoordinator {
         selectionUpdateTask = nil
         invalidateCapturedContent()
         acceptingFrames = false
+        await ax.endSession()
         do {
             try await updateCaptureTarget(target, on: selectedScreen)
         } catch {
@@ -1050,6 +1124,7 @@ final class SessionCoordinator {
     }
 
     private func invalidateCapturedContent() {
+        latestAXFrame = nil
         contentRevision += 1
         ocrTask?.cancel()
         ocrTask = nil
@@ -1077,7 +1152,7 @@ final class SessionCoordinator {
         guard refreshMode == .automatic, !paused else { return }
         if latestFrame != nil { PerformanceProfiler.shared.increment("frame.overwritten") }
         latestFrame = received
-        if benchmarkDiagnostics, !initialComparisonStarted, frameID >= 3 {
+        if !usesAXExtraction, benchmarkDiagnostics, !initialComparisonStarted, frameID >= 3 {
             initialComparisonStarted = true
             scheduleInitialOCRComparison(received)
         }
@@ -1160,7 +1235,7 @@ final class SessionCoordinator {
             return
         }
 
-        guard refinementOCRPolicy.automaticStrategy == .realtimeThenRefinement,
+        guard !usesAXExtraction, refinementOCRPolicy.automaticStrategy == .realtimeThenRefinement,
               lastMotion.duration(to: now) >= refinementOCRPolicy.delay,
               lastRefinementEpoch != stabilityEpoch else { return }
         switch decideRefinementOCR(
@@ -1183,6 +1258,7 @@ final class SessionCoordinator {
         _ frame: FrameEnvelope, mode: OCRMode, roi: CGRect?, followWithRefinement: Bool = false,
         origin: MirrorStatusOrigin = .automatic
     ) {
+        if usesAXExtraction { scheduleAX(frame, origin:origin); return }
         let activeGeneration = generation
         let activeRevision = contentRevision
         ocrTaskSequence &+= 1

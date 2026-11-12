@@ -3,6 +3,7 @@
 body{font:14px system-ui;margin:20px;line-height:1.6}button{cursor:pointer}nav{display:flex;gap:8px;align-items:center;position:sticky;top:0;background:#fff;z-index:40;padding:10px 0;flex-wrap:wrap}nav button{padding:7px 14px}nav button[aria-pressed=true]{background:#222;color:white}.screen{position:relative;overflow:hidden}.screen img{width:100%;height:100%}.box{position:absolute;background:transparent;border:1px solid #d22;box-sizing:border-box;z-index:1}.box:hover{background:#8882}.number{position:absolute;z-index:20;background:rgba(255,255,255,.45);color:#a00000;border:1px solid currentColor;border-radius:3px;padding:1px 2px;font:bold 12px/1.2 monospace;cursor:copy}.paragraph{border:2px solid #16803c;color:#12652f}.line{border-color:#245bd4;color:#245bd4}.title-source{border:2px dashed #be7900}.related{background:#a000ff20!important;outline:2px solid #a000ff}dialog{max-width:800px;width:85vw;max-height:85vh;overflow:auto}dialog::backdrop{background:#0006}pre{white-space:pre-wrap;overflow-wrap:anywhere}#notice{position:fixed;bottom:15px;right:15px;background:#222;color:#fff;padding:12px;z-index:100}#members button{margin:3px}table{border-collapse:collapse}td,th{border:1px solid #ccc;padding:7px;vertical-align:top}[hidden]{display:none!important}
 </style>
 <h1>__SCENARIO__</h1>
+<details id="collectionDetails" hidden><summary>실제 수집·스크린샷 시점</summary><pre id="collectionMetadata"></pre></details>
 <p id="coverageNote" role="status" hidden></p>
 <p>문단보기는 번역 단위 후보를 표시합니다: 본문 AXTextArea, 탭·DB 셀의 native 컨트롤 라벨, 그 외 선택 텍스트. 원문을 조합하지 않으며 의미상 문단을 보증하지 않습니다. 노드·라인은 현재 선택 결과이며 픽셀 가시성은 미검증입니다. 번호 클릭: 참조 복사 / 박스 클릭: 원문·소속 관계. 번호가 박스보다 클릭 우선입니다.</p>
 <nav aria-label="박스 보기"><button data-mode="paragraph" aria-pressed="true">문단보기</button><button data-mode="node" aria-pressed="false">노드보기</button><button data-mode="line" aria-pressed="false">라인보기</button><button data-mode="none" aria-pressed="false">원본보기 (박스 없음)</button><button id="clear">소속 강조 해제</button><span id="count"></span></nav>
@@ -19,6 +20,7 @@ if((data.coverageLimitations||[]).includes('menu_background_not_exposed_by_ax'))
  note.textContent='수집 한계: 메뉴가 열린 동안 배경 본문이 AX에 노출되지 않아 메뉴만 수집했습니다. 화면에 보이는 본문까지 수집 완료한 결과가 아닙니다.';
 }
 
+if(data.collection?.collector){document.getElementById('collectionDetails').hidden=false;document.getElementById('collectionMetadata').textContent=JSON.stringify(data.collection,null,2);}
 const nodes=new Map(data.nodes.map(n=>[n.id,n])),selected=new Map(data.selected.map(n=>[n.node,n]));
 let mode='paragraph',current,focusMembers=[];
 Object.assign(screen.style,{width:data.frame.width+'px',height:data.frame.height+'px'});

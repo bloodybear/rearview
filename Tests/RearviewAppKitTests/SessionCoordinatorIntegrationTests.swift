@@ -2,6 +2,7 @@
 import AppKit
 import XCTest
 @testable import Rearview
+@testable import NotionAXCore
 
 private actor TestGate {
     private var hasStarted = false
@@ -107,6 +108,21 @@ private final class TestOCRProvider: SessionOCRProvider, @unchecked Sendable {
     }
 }
 
+private actor TestAXProvider: SessionAXProvider {
+    var calls = 0
+    let gate: TestGate?
+    let failure: AXExtractionError?
+    init(gate: TestGate? = nil, failure: AXExtractionError? = nil) { self.gate = gate; self.failure = failure }
+    func collect(_ request: AXExtractionRequest) async throws -> AXExtractionSnapshot {
+        calls += 1
+        if let gate { await gate.wait() }
+        if let failure { throw failure }
+        // Intentionally ignores cancellation to test stale-result rejection.
+        return try AXExtractionSnapshot(nodes:[],selected:[],paragraphs:[],metadata:["status":"partial","reason":"injected_limit"])
+    }
+    func endSession() async {}
+}
+
 @MainActor
 private final class TestTranslationProvider: SessionTranslationProvider {
     var translations: [String: String]
@@ -162,6 +178,161 @@ final class SessionCoordinatorIntegrationTests: XCTestCase {
         }
         coordinatorsUnderTest.removeAll()
         try await super.tearDown()
+    }
+
+    func testAXPublishesPartialSnapshotWithoutOCRorTranslation() async throws {
+        let capture = TestCaptureProvider(), output = TestOutputSink(), ax = TestAXProvider()
+        let ocrGate = TestGate()
+        let translator = TestTranslationProvider(translations:[:])
+        let coordinator = SessionCoordinator(broker:translator,capture:capture,targetResolver:TestTargetResolver(),
+            ocr:TestOCRProvider(batch:makeBatch(lines:[]),gate:ocrGate),ax:ax,outputSink:output,createsOutputWindow:false)
+        coordinatorsUnderTest.append(coordinator)
+        let (screen, selection) = try makeScreenAndSelection()
+        await coordinator.setTextExtractionMode(.ax)
+        try await coordinator.start(screen:screen,selection:selection,captureTarget:.application(
+            CaptureApplication(processID:123,bundleIdentifier:"notion.id",name:"Notion",anchorWindowID:42,anchorWindowFrame:screen.frame)))
+        coordinator.setRefreshMode(.automatic); coordinator.setPaused(false)
+        let done = expectation(description:"AX result")
+        coordinator.onAXExtraction = { _, _, _ in done.fulfill() }
+        capture.emit(makeImage(gray:40),frameID:1)
+        await fulfillment(of:[done],timeout:2)
+        let calls = await ax.calls
+        XCTAssertEqual(calls,1)
+        XCTAssertNotNil(coordinator.latestAXSnapshot)
+        XCTAssertEqual(coordinator.latestAXFrame?.frameID,1)
+        XCTAssertEqual(output.frames.last?.translatedItems.count,0)
+        XCTAssertTrue(translator.calls.isEmpty)
+        XCTAssertTrue(output.statuses.contains(.completed(failures:1)))
+    }
+
+    func testLateAXResultAfterModeChangeIsDiscarded() async throws {
+        let gate = TestGate()
+        let delayedAX = TestAXProvider(gate:gate)
+        let capture = TestCaptureProvider(), output = TestOutputSink()
+        let coordinator = SessionCoordinator(broker:TestTranslationProvider(translations:[:]),capture:capture,
+            targetResolver:TestTargetResolver(),ocr:TestOCRProvider(batch:makeBatch(lines:[])),ax:delayedAX,outputSink:output,createsOutputWindow:false)
+        coordinatorsUnderTest.append(coordinator)
+        let (screen, selection) = try makeScreenAndSelection()
+        await coordinator.setTextExtractionMode(.ax)
+        try await coordinator.start(screen:screen,selection:selection,captureTarget:.application(
+            CaptureApplication(processID:123,bundleIdentifier:"notion.id",name:"Notion",anchorWindowID:42,anchorWindowFrame:screen.frame)))
+        coordinator.setRefreshMode(.automatic); coordinator.setPaused(false)
+        capture.emit(makeImage(gray:40),frameID:1)
+        await gate.waitUntilStarted()
+        await coordinator.setTextExtractionMode(.ocr)
+        await gate.release()
+        for _ in 0..<10 { await Task.yield() }
+        XCTAssertNil(coordinator.latestAXSnapshot)
+        XCTAssertTrue(output.frames.isEmpty)
+    }
+
+    func testNewestPendingFrameRunsAfterInFlightAXFinishes() async throws {
+        let gate = TestGate(), ax = TestAXProvider(gate:gate)
+        let capture = TestCaptureProvider(), output = TestOutputSink()
+        let coordinator = SessionCoordinator(broker:TestTranslationProvider(translations:[:]),capture:capture,
+            targetResolver:TestTargetResolver(),ocr:TestOCRProvider(batch:makeBatch(lines:[])),ax:ax,outputSink:output,createsOutputWindow:false)
+        coordinatorsUnderTest.append(coordinator)
+        let (screen, selection) = try makeScreenAndSelection()
+        await coordinator.setTextExtractionMode(.ax)
+        try await coordinator.start(screen:screen,selection:selection,captureTarget:.application(
+            CaptureApplication(processID:123,bundleIdentifier:"notion.id",name:"Notion",anchorWindowID:42,anchorWindowFrame:screen.frame)))
+        await coordinator.setCapturePolicy(CapturePolicy(targetFPS:30,realtimeOCRIntervalMilliseconds:100))
+        coordinator.setRefreshMode(.automatic); coordinator.setPaused(false)
+        let first = expectation(description:"first AX"), latest = expectation(description:"newest AX")
+        coordinator.onAXExtraction = { _, _, id in
+            if id == 10 { first.fulfill() }
+            if id == 12 { latest.fulfill() }
+        }
+        let firstImage = makeImage(width:32,height:24,gray:40)
+        let newestImage = makeImage(width:32,height:24,gray:40,changedPixel:(0,0,255))
+        capture.emit(firstImage,frameID:10)
+        await gate.waitUntilStarted()
+        capture.emit(newestImage,frameID:11)
+        await gate.release()
+        await fulfillment(of:[first],timeout:2)
+        try await Task.sleep(for:.milliseconds(120))
+        capture.emit(newestImage,frameID:12)
+        await fulfillment(of:[latest],timeout:2)
+        XCTAssertEqual(output.frames.last?.frameID,12)
+    }
+
+    func testStoppedSessionDiscardsLateAX() async throws {
+        let gate = TestGate(), ax = TestAXProvider(gate:gate)
+        let capture = TestCaptureProvider(), output = TestOutputSink()
+        let coordinator = SessionCoordinator(broker:TestTranslationProvider(translations:[:]),capture:capture,
+            targetResolver:TestTargetResolver(),ocr:TestOCRProvider(batch:makeBatch(lines:[])),ax:ax,outputSink:output,createsOutputWindow:false)
+        coordinatorsUnderTest.append(coordinator)
+        let (screen, selection) = try makeScreenAndSelection()
+        await coordinator.setTextExtractionMode(.ax)
+        try await coordinator.start(screen:screen,selection:selection,captureTarget:.application(
+            CaptureApplication(processID:123,bundleIdentifier:"notion.id",name:"Notion",anchorWindowID:42,anchorWindowFrame:screen.frame)))
+        coordinator.setRefreshMode(.automatic); coordinator.setPaused(false)
+        capture.emit(makeImage(gray:40),frameID:1)
+        await gate.waitUntilStarted()
+        await coordinator.stop()
+        await gate.release()
+        for _ in 0..<10 { await Task.yield() }
+        XCTAssertNil(coordinator.latestAXSnapshot)
+        XCTAssertTrue(output.frames.isEmpty)
+    }
+
+    func testAXRequestedForAllContentStillUsesOCR() async throws {
+        let ax = TestAXProvider(), capture = TestCaptureProvider(), output = TestOutputSink()
+        let coordinator = SessionCoordinator(broker:TestTranslationProvider(translations:[:]),capture:capture,
+            targetResolver:TestTargetResolver(),ocr:TestOCRProvider(batch:makeBatch(lines:[])),ax:ax,outputSink:output,createsOutputWindow:false)
+        coordinatorsUnderTest.append(coordinator)
+        let (screen, selection) = try makeScreenAndSelection()
+        await coordinator.setTextExtractionMode(.ax)
+        try await coordinator.start(screen:screen,selection:selection,captureTarget:.allContent)
+        coordinator.setRefreshMode(.automatic); coordinator.setPaused(false)
+        let done = expectation(description:"OCR result")
+        output.onDisplay = { _ in done.fulfill() }
+        capture.emit(makeImage(gray:40),frameID:1)
+        await fulfillment(of:[done],timeout:2)
+        let calls = await ax.calls
+        XCTAssertEqual(calls,0)
+        XCTAssertNil(coordinator.latestAXSnapshot)
+    }
+
+    func testAXRequestedForOtherApplicationStillUsesOCR() async throws {
+        let ax = TestAXProvider(), capture = TestCaptureProvider(), output = TestOutputSink()
+        let coordinator = SessionCoordinator(broker:TestTranslationProvider(translations:[:]),capture:capture,
+            targetResolver:TestTargetResolver(),ocr:TestOCRProvider(batch:makeBatch(lines:[])),ax:ax,outputSink:output,createsOutputWindow:false)
+        coordinatorsUnderTest.append(coordinator)
+        let (screen, selection) = try makeScreenAndSelection()
+        await coordinator.setTextExtractionMode(.ax)
+        try await coordinator.start(screen:screen,selection:selection,captureTarget:.application(CaptureApplication(processID:123,bundleIdentifier:"example.editor",name:"Editor")))
+        coordinator.setRefreshMode(.automatic); coordinator.setPaused(false)
+        let done = expectation(description:"OCR result")
+        output.onDisplay = { _ in done.fulfill() }
+        capture.emit(makeImage(gray:40),frameID:1)
+        await fulfillment(of:[done],timeout:2)
+        let calls = await ax.calls
+        XCTAssertEqual(calls,0)
+        XCTAssertNil(coordinator.latestAXSnapshot)
+    }
+
+    func testAXFailuresRemainFailuresWithoutOCRFallback() async throws {
+        for error in [AXExtractionError.permissionDenied, .targetTerminated, .windowMappingFailed] {
+            let capture = TestCaptureProvider(), output = TestOutputSink(), ax = TestAXProvider(failure:error)
+            let translator = TestTranslationProvider(translations:[:])
+            let coordinator = SessionCoordinator(broker:translator,capture:capture,targetResolver:TestTargetResolver(),
+                ocr:TestOCRProvider(batch:makeBatch(lines:[]),gate:TestGate()),ax:ax,outputSink:output,createsOutputWindow:false)
+            coordinatorsUnderTest.append(coordinator)
+            let (screen, selection) = try makeScreenAndSelection()
+            await coordinator.setTextExtractionMode(.ax)
+            try await coordinator.start(screen:screen,selection:selection,captureTarget:.application(
+                CaptureApplication(processID:123,bundleIdentifier:"notion.id",name:"Notion",anchorWindowID:42,anchorWindowFrame:screen.frame)))
+            coordinator.setRefreshMode(.automatic); coordinator.setPaused(false)
+            let failed = expectation(description:"AX failure \(error)")
+            coordinator.onAXExtractionError = { actual in XCTAssertEqual(actual as? AXExtractionError,error); failed.fulfill() }
+            capture.emit(makeImage(gray:40),frameID:1)
+            await fulfillment(of:[failed],timeout:2)
+            XCTAssertNil(coordinator.latestAXSnapshot)
+            XCTAssertTrue(output.statuses.contains(.recognitionFailed))
+            XCTAssertTrue(translator.calls.isEmpty)
+            await coordinator.stop()
+        }
     }
 
     func testPipelineTranslatesSourceLineAndPublishesAtomicFrame() async throws {

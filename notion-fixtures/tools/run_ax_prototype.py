@@ -140,6 +140,8 @@ def main():
     root = repo / 'notion-fixtures'
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('scenarios', nargs='*', help='Scenario IDs; omitted means the active user-selected suite')
+    parser.add_argument('--collector', choices=['evaluation', 'rearview'], default='evaluation')
+    parser.add_argument('--skip-translation', action='store_true')
     parser.add_argument('--reuse-replay-app', action='store_true', help='Use the signed installed replay app when all replay sources predate it')
     parser.add_argument('--control-title-study', action='store_true', help='Research only: inspect text anchors of final selected AXTitle controls without changing selection')
     parser.add_argument('--paragraph-probe', action='store_true', help='Collect native paragraph boundaries for research')
@@ -151,6 +153,8 @@ def main():
     parser.add_argument('--offscreen-study', action='store_true', help='Research only: compare AXVisibleOnly membership and discovery timing; keep production selection unchanged')
     parser.add_argument('--disable-1pt-filter', action='store_true', help='Research only: retain <=1pt text frames; other visibility filters remain enabled')
     args = parser.parse_args()
+    if args.collector == 'rearview' and (args.offscreen_study or args.control_title_study or args.disable_1pt_filter or args.activation != 'manual'):
+        parser.error('Rearview collector supports production extraction only')
     cases = json.loads((root / 'ax-prototype-cases.json').read_text())
     active = json.loads((root / "ax-active-scenarios.json").read_text())["scenarios"]
     if args.all_defined or not args.group:
@@ -166,6 +170,8 @@ def main():
     selected_ids = set(args.scenarios or (active if not args.group and not args.all_defined else []))
     groups = set(args.group or (['all'] if args.all_defined else []))
     selected = [case for case in cases if case['id'] in selected_ids or 'all' in groups or groups.intersection(case.get('groups', []))]
+    if args.scenarios:
+        selected = [known[scenario] for scenario in dict.fromkeys(args.scenarios)]
     if not args.scenarios and not args.group and not args.all_defined:
         by_id = {case['id']: case for case in selected}
         selected = [by_id[scenario] for scenario in active]
@@ -195,7 +201,7 @@ def main():
         return result
 
     def finish():
-        summary = {'selected': len(selected), 'lineMethod': 'native-paragraph-reverse-with-markers-local-reverse-single-node', 'activation': args.activation, 'tinyTextFilterEnabled': not args.disable_1pt_filter, 'succeeded': sum(row['status'] == 'ok' for row in rows), 'results': rows}
+        summary = {'selected': len(selected), 'lineMethod': 'native-paragraph-reverse-with-markers-local-reverse-single-node', 'collector': args.collector, 'skipTranslation': args.skip_translation, 'activation': args.activation, 'tinyTextFilterEnabled': not args.disable_1pt_filter, 'succeeded': sum(row['status'] == 'ok' for row in rows), 'results': rows}
         (batch / 'summary.json').write_text(json.dumps(summary, ensure_ascii=False, indent=2))
         if args.control_title_study:
             study = run([sys.executable, str(root / 'tools/summarize_ax_control_text.py'), str(batch)], 'summarize-control-title-text')
@@ -214,6 +220,11 @@ def main():
     if build.returncode:
         rows.extend({'scenario': case['id'], 'status': 'failed', 'detail': '빌드 실패: ' + build.stderr[-2000:]} for case in selected)
         return finish()
+    if args.collector == 'rearview':
+        packaged = run([str(repo / 'scripts/package_app.sh'), 'dev'], 'package-rearview')
+        if packaged.returncode:
+            rows.extend({'scenario': case['id'], 'status': 'failed', 'detail': 'Rearview 개발 앱 빌드·서명 실패: ' + packaged.stderr[-2000:]} for case in selected)
+            return finish()
     if args.offscreen_study:
         probe_build = run(['swiftc', str(root / 'tools/probe_ax_offscreen.swift'), '-o', '/tmp/probe-ax-offscreen'], 'build-offscreen-probe')
         if probe_build.returncode:
@@ -240,7 +251,7 @@ def main():
             return finish()
     preparation = {}
     if not args.skip_ensure:
-        for fixture in dict.fromkeys(fixtures.values()):
+        for fixture in dict.fromkeys(f for ids in participants.values() for f in ids):
             print(f'픽스처 준비: {fixture}', flush=True)
             preparation[fixture] = run([str(root / 'fixture'), 'ensure', fixture], f'ensure-{fixture}')
     for case in selected:
@@ -265,7 +276,8 @@ def main():
             unexpected = [step for step in result['steps'] if step['status'] != 'verified' and not (step['item'] == 'zoom' and step['status'] == 'unsupported')]
             if unexpected:
                 raise ValueError('재생 검증 실패: ' + json.dumps(unexpected, ensure_ascii=False))
-            collected = run([str(repo / '.build/debug/NotionAXEvaluation'), 'collect', '--root', str(root), '--run-id', result['runId'], '--activation', args.activation] + (['--offscreen-study'] if args.offscreen_study else []) + (['--disable-1pt-filter'] if args.disable_1pt_filter else []) + (['--control-title-study'] if args.control_title_study else []), f'{scenario}-collect')
+            collector_command = [str(repo / 'dist/Rearview-dev.app/Contents/MacOS/Rearview'), '--collect-ax-report'] if args.collector == 'rearview' else [str(repo / '.build/debug/NotionAXEvaluation'), 'collect']
+            collected = run(collector_command + [ '--root', str(root), '--run-id', result['runId'], '--activation', args.activation] + (['--offscreen-study'] if args.offscreen_study else []) + (['--disable-1pt-filter'] if args.disable_1pt_filter else []) + (['--control-title-study'] if args.control_title_study else []), f'{scenario}-collect')
             if collected.returncode:
                 raise ValueError('AX 수집 실패: ' + collected.stderr)
             folder = Path(collected.stdout.strip())
@@ -276,23 +288,32 @@ def main():
                 row['offscreenProbe'] = str((folder / 'offscreen.json').relative_to(root / 'evaluations'))
             candidates = json.loads((folder / 'candidate.json').read_text())
             metadata = json.loads((folder / 'metadata.json').read_text())
+            if args.skip_translation:
+                metadata['skipTranslation'] = True
+                (folder / 'metadata.json').write_text(json.dumps(metadata, ensure_ascii=False, indent=2))
             validate_collection(folder, candidates)
             rendered = run([sys.executable, str(root / 'tools/render_ax_report.py'), str(folder)], f'{scenario}-render')
             if rendered.returncode:
                 raise ValueError('문단·노드·라인 보고서 생성 실패: ' + rendered.stderr)
-            translated = run([sys.executable, str(root / 'tools/translate_ax_reports.py'), str(folder)], f'{scenario}-translate')
-            if translated.returncode:
-                raise ValueError('문단 실제 번역·보고서 생성 실패: ' + translated.stderr)
+            if not args.skip_translation:
+                translated = run([sys.executable, str(root / 'tools/translate_ax_reports.py'), str(folder)], f'{scenario}-translate')
+                if translated.returncode:
+                    raise ValueError('문단 실제 번역·보고서 생성 실패: ' + translated.stderr)
             row['report'] = str((folder / 'index.html').relative_to(root / 'evaluations'))
             row['candidateCount'] = len(candidates)
+            row['collectionStatus'] = metadata.get('status', 'comparison_unverified')
             row['rangeCalls'] = metadata.get('rangeCalls', 0)
+            row['totalAXCalls'] = metadata.get('totalAXCalls')
             row['rangeElapsed'] = metadata.get('rangeElapsed', 0)
+            row['initializationSeconds'] = sum(sample.get('initializationSeconds', 0) for sample in metadata.get('sessionCollections', [])) or metadata.get('initializationSeconds', 0)
+            row['sessionCollections'] = metadata.get('sessionCollections', [])
+            row['collectionSeconds'] = metadata.get('elapsed', 0)
             line_units = json.loads((folder / 'paragraphs.json').read_text())['units']
             row['lineBoxCount'] = sum(len(c.get('lineRanges', [])) for c in line_units)
             row['rangeStatuses'] = {status: sum(c.get('lineRangeStatus') == status for c in line_units) for status in {c['lineRangeStatus'] for c in line_units if 'lineRangeStatus' in c}}
 
             row['detail'] = f"{case['purpose']} / 선택 {len(candidates)}개 / 수집 {metadata['elapsed']:.3f}s / 한도초과 {metadata['truncated']} / 대상·프레임 일치 {metadata['targetAndFrameMatch']}"
-            row['detail'] += f" / 라인 박스 {row['lineBoxCount']}개 / 범위 호출 {row['rangeCalls']}회 ({row['rangeElapsed']:.3f}s)"
+            row['detail'] += f" / 수집 상태 {row['collectionStatus']} / 라인 박스 {row['lineBoxCount']}개 / 범위 호출 {row['rangeCalls']}회 ({row['rangeElapsed']:.3f}s)"
             row['coverageLimitations'] = metadata.get('coverageLimitations', [])
             if 'menu_background_not_exposed_by_ax' in row['coverageLimitations']:
                 row['detail'] += ' / 수집 한계: 메뉴 상태에서 배경 본문 AX 미노출'

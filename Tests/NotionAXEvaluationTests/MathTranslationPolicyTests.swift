@@ -1,5 +1,5 @@
 import XCTest
-@testable import NotionAXEvaluation
+@testable import NotionAXCore
 
 final class MathTranslationPolicyTests: XCTestCase {
     let parts = [MathContentPart(kind: .text, text: "合計は "), .init(kind: .math, text: nil), .init(kind: .text, text: " で求めます。")]

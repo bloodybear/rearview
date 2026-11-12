@@ -1,5 +1,5 @@
 import XCTest
-@testable import NotionAXEvaluation
+@testable import NotionAXCore
 
 final class SelectionViewportTests: XCTestCase {
     func testSidebarIsNotClippedToBodyOrPeek() {

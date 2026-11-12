@@ -174,16 +174,23 @@ def render(folder):
     metadata = json.loads((folder/'metadata.json').read_text())
     run_id = metadata['runId']
     run = json.loads((root/'runs'/run_id/'result.json').read_text())
-    paragraphs, unresolved = build_paragraphs(nodes, selected)
+    native = folder/'native-paragraphs.json'
+    if native.exists():
+        built = json.loads(native.read_text())
+        paragraphs, unresolved = built['units'], built['unresolved']
+    else:
+        paragraphs, unresolved = build_paragraphs(nodes, selected)
     cache_path = root/'evaluations/paragraph-translations-ko.json'
     cache = json.loads(cache_path.read_text()) if cache_path.exists() else {}
     translations = {entry_cache_key(e): e for e in cache.get('entries', [])} if cache.get('policyId') == translation_policy_id(root) else {}
+    if metadata.get("skipTranslation"):
+        translations = {}
     for unit in paragraphs:
         unit['translationResult'] = translations.get(entry_cache_key(translation_request(unit)), {'status': 'not_translated', 'targetLanguage': 'ko'})
     data = {'run': run_id, 'evaluation': folder.name, 'scenario': run['scenarioId'],
             'fixture': run['fixtureId'], 'nodes': nodes, 'selected': selected,
-            'paragraphs': paragraphs, 'unresolved': unresolved, 'frame': run['screenshot']['frame'],
-            'coverageLimitations': metadata.get('coverageLimitations', [])}
+            'paragraphs': paragraphs, 'unresolved': unresolved, 'frame': metadata.get('windowFrame', run['screenshot']['frame']),
+            'coverageLimitations': metadata.get('coverageLimitations', []), 'collection': metadata}
     data['selectionRegion'] = next((c['selectionRegion'] for c in selected if c.get('selectionRegion')), None)
     encoded = base64.b64encode(json.dumps(data, ensure_ascii=False).encode()).decode()
     template = Path(__file__).with_name('ax_report.html').read_text()

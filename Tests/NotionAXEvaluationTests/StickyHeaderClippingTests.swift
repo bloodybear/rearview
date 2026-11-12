@@ -1,5 +1,5 @@
 import XCTest
-@testable import NotionAXEvaluation
+@testable import NotionAXCore
 final class StickyHeaderClippingTests: XCTestCase {
     func testPartiallyCoveredDatabaseCellAndParagraph() {
         let header = CGRect(x:0,y:140,width:1024,height:36)

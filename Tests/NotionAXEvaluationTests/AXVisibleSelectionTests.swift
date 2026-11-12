@@ -1,6 +1,6 @@
 import XCTest
 import ApplicationServices
-@testable import NotionAXEvaluation
+@testable import NotionAXCore
 
 final class AXVisibleSelectionTests: XCTestCase {
     func testOnlySearchableOffscreenElementsAreExcluded() {

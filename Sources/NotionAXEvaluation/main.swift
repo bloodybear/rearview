@@ -1,3 +1,5 @@
+import NotionAXCore
+import NotionAXReportSupport
 import AppKit
 import ApplicationServices
 import NotionScenarioCore
@@ -709,4 +711,25 @@ func run() throws {
     try report.write(to:output.appendingPathComponent("index.html"),atomically:true,encoding:.utf8)
     print(output.path)
 }
-do { try run() } catch { fputs("\(error)\n",stderr); exit(1) }
+if CommandLine.arguments.contains("build-paragraphs") {
+    do {
+        let folder = URL(fileURLWithPath:CommandLine.arguments.last!)
+        let nodes = try JSONSerialization.jsonObject(with:Data(contentsOf:folder.appendingPathComponent("rawAx.json"))) as! [[String:Any]]
+        let selected = try JSONSerialization.jsonObject(with:Data(contentsOf:folder.appendingPathComponent("candidate.json"))) as! [[String:Any]]
+        let data = try JSONSerialization.data(withJSONObject:AXParagraphBuilder.build(nodes:nodes,selected:selected),options:[.sortedKeys])
+        print(String(decoding:data,as:UTF8.self))
+        exit(0)
+    } catch { fputs("\(error)\n",stderr); exit(1) }
+}
+let research = ["--offscreen-study", "--control-title-study", "--disable-1pt-filter"].contains(where:CommandLine.arguments.contains) || !CommandLine.arguments.contains("collect") || (CommandLine.arguments.contains("--activation") && !CommandLine.arguments.contains("manual"))
+if research {
+    do { try run() } catch { fputs("\(error)\n",stderr); exit(1) }
+} else {
+    let provider = NativeSessionAXProvider()
+    do {
+        let input = try AXReportInput(arguments:CommandLine.arguments)
+        let snapshot = try await provider.collect(input.request)
+        await provider.endSession()
+        print(try input.write(snapshot,collector:"evaluation").path)
+    } catch { await provider.endSession(); fputs("\(error)\n",stderr); exit(1) }
+}

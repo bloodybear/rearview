@@ -44,6 +44,8 @@ def main():
             subprocess.run(['swift', 'build', '--product', 'Rearview'], cwd=root.parent, check=True)
             debug = root.parent/'.build/debug'
             objects = sorted(p for p in (debug/'Rearview.build').glob('*.o') if p.name != 'main.swift.o')
+            objects += sorted((debug/'NotionAXCore.build').glob('*.o'))
+            objects += sorted((debug/'NotionAXReportSupport.build').glob('*.o'))
             if not objects:
                 raise RuntimeError('Production translation objects unavailable')
             subprocess.run(['swiftc', '-parse-as-library', '-swift-version', '6',
