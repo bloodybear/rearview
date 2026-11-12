@@ -10,7 +10,7 @@ from pathlib import Path
 
 def translation_sources(root):
     # Compile these production sources read-only into a separate research CLI.
-    return [root/'tools/ax_report_translation.swift', root.parent/'Sources/NotionAXEvaluation/MathTranslationPolicy.swift'] + [root.parent/'Sources/Rearview'/name for name in (
+    return [root/'tools/ax_report_translation.swift', root.parent/'Sources/NotionAXCore/MathTranslationPolicy.swift', root.parent/'Sources/Rearview/AXParagraphTranslator.swift'] + [root.parent/'Sources/Rearview'/name for name in (
         'TranslationBroker.swift', 'LanguageProtector.swift', 'Models.swift',
         'Localization.swift', 'PerformanceProfiler.swift')]
 
@@ -185,8 +185,20 @@ def render(folder):
     translations = {entry_cache_key(e): e for e in cache.get('entries', [])} if cache.get('policyId') == translation_policy_id(root) else {}
     if metadata.get("skipTranslation"):
         translations = {}
+    native_translations = folder/'native-translations.json'
+    app_results = metadata.get('translationSource') == 'rearview-session'
+    native_entries = {}
+    if app_results and native_translations.exists() and not metadata.get('skipTranslation'):
+        exported = json.loads(native_translations.read_text())
+        if exported.get('frameID') != metadata.get('frameID'):
+            raise ValueError('AX translation frame mismatch')
+        native_entries = {e['node']: e for e in exported['entries']}
     for unit in paragraphs:
-        unit['translationResult'] = translations.get(entry_cache_key(translation_request(unit)), {'status': 'not_translated', 'targetLanguage': 'ko'})
+        if app_results:
+            entry = native_entries.get(unit['node'])
+            unit['translationResult'] = entry if entry and entry['source'] == unit['text'] else {'status': 'not_translated'}
+        else:
+            unit['translationResult'] = translations.get(entry_cache_key(translation_request(unit)), {'status': 'not_translated', 'targetLanguage': 'ko'})
     data = {'run': run_id, 'evaluation': folder.name, 'scenario': run['scenarioId'],
             'fixture': run['fixtureId'], 'nodes': nodes, 'selected': selected,
             'paragraphs': paragraphs, 'unresolved': unresolved, 'frame': metadata.get('windowFrame', run['screenshot']['frame']),

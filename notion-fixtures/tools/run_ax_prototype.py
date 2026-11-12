@@ -142,6 +142,7 @@ def main():
     parser.add_argument('scenarios', nargs='*', help='Scenario IDs; omitted means the active user-selected suite')
     parser.add_argument('--collector', choices=['evaluation', 'rearview'], default='evaluation')
     parser.add_argument('--skip-translation', action='store_true')
+    parser.add_argument('--ax-translation-direction', choices=['ja-ko', 'ko-ja'], default='ja-ko')
     parser.add_argument('--reuse-replay-app', action='store_true', help='Use the signed installed replay app when all replay sources predate it')
     parser.add_argument('--control-title-study', action='store_true', help='Research only: inspect text anchors of final selected AXTitle controls without changing selection')
     parser.add_argument('--paragraph-probe', action='store_true', help='Collect native paragraph boundaries for research')
@@ -155,6 +156,8 @@ def main():
     args = parser.parse_args()
     if args.collector == 'rearview' and (args.offscreen_study or args.control_title_study or args.disable_1pt_filter or args.activation != 'manual'):
         parser.error('Rearview collector supports production extraction only')
+    if args.collector != 'rearview' and args.ax_translation_direction != 'ja-ko':
+        parser.error('Translation direction override requires --collector rearview')
     cases = json.loads((root / 'ax-prototype-cases.json').read_text())
     active = json.loads((root / "ax-active-scenarios.json").read_text())["scenarios"]
     if args.all_defined or not args.group:
@@ -277,8 +280,8 @@ def main():
             if unexpected:
                 raise ValueError('재생 검증 실패: ' + json.dumps(unexpected, ensure_ascii=False))
             collector_command = [str(repo / 'dist/Rearview-dev.app/Contents/MacOS/Rearview'), '--collect-ax-report'] if args.collector == 'rearview' else [str(repo / '.build/debug/NotionAXEvaluation'), 'collect']
-            collected = run(collector_command + [ '--root', str(root), '--run-id', result['runId'], '--activation', args.activation] + (['--offscreen-study'] if args.offscreen_study else []) + (['--disable-1pt-filter'] if args.disable_1pt_filter else []) + (['--control-title-study'] if args.control_title_study else []), f'{scenario}-collect')
-            if collected.returncode:
+            collected = run(collector_command + [ '--root', str(root), '--run-id', result['runId'], '--activation', args.activation] + (['--ax-translation-direction', args.ax_translation_direction] + (['--skip-translation'] if args.skip_translation else []) if args.collector == 'rearview' else []) + (['--offscreen-study'] if args.offscreen_study else []) + (['--disable-1pt-filter'] if args.disable_1pt_filter else []) + (['--control-title-study'] if args.control_title_study else []), f'{scenario}-collect')
+            if collected.returncode not in ((0, 2) if args.collector == 'rearview' else (0,)):
                 raise ValueError('AX 수집 실패: ' + collected.stderr)
             folder = Path(collected.stdout.strip())
             if args.offscreen_study:
@@ -295,7 +298,7 @@ def main():
             rendered = run([sys.executable, str(root / 'tools/render_ax_report.py'), str(folder)], f'{scenario}-render')
             if rendered.returncode:
                 raise ValueError('문단·노드·라인 보고서 생성 실패: ' + rendered.stderr)
-            if not args.skip_translation:
+            if not args.skip_translation and args.collector != 'rearview':
                 translated = run([sys.executable, str(root / 'tools/translate_ax_reports.py'), str(folder)], f'{scenario}-translate')
                 if translated.returncode:
                     raise ValueError('문단 실제 번역·보고서 생성 실패: ' + translated.stderr)
@@ -327,6 +330,10 @@ def main():
                 if paragraph['truncated'] or not paragraph['windowFrameUnchanged']:
                     raise ValueError('문단 조사 한도/창 상태 검증 실패')
                 row['paragraphProbe'] = str((folder / 'paragraph-probe.json').relative_to(root / 'evaluations'))
+            row['translationSamples'] = metadata.get('translationSamples', [])
+            row['translationPreparationSeconds'] = metadata.get('translationPreparationSeconds')
+            if collected.returncode == 2:
+                raise ValueError('실제 앱 번역 실패: 결과와 오류는 보고서에 보존됨')
             row['status'] = 'ok'
             print(f'{scenario}: 성공 / 선택 {len(candidates)}개', flush=True)
         except (ValueError, KeyError, OSError) as error:

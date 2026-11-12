@@ -112,12 +112,16 @@ private actor TestAXProvider: SessionAXProvider {
     var calls = 0
     let gate: TestGate?
     let failure: AXExtractionError?
-    init(gate: TestGate? = nil, failure: AXExtractionError? = nil) { self.gate = gate; self.failure = failure }
+    let snapshot: AXExtractionSnapshot?
+    init(gate: TestGate? = nil, failure: AXExtractionError? = nil, snapshot: AXExtractionSnapshot? = nil) {
+        self.gate = gate; self.failure = failure; self.snapshot = snapshot
+    }
     func collect(_ request: AXExtractionRequest) async throws -> AXExtractionSnapshot {
         calls += 1
         if let gate { await gate.wait() }
         if let failure { throw failure }
         // Intentionally ignores cancellation to test stale-result rejection.
+        if let snapshot { return snapshot }
         return try AXExtractionSnapshot(nodes:[],selected:[],paragraphs:[],metadata:["status":"partial","reason":"injected_limit"])
     }
     func endSession() async {}
@@ -142,6 +146,10 @@ private final class TestTranslationProvider: SessionTranslationProvider {
     func setDirection(_ direction: TranslationDirection) {}
 
     func setProtectsNonSourceText(_ enabled: Bool) {}
+
+    func translate(_ source: String, options: TranslationRequestOptions) async throws -> String {
+        try await translate(source)
+    }
 
     func translate(_ source: String) async throws -> String {
         calls.append(source)
@@ -171,8 +179,16 @@ private final class TestOutputSink: SessionOutputSink {
 @MainActor
 final class SessionCoordinatorIntegrationTests: XCTestCase {
     private var coordinatorsUnderTest: [SessionCoordinator] = []
+    private var previousDirection: TranslationDirection = .japaneseToKorean
+
+    override func setUp() async throws {
+        try await super.setUp()
+        previousDirection = TranslationDirection.load()
+        TranslationDirection.japaneseToKorean.save()
+    }
 
     override func tearDown() async throws {
+        previousDirection.save()
         for coordinator in coordinatorsUnderTest.reversed() {
             await coordinator.stop()
         }
@@ -185,7 +201,7 @@ final class SessionCoordinatorIntegrationTests: XCTestCase {
         let ocrGate = TestGate()
         let translator = TestTranslationProvider(translations:[:])
         let coordinator = SessionCoordinator(broker:translator,capture:capture,targetResolver:TestTargetResolver(),
-            ocr:TestOCRProvider(batch:makeBatch(lines:[]),gate:ocrGate),ax:ax,outputSink:output,createsOutputWindow:false)
+            ocr:TestOCRProvider(batch:makeBatch(lines:[]),gate:ocrGate),ax:ax,outputSink:output,createsOutputWindow:false,translatesAXParagraphs:false)
         coordinatorsUnderTest.append(coordinator)
         let (screen, selection) = try makeScreenAndSelection()
         await coordinator.setTextExtractionMode(.ax)
@@ -203,6 +219,109 @@ final class SessionCoordinatorIntegrationTests: XCTestCase {
         XCTAssertEqual(output.frames.last?.translatedItems.count,0)
         XCTAssertTrue(translator.calls.isEmpty)
         XCTAssertTrue(output.statuses.contains(.completed(failures:1)))
+    }
+
+    private func translatedAXFixture() throws -> AXExtractionSnapshot {
+        try AXExtractionSnapshot(nodes:[],selected:[],paragraphs:[
+            ["node":10,"text":"日本語 English 👩‍💻","box":["x":0,"y":0,"width":100,"height":20],
+             "members":[11],"lineRanges":[],"isCodeBlock":false,"protectNonSourceText":false]],
+            metadata:["status":"partial","reason":"injected_line_failure"])
+    }
+
+    func testAXTranslationRetainsPartialExtractionAndOriginalFrame() async throws {
+        let capture = TestCaptureProvider(), output = TestOutputSink()
+        let broker = TestTranslationProvider(translations:["日本語 English 👩‍💻":"번역 결과"])
+        let coordinator = SessionCoordinator(broker:broker,capture:capture,targetResolver:TestTargetResolver(),
+            ocr:TestOCRProvider(batch:makeBatch(lines:[]),gate:TestGate()),
+            ax:TestAXProvider(snapshot:try translatedAXFixture()),outputSink:output,createsOutputWindow:false,
+            initialTranslationDirection:.japaneseToKorean)
+        coordinatorsUnderTest.append(coordinator)
+        let (screen, selection) = try makeScreenAndSelection()
+        await coordinator.setTextExtractionMode(.ax)
+        try await coordinator.start(screen:screen,selection:selection,captureTarget:.application(
+            CaptureApplication(processID:123,bundleIdentifier:"notion.id",name:"Notion",anchorWindowID:42,anchorWindowFrame:screen.frame)))
+        coordinator.setRefreshMode(.automatic); coordinator.setPaused(false)
+        let done = expectation(description:"AX translated")
+        coordinator.onAXTranslation = { value in
+            XCTAssertEqual(value.frame.frameID,1)
+            XCTAssertEqual(value.frame.snapshot.status,.partial)
+            XCTAssertEqual(value.entries.first?.translation,"번역 결과")
+            XCTAssertEqual(value.entries.first?.node,10)
+            done.fulfill()
+        }
+        capture.emit(makeImage(gray:40),frameID:1)
+        await fulfillment(of:[done],timeout:2)
+        XCTAssertEqual(output.frames.last?.translatedItems.count,0)
+        XCTAssertEqual(coordinator.latestAXTranslation?.frame.frameID,1)
+        XCTAssertTrue(output.statuses.contains(.completed(failures:1)))
+    }
+
+    func testLateAXTranslationIsDiscardedAfterInvalidation() async throws {
+        for invalidation in ["stop","mode","direction","pause","target","region"] {
+            let gate = TestGate(), capture = TestCaptureProvider(), output = TestOutputSink()
+            let coordinator = SessionCoordinator(broker:TestTranslationProvider(translations:[:],gate:gate),capture:capture,
+                targetResolver:TestTargetResolver(),ocr:TestOCRProvider(batch:makeBatch(lines:[])),
+                ax:TestAXProvider(snapshot:try translatedAXFixture()),outputSink:output,createsOutputWindow:false,
+                initialTranslationDirection:.japaneseToKorean)
+            coordinatorsUnderTest.append(coordinator)
+            let (screen, selection) = try makeScreenAndSelection()
+            await coordinator.setTextExtractionMode(.ax)
+            try await coordinator.start(screen:screen,selection:selection,captureTarget:.application(
+                CaptureApplication(processID:123,bundleIdentifier:"notion.id",name:"Notion",anchorWindowID:42,anchorWindowFrame:screen.frame)))
+            coordinator.setRefreshMode(.automatic); coordinator.setPaused(false)
+            var published = false
+            coordinator.onAXTranslation = { value in
+                if value.entries.first?.sourceLanguage == "ja" { published = true }
+            }
+            capture.emit(makeImage(gray:40),frameID:1)
+            await gate.waitUntilStarted()
+            switch invalidation {
+            case "stop": await coordinator.stop()
+            case "mode": await coordinator.setTextExtractionMode(.ocr)
+            case "direction": coordinator.setTranslationDirection(.koreanToJapanese)
+            case "pause": coordinator.setPaused(true)
+            case "target": await coordinator.setApplicationCapture(nil)
+            case "region": await coordinator.applySelection(selection.insetBy(dx:2,dy:2),screen:screen,reevaluateTarget:false)
+            default: XCTFail("Unknown invalidation")
+            }
+            await gate.release()
+            for _ in 0..<30 { await Task.yield() }
+            XCTAssertFalse(published,invalidation)
+            if invalidation == "direction" {
+                XCTAssertNotEqual(coordinator.latestAXTranslation?.entries.first?.sourceLanguage,"ja")
+            } else { XCTAssertNil(coordinator.latestAXTranslation,invalidation) }
+        }
+    }
+
+    func testNewestPendingFrameRunsAfterAXTranslation() async throws {
+        let gate = TestGate(), capture = TestCaptureProvider(), output = TestOutputSink()
+        let coordinator = SessionCoordinator(broker:TestTranslationProvider(translations:[:],gate:gate),capture:capture,
+            targetResolver:TestTargetResolver(),ocr:TestOCRProvider(batch:makeBatch(lines:[]),gate:TestGate()),
+            ax:TestAXProvider(snapshot:try translatedAXFixture()),outputSink:output,createsOutputWindow:false,
+            initialTranslationDirection:.japaneseToKorean)
+        coordinatorsUnderTest.append(coordinator)
+        let (screen, selection) = try makeScreenAndSelection()
+        await coordinator.setTextExtractionMode(.ax)
+        try await coordinator.start(screen:screen,selection:selection,captureTarget:.application(
+            CaptureApplication(processID:123,bundleIdentifier:"notion.id",name:"Notion",anchorWindowID:42,anchorWindowFrame:screen.frame)))
+        await coordinator.setCapturePolicy(CapturePolicy(targetFPS:30,realtimeOCRIntervalMilliseconds:100))
+        coordinator.setRefreshMode(.automatic); coordinator.setPaused(false)
+        let first = expectation(description:"first translated"), latest = expectation(description:"newest translated")
+        coordinator.onAXTranslation = { value in
+            if value.frame.frameID == 10 { first.fulfill() }
+            if value.frame.frameID == 12 { latest.fulfill() }
+        }
+        let initial = makeImage(width:32,height:24,gray:40)
+        let changed = makeImage(width:32,height:24,gray:40,changedPixel:(0,0,255))
+        capture.emit(initial,frameID:10)
+        await gate.waitUntilStarted()
+        capture.emit(changed,frameID:11)
+        await gate.release()
+        await fulfillment(of:[first],timeout:2)
+        try await Task.sleep(for:.milliseconds(120))
+        capture.emit(changed,frameID:12)
+        await fulfillment(of:[latest],timeout:2)
+        XCTAssertEqual(coordinator.latestAXTranslation?.frame.frameID,12)
     }
 
     func testLateAXResultAfterModeChangeIsDiscarded() async throws {

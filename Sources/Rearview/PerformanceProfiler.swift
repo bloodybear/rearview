@@ -293,7 +293,7 @@ final class PerformanceProfiler: @unchecked Sendable {
         }
     }
 
-    func stop() -> SessionReport? {
+    func stop(translationDirection: TranslationDirection? = nil) -> SessionReport? {
         samplerTask?.cancel()
         samplerTask = nil
         sampleSystem()
@@ -305,7 +305,7 @@ final class PerformanceProfiler: @unchecked Sendable {
         }
         guard let snapshot else { return nil }
         let metadata = ProfileMetadata(
-            schemaVersion: 13, translationDirection: TranslationDirection.load().rawValue,
+            schemaVersion: 13, translationDirection: (translationDirection ?? TranslationDirection.load()).rawValue,
             startedAt: snapshot.0, endedAt: snapshot.1,
             durationSeconds: Double(DispatchTime.now().uptimeNanoseconds &- snapshot.2) / 1_000_000_000,
             operatingSystem: ProcessInfo.processInfo.operatingSystemVersionString,

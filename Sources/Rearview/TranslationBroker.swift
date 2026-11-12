@@ -2,60 +2,77 @@ import Foundation
 import SwiftUI
 @preconcurrency import Translation
 
+/// Request policy is immutable even when differently protected paragraphs share a batch.
+struct TranslationRequestOptions: Hashable, Sendable {
+    let protectsNonSourceText: Bool
+    let context: String
+}
+
 @MainActor
 final class TranslationBroker: ObservableObject {
+    struct RequestKey: Hashable {
+        let source: String
+        let direction: TranslationDirection
+        let options: TranslationRequestOptions
+    }
     private struct Pending {
+        let id: UUID
+        let key: RequestKey
         let plan: TranslationPlan
         let enqueuedAt: UInt64
     }
-
+    private struct Waiter {
+        let id: UUID
+        let continuation: CheckedContinuation<String, Error>
+    }
     private var queue: [Pending] = []
-    private var waiters: [String: [CheckedContinuation<String, Error>]] = [:]
-    private var cache: [String: String] = [:]
-    private var segmentCache: [String: String] = [:]
+    private var requests: [RequestKey: UUID] = [:]
+    private var waiters: [UUID: [Waiter]] = [:]
+    private var cache: [RequestKey: String] = [:]
+    private var segmentCache: [RequestKey: String] = [:]
+    private(set) var preparationError: String?
     private var sessionReady = false
     private var sessionGeneration = 0
     private var policyGeneration = 0
     @Published private(set) var direction: TranslationDirection
     @Published private(set) var protectsNonSourceText: Bool
 
-    static func canCommitResults(
-        activeGeneration: Int, currentGeneration: Int, isCancelled: Bool
-    ) -> Bool {
+    static func canCommitResults(activeGeneration: Int, currentGeneration: Int, isCancelled: Bool) -> Bool {
         !isCancelled && activeGeneration == currentGeneration
     }
-
     var isReadyForTranslation: Bool { sessionReady }
-
     init(direction: TranslationDirection = TranslationDirection.load(),
          protectsNonSourceText: Bool = TranslationTextProtection.load()) {
         self.direction = direction
         self.protectsNonSourceText = protectsNonSourceText
     }
-
     func setDirection(_ direction: TranslationDirection) {
         guard self.direction != direction else { return }
         self.direction = direction
         direction.save()
         sessionGeneration += 1
         sessionReady = false
-        cache.removeAll()
-        segmentCache.removeAll()
-        failPending(TranslatorError.translationSessionUnavailable)
+        clearPolicy()
     }
-
     func setProtectsNonSourceText(_ enabled: Bool) {
         guard protectsNonSourceText != enabled else { return }
         protectsNonSourceText = enabled
+        clearPolicy()
+    }
+    private func clearPolicy() {
         policyGeneration += 1
-        cache.removeAll()
-        segmentCache.removeAll()
+        cache.removeAll(); segmentCache.removeAll()
         failPending(TranslatorError.translationSessionUnavailable)
     }
-
     func translate(_ source: String) async throws -> String {
+        try await translate(source, options: .init(protectsNonSourceText: protectsNonSourceText, context: "ocr"))
+    }
+    func translate(_ source: String, options: TranslationRequestOptions) async throws -> String {
+        try Task.checkCancellation()
         PerformanceProfiler.shared.increment("translation.requested")
-        let key = source.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Preserve AX text exactly; the legacy OCR API keeps its trimming behavior.
+        let text = options.context == "ocr" ? source.trimmingCharacters(in: .whitespacesAndNewlines) : source
+        let key = RequestKey(source: text, direction: direction, options: options)
         if let cached = cache[key] {
             PerformanceProfiler.shared.increment("translation.cacheHit")
             PerformanceProfiler.shared.increment("translation.completed")
@@ -63,32 +80,66 @@ final class TranslationBroker: ObservableObject {
         }
         PerformanceProfiler.shared.increment("translation.cacheMiss")
         guard sessionReady else { throw TranslatorError.translationSessionUnavailable }
-        let plan = LanguageProtector.makeTranslationPlan(
-            for: key, direction: direction,
-            protectNonSourceText: protectsNonSourceText
-        )
-        return try await withCheckedThrowingContinuation { continuation in
-            if waiters[key] != nil {
-                waiters[key, default: []].append(continuation)
-                PerformanceProfiler.shared.increment("translation.inFlightHit")
-                return
+        let waiterID = UUID()
+        return try await withTaskCancellationHandler {
+            try Task.checkCancellation()
+            return try await withCheckedThrowingContinuation { continuation in
+                let requestID: UUID
+                if let existing = requests[key] {
+                    requestID = existing
+                    PerformanceProfiler.shared.increment("translation.inFlightHit")
+                } else {
+                    requestID = UUID()
+                    requests[key] = requestID
+                    queue.append(Pending(id: requestID, key: key,
+                        plan: LanguageProtector.makeTranslationPlan(for: text, direction: direction,
+                            protectNonSourceText: options.protectsNonSourceText),
+                        enqueuedAt: DispatchTime.now().uptimeNanoseconds))
+                }
+                waiters[requestID, default: []].append(Waiter(id: waiterID, continuation: continuation))
             }
-            waiters[key] = [continuation]
-            queue.append(Pending(
-                plan: plan, enqueuedAt: DispatchTime.now().uptimeNanoseconds
-            ))
+        } onCancel: {
+            Task { @MainActor [weak self] in self?.cancelWaiter(waiterID, key: key) }
         }
     }
-
+    private func cancelWaiter(_ id: UUID, key: RequestKey) {
+        guard let requestID = requests[key], var values = waiters[requestID],
+              let index = values.firstIndex(where: { $0.id == id }) else { return }
+        values.remove(at: index).continuation.resume(throwing: CancellationError())
+        if values.isEmpty {
+            waiters.removeValue(forKey: requestID)
+            requests.removeValue(forKey: key)
+            queue.removeAll { $0.id == requestID }
+        } else { waiters[requestID] = values }
+    }
     func run(session: TranslationSession) async {
+        await run(prepare: { try await session.prepareTranslation() }, model: { sources in
+            nonisolated(unsafe) let requests = sources.enumerated().map {
+                TranslationSession.Request(sourceText: $1, clientIdentifier: String($0))
+            }
+            let responses = try await session.translations(from: requests)
+            var result: [String?] = Array(repeating: nil, count: sources.count)
+            for response in responses {
+                if let id = response.clientIdentifier, let index = Int(id), result.indices.contains(index) {
+                    result[index] = response.targetText
+                }
+            }
+            guard result.allSatisfy({ $0 != nil }) else { throw TranslatorError.translationSessionUnavailable }
+            return result.map { $0! }
+        })
+    }
+    /// Shared worker seam also used by deterministic cache/cancellation tests.
+    func run(prepare: () async throws -> Void, model: ([String]) async throws -> [String]) async {
         let activeGeneration = sessionGeneration
-        do {
-            try await session.prepareTranslation()
-        } catch {
-            failPending(error)
+        preparationError = nil
+        do { try await prepare() } catch {
+            if activeGeneration == sessionGeneration {
+                preparationError = String(describing:error)
+                failPending(error)
+            }
             return
         }
-        guard activeGeneration == sessionGeneration else { return }
+        guard activeGeneration == sessionGeneration, !Task.isCancelled else { return }
         sessionReady = true
         defer {
             if activeGeneration == sessionGeneration {
@@ -96,126 +147,75 @@ final class TranslationBroker: ObservableObject {
                 failPending(TranslatorError.translationSessionUnavailable)
             }
         }
-
         while !Task.isCancelled, activeGeneration == sessionGeneration {
-            if queue.isEmpty {
-                try? await Task.sleep(for: .milliseconds(12))
-                continue
-            }
-            let batch = Array(queue.prefix(24))
-            queue.removeFirst(batch.count)
-            let activePolicyGeneration = policyGeneration
+            if queue.isEmpty { try? await Task.sleep(for: .milliseconds(12)); continue }
+            let batch = Array(queue.prefix(24)); queue.removeFirst(batch.count)
+            let activePolicy = policyGeneration
             do {
+                var missing: [RequestKey] = [], seen = Set<RequestKey>()
                 for pending in batch {
-                    PerformanceProfiler.shared.recordElapsed(
-                        .translationQueue, startedAt: pending.enqueuedAt, itemCount: 1,
-                        characterCount: pending.plan.translatableCharacterCount
-                    )
-                }
-
-                var uncachedSegments: [String] = []
-                var seenSegments = Set<String>()
-                for pending in batch {
+                    PerformanceProfiler.shared.recordElapsed(.translationQueue, startedAt: pending.enqueuedAt,
+                        itemCount: 1, characterCount: pending.plan.translatableCharacterCount)
                     for segment in pending.plan.segments where segment.kind == .translate {
-                        if segmentCache[segment.text] != nil {
-                            PerformanceProfiler.shared.increment("translation.segmentCacheHit")
-                        } else if seenSegments.insert(segment.text).inserted {
-                            PerformanceProfiler.shared.increment("translation.segmentCacheMiss")
-                            uncachedSegments.append(segment.text)
-                        } else {
-                            PerformanceProfiler.shared.increment("translation.segmentBatchDuplicate")
-                        }
+                        let key = RequestKey(source: segment.text, direction: pending.key.direction, options: pending.key.options)
+                        if segmentCache[key] != nil { PerformanceProfiler.shared.increment("translation.segmentCacheHit") }
+                        else if seen.insert(key).inserted {
+                            PerformanceProfiler.shared.increment("translation.segmentCacheMiss"); missing.append(key)
+                        } else { PerformanceProfiler.shared.increment("translation.segmentBatchDuplicate") }
                     }
                 }
-                if !uncachedSegments.isEmpty {
-                    // Translation's Request is immutable but not annotated Sendable in this SDK.
-                    // The array is consumed by one awaited batch call and never mutated afterward.
-                    nonisolated(unsafe) let requests = uncachedSegments.enumerated().map {
-                        TranslationSession.Request(sourceText: $1, clientIdentifier: String($0))
-                    }
-                    let modelToken = PerformanceProfiler.shared.begin(
-                        .translationModel, itemCount: requests.count,
-                        characterCount: uncachedSegments.reduce(0) { $0 + $1.count }
-                    )
+                if !missing.isEmpty {
+                    let token = PerformanceProfiler.shared.begin(.translationModel, itemCount: missing.count,
+                        characterCount: missing.reduce(0) { $0 + $1.source.count })
                     PerformanceProfiler.shared.increment("translation.modelCall")
-                    PerformanceProfiler.shared.increment(
-                        "translation.modelBatchSegments", by: requests.count
-                    )
-                    let responses: [TranslationSession.Response]
-                    do {
-                        responses = try await session.translations(from: requests)
-                        PerformanceProfiler.shared.end(modelToken)
-                        guard Self.canCommitResults(
-                            activeGeneration: activeGeneration,
-                            currentGeneration: sessionGeneration,
-                            isCancelled: Task.isCancelled
-                        ) else { return }
-                        guard activePolicyGeneration == policyGeneration else { continue }
-                    } catch {
-                        PerformanceProfiler.shared.end(modelToken)
-                        guard Self.canCommitResults(
-                            activeGeneration: activeGeneration,
-                            currentGeneration: sessionGeneration,
-                            isCancelled: Task.isCancelled
-                        ) else { return }
-                        if activePolicyGeneration != policyGeneration { continue }
-                        throw error
-                    }
-                    for response in responses {
-                        guard let identifier = response.clientIdentifier,
-                              let index = Int(identifier), uncachedSegments.indices.contains(index) else { continue }
+                    PerformanceProfiler.shared.increment("translation.modelBatchSegments", by: missing.count)
+                    let output: [String]
+                    do { output = try await model(missing.map(\.source)); PerformanceProfiler.shared.end(token) }
+                    catch { PerformanceProfiler.shared.end(token); throw error }
+                    guard Self.canCommitResults(activeGeneration: activeGeneration, currentGeneration: sessionGeneration,
+                        isCancelled: Task.isCancelled) else { return }
+                    guard activePolicy == policyGeneration else { continue }
+                    guard output.count == missing.count else { throw TranslatorError.translationSessionUnavailable }
+                    for (key, text) in zip(missing, output) {
                         trimCacheIfNeeded(&segmentCache, maximumCount: 2_048, removalCount: 512)
-                        segmentCache[uncachedSegments[index]] = response.targetText
+                        segmentCache[key] = text
                         PerformanceProfiler.shared.increment("translation.segmentTranslated")
                     }
                 }
-
-                guard activePolicyGeneration == policyGeneration else { continue }
-
+                guard activePolicy == policyGeneration else { continue }
                 for pending in batch {
+                    // An orphaned old request cannot complete newly queued waiters for the same key.
+                    guard requests[pending.key] == pending.id else { continue }
                     var output = ""
                     for segment in pending.plan.segments {
-                        if segment.kind == .preserve {
-                            output += segment.text
-                        } else if let translated = segmentCache[segment.text] {
-                            output += translated
-                        } else {
-                            throw TranslatorError.translationSessionUnavailable
-                        }
+                        if segment.kind == .preserve { output += segment.text }
+                        else if let text = segmentCache[RequestKey(source: segment.text,
+                            direction: pending.key.direction, options: pending.key.options)] { output += text }
+                        else { throw TranslatorError.translationSessionUnavailable }
                     }
                     trimCacheIfNeeded(&cache, maximumCount: 512, removalCount: 128)
-                    cache[pending.plan.source] = output
-                    finishWaiters(for: pending.plan.source, with: .success(output))
+                    cache[pending.key] = output
+                    finish(pending, result: .success(output))
                 }
             } catch {
-                batch.forEach { finishWaiters(for: $0.plan.source, with: .failure(error)) }
+                guard activePolicy == policyGeneration else { continue }
+                batch.forEach { finish($0, result: .failure(error)) }
             }
         }
     }
-
     private func failPending(_ error: Error) {
-        queue.removeAll()
-        let pendingWaiters = waiters
-        waiters.removeAll()
-        pendingWaiters.values.joined().forEach { $0.resume(throwing: error) }
+        queue.removeAll(); requests.removeAll()
+        let all = waiters; waiters.removeAll()
+        all.values.joined().forEach { $0.continuation.resume(throwing: error) }
     }
-
-    private func finishWaiters(for source: String, with result: Result<String, Error>) {
-        guard let continuations = waiters.removeValue(forKey: source) else { return }
-        if case .success = result {
-            PerformanceProfiler.shared.increment("translation.completed", by: continuations.count)
-        }
-        for continuation in continuations {
-            switch result {
-            case .success(let output): continuation.resume(returning: output)
-            case .failure(let error): continuation.resume(throwing: error)
-            }
-        }
+    private func finish(_ pending: Pending, result: Result<String, Error>) {
+        guard requests[pending.key] == pending.id else { return }
+        requests.removeValue(forKey: pending.key)
+        guard let values = waiters.removeValue(forKey: pending.id) else { return }
+        if case .success = result { PerformanceProfiler.shared.increment("translation.completed", by: values.count) }
+        values.forEach { $0.continuation.resume(with: result) }
     }
-
-    private func trimCacheIfNeeded(
-        _ cache: inout [String: String], maximumCount: Int, removalCount: Int
-    ) {
+    private func trimCacheIfNeeded<K>(_ cache: inout [K: String], maximumCount: Int, removalCount: Int) {
         guard cache.count >= maximumCount else { return }
         for key in cache.keys.prefix(removalCount) { cache[key] = nil }
     }

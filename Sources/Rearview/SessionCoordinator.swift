@@ -36,6 +36,7 @@ protocol SessionTranslationProvider: AnyObject {
     func setDirection(_ direction: TranslationDirection)
     func setProtectsNonSourceText(_ enabled: Bool)
     func translate(_ source: String) async throws -> String
+    func translate(_ source: String, options: TranslationRequestOptions) async throws -> String
 }
 
 @MainActor
@@ -121,6 +122,14 @@ final class SessionCoordinator {
         let frameID: UInt64
         let receivedAt: UInt64
     }
+    struct AXTranslatedFrame {
+        let frame: AXFrameSnapshot
+        let entries: [AXParagraphTranslation]
+    }
+    private(set) var latestAXTranslation: AXTranslatedFrame?
+    var onAXTranslation: ((AXTranslatedFrame) -> Void)?
+    var onAXTranslationProgress: ((AXTranslatedFrame) -> Void)?
+    private let translatesAXParagraphs: Bool
     private(set) var latestAXFrame: AXFrameSnapshot?
     var latestAXSnapshot: AXExtractionSnapshot? { latestAXFrame?.snapshot }
     var onAXExtraction: ((AXExtractionSnapshot, CGImage, UInt64) -> Void)?
@@ -191,9 +200,13 @@ final class SessionCoordinator {
         ocr: any SessionOCRProvider = OCRService(),
         ax: any SessionAXProvider = NativeSessionAXProvider(),
         outputSink: (any SessionOutputSink)? = nil,
-        createsOutputWindow: Bool = true
+        createsOutputWindow: Bool = true,
+        translatesAXParagraphs: Bool = true,
+        initialTranslationDirection: TranslationDirection? = nil
     ) {
         self.broker = broker
+        self.translatesAXParagraphs = translatesAXParagraphs
+        if let initialTranslationDirection { self.translationDirection = initialTranslationDirection }
         self.capture = capture
         self.targetResolver = targetResolver
         self.ocr = ocr
@@ -245,8 +258,42 @@ final class SessionCoordinator {
                       self.contentRevision == activeRevision, self.ocrTaskSequence == sequence else { return }
                 self.latestAXFrame = AXFrameSnapshot(snapshot:result,image:frame.image,frameID:frame.id,receivedAt:frame.receivedAt)
                 self.display(MirrorFrame(image:frame.image,translatedItems:[],frameID:frame.id))
-                self.showProcessingStatus(.completed(failures:result.status == .complete ? 0 : 1),frameID:frame.id,origin:origin)
                 self.onAXExtraction?(result, frame.image, frame.id)
+                if self.translatesAXParagraphs {
+                    let translator = AXParagraphTranslator(broker: self.broker, direction: self.translationDirection)
+                    let total = result.paragraphUnits.count
+                    self.showProcessingStatus(.translating(completed:0,total:total),frameID:frame.id,origin:origin)
+                    let entries = try await withThrowingTaskGroup(of: (Int, AXParagraphTranslation).self) { group in
+                        for (index, paragraph) in result.paragraphUnits.enumerated() {
+                            let request = AXTranslationRequest(paragraph:paragraph)
+                            group.addTask {
+                                (index, try await translator.translate(request, node:paragraph.node))
+                            }
+                        }
+                        var completed: [(Int, AXParagraphTranslation)] = []
+                        for try await entry in group {
+                            try Task.checkCancellation()
+                            guard self.generation == activeGeneration, self.contentRevision == activeRevision,
+                                  self.ocrTaskSequence == sequence else { throw CancellationError() }
+                            completed.append(entry)
+                            if let captured = self.latestAXFrame {
+                                self.onAXTranslationProgress?(AXTranslatedFrame(frame:captured,
+                                    entries:completed.sorted { $0.0 < $1.0 }.map { $0.1 }))
+                            }
+                            self.showProcessingStatus(.translating(completed:completed.count,total:total),frameID:frame.id,origin:origin)
+                        }
+                        return completed.sorted { $0.0 < $1.0 }.map { $0.1 }
+                    }
+                    guard !Task.isCancelled, self.generation == activeGeneration,
+                          self.contentRevision == activeRevision, self.ocrTaskSequence == sequence,
+                          let captured = self.latestAXFrame else { return }
+                    let translated = AXTranslatedFrame(frame:captured,entries:entries)
+                    self.latestAXTranslation = translated
+                    self.showProcessingStatus(.completed(failures:entries.filter { $0.status == "failed" }.count + (result.status == .complete ? 0 : 1)),frameID:frame.id,origin:origin)
+                    self.onAXTranslation?(translated)
+                } else {
+                    self.showProcessingStatus(.completed(failures:result.status == .complete ? 0 : 1),frameID:frame.id,origin:origin)
+                }
             } catch {
                 guard !Task.isCancelled, self.generation == activeGeneration,
                       self.contentRevision == activeRevision, self.ocrTaskSequence == sequence else { return }
@@ -333,6 +380,7 @@ final class SessionCoordinator {
 
     func stop() async {
         latestAXFrame = nil
+        latestAXTranslation = nil
         guard !stopping else { return }
         stopping = true
         defer { stopping = false }
@@ -390,6 +438,7 @@ final class SessionCoordinator {
     func setTranslationDirection(_ direction: TranslationDirection) {
         guard translationDirection != direction else { return }
         translationDirection = direction
+        latestAXFrame = nil; latestAXTranslation = nil
         direction.save()
         contentRevision += 1
         ocrTask?.cancel(); ocrTask = nil; ocrTaskRevision = nil
@@ -407,6 +456,7 @@ final class SessionCoordinator {
     func setProtectsNonSourceText(_ enabled: Bool) {
         guard protectsNonSourceText != enabled else { return }
         protectsNonSourceText = enabled
+        latestAXFrame = nil; latestAXTranslation = nil
         TranslationTextProtection.save(enabled)
         contentRevision += 1
         ocrTask?.cancel(); ocrTask = nil; ocrTaskRevision = nil
@@ -692,6 +742,7 @@ final class SessionCoordinator {
 
     private func suspendAutomaticProcessing() {
         latestAXFrame = nil
+        latestAXTranslation = nil
         contentRevision += 1
         ocrTask?.cancel()
         ocrTask = nil
@@ -870,7 +921,7 @@ final class SessionCoordinator {
         }
     }
 
-    private func applySelection(
+    func applySelection(
         _ rect: CGRect, screen: NSScreen? = nil, reevaluateTarget: Bool,
         trackingGeneration: Int? = nil, trackingRevision: Int? = nil,
         rebuildTrackingAnchor: Bool = false
@@ -920,7 +971,7 @@ final class SessionCoordinator {
         }
     }
 
-    private func setApplicationCapture(_ application: CaptureApplication?) async {
+    func setApplicationCapture(_ application: CaptureApplication?) async {
         guard let selectedScreen else { return }
         let target = application.map(CaptureTarget.application) ?? .allContent
         guard target != captureTarget else { updateTargetControl(); return }
@@ -1125,6 +1176,7 @@ final class SessionCoordinator {
 
     private func invalidateCapturedContent() {
         latestAXFrame = nil
+        latestAXTranslation = nil
         contentRevision += 1
         ocrTask?.cancel()
         ocrTask = nil

@@ -52,7 +52,7 @@ def main():
                 '-module-name', 'AXReportTranslationCLI', '-I', str(debug/'Modules'),
                 '-F', str(debug), '-framework', 'Sparkle', '-Xlinker', '-rpath',
                 '-Xlinker', str(debug.resolve()), '-o', str(binary),
-                str(root/'tools/ax_report_translation.swift'), str(root.parent/'Sources/NotionAXEvaluation/MathTranslationPolicy.swift')] + [str(p) for p in objects],
+                str(root/'tools/ax_report_translation.swift')] + [str(p) for p in objects],
                 cwd=root.parent, check=True)
         with tempfile.TemporaryDirectory(prefix='ax-report-translation-') as tmp:
             input_path=Path(tmp)/'input.json';output_path=Path(tmp)/'output.json'

@@ -56,6 +56,31 @@ final class MathTranslationPolicyTests: XCTestCase {
         XCTAssertNotNil(result.contextError)
         XCTAssertTrue(result.segments.allSatisfy { $0.status == "failed" })
     }
+    @MainActor func testContextCancellationNeverFallsBack() async throws {
+        var calls = 0
+        do {
+            _ = try await MathTranslationPolicy.translate(parts, eligible: { _ in true }) { _ in
+                calls += 1
+                throw CancellationError()
+            }
+            XCTFail("Cancellation must propagate")
+        } catch is CancellationError {
+            XCTAssertEqual(calls, 1)
+        }
+    }
+    @MainActor func testFallbackCancellationStopsRemainingSegments() async throws {
+        var calls = 0
+        do {
+            _ = try await MathTranslationPolicy.translate(parts, eligible: { _ in true }) { _ in
+                calls += 1
+                if calls == 1 { return "missing markers" }
+                throw CancellationError()
+            }
+            XCTFail("Cancellation must propagate")
+        } catch is CancellationError {
+            XCTAssertEqual(calls, 2)
+        }
+    }
     func testNativeOwnershipSplitsLeavesWithoutGeometry() {
         let rows: [[String: Any]] = [["role": "AXTextArea"], ["role": "AXStaticText", "value": "before"],
             ["role": "AXGroup", "mathOwner": 2], ["role": "AXStaticText", "value": "math", "mathOwner": 2],

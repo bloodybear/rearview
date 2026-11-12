@@ -38,3 +38,35 @@ class NativeAXReportTests(unittest.TestCase):
             self.assertEqual(payload['frame'], frame)
             self.assertEqual(payload['paragraphs'][0]['text'], '日本語')
             self.assertEqual(payload['paragraphs'][0]['translationResult']['status'], 'not_translated')
+
+    def test_app_results_override_old_cache_and_preserve_failure_and_exclusion(self):
+        for missing in (False, True):
+            with self.subTest(missing=missing), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                (root/'tools').mkdir()
+                (root/'tools/ax_report.html').write_text('__PAYLOAD__')
+                (root/'runs/replay').mkdir(parents=True)
+                (root/'runs/replay/result.json').write_text(json.dumps({'scenarioId':'example','fixtureId':'fixture','screenshot':{'frame':{}}}))
+                folder = root/'evaluations/replay/evaluation'
+                folder.mkdir(parents=True)
+                units = [dict(node=i,text='日本語',members=[],lineRanges=[],box={},protectNonSourceText=False) for i in [1,2,3]]
+                for name, value in [('rawAx',[]),('candidate',[]),
+                                    ('metadata',dict(runId='replay',frameID=42,translationSource='rearview-session')),
+                                    ('native-paragraphs',dict(units=units,unresolved=[]))]:
+                    (folder/(name+'.json')).write_text(json.dumps(value))
+                (root/'evaluations/paragraph-translations-ko.json').write_text(json.dumps({'policyId':'test','entries':[
+                    dict(source='日本語',protectNonSourceText=False,status='translated',translation='STALE')]}))
+                if not missing:
+                    (folder/'native-translations.json').write_text(json.dumps(dict(frameID=42,entries=[
+                        dict(node=1,source='日本語',status='failed',error='provider failure'),
+                        dict(node=2,source='日本語',status='skipped_non_source_language') ])))
+                with patch.object(report,'__file__',str(root/'tools/render_ax_report.py')), patch.object(report,'translation_policy_id',return_value='test'):
+                    report.render(folder)
+                    payload = json.loads(base64.b64decode((folder/'index.html').read_text()))
+                    results = [unit['translationResult'] for unit in payload['paragraphs']]
+                    self.assertEqual([r['status'] for r in results], ['not_translated']*3 if missing else ['failed','skipped_non_source_language','not_translated'])
+                    self.assertNotIn('STALE',json.dumps(results))
+                    if not missing:
+                        (folder/'native-translations.json').write_text(json.dumps(dict(frameID=999,entries=[])))
+                        with self.assertRaisesRegex(ValueError,'frame mismatch'):
+                            report.render(folder)
