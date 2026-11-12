@@ -45,6 +45,34 @@ def stamp(obj):
     return {"id": obj["id"], "lastEditedTime": obj["last_edited_time"], "inTrash": trashed(obj)}
 
 
+def page_appearance(obj):
+    """Compare configured page decoration, excluding hosted-file URL expiry.
+
+    Missing icon/cover in a fixture definition means absent, not unmanaged.
+    Keep this separate from timestamp-only stamps: mutable presentation fixtures
+    ignore timestamps but must still notice a newly attached icon or cover.
+    """
+    def asset(value):
+        value = copy.deepcopy(value)
+        if isinstance(value, dict):
+            file = value.get("file")
+            if isinstance(file, dict):
+                file.pop("expiry_time", None)
+                if file.get("url"):
+                    parsed = urlparse(file["url"])
+                    file["url"] = parsed._replace(query="", fragment="").geturl()
+        return value
+    return {key: asset(obj.get(key)) for key in ("icon", "cover")}
+
+
+def page_payload(definition):
+    # Notion PATCH treats omission as "keep existing". Clear undefined decoration
+    # explicitly so ensure cannot accept a successful patch with a stale cover.
+    return dict(copy.deepcopy(definition.page),
+                icon=copy.deepcopy(definition.page.get("icon")),
+                cover=copy.deepcopy(definition.page.get("cover")))
+
+
 class State:
     def __init__(self, root):
         self.path = root / "state.json"
@@ -106,6 +134,12 @@ class Manager:
 
     @staticmethod
     def matches_baseline(definition, current, baseline):
+        if baseline is None:
+            return False
+        baseline = copy.deepcopy(baseline)
+        # Backward-compatible migration for old snapshots without decoration.
+        # Use the fixture definition, never the possibly modified live page.
+        baseline["pageAppearance"] = page_appearance(definition.page)
         if definition.mutable_presentation:
             return Manager.identity_snapshot(current) == Manager.identity_snapshot(baseline)
         return current == baseline
@@ -206,7 +240,7 @@ class Manager:
             self.api.request("PATCH", f"v1/pages/{page['id']}", {"in_trash": False})
             page = self.managed_page(page["id"])
             was_restored = True
-        result = {"page": stamp(page)}
+        result = {"page": stamp(page), "pageAppearance": page_appearance(page)}
         if entry["kind"] == "document":
             if entry.get("resolvedLinks"):
                 blocks = self.api.all("GET", f"v1/blocks/{entry['pageId']}/children")
@@ -280,18 +314,21 @@ class Manager:
         if baseline and not entry.get("pending"):
             snapshot = self.snapshot(entry, restore=True)
             if not force and not restored and entry.get("status") == "ready" and entry.get("sourceHash") == definition.source_hash and self.matches_baseline(definition, snapshot, baseline) and entry.get("resolvedLinks", {}) == resolved:
+                if "pageAppearance" not in baseline:
+                    entry["baseline"]["pageAppearance"] = snapshot["pageAppearance"]
+                    self.state.save()
                 return "reused", entry
         entry["status"] = "incomplete"
         self.state.save()
         if not entry.get("pageId"):
             # Create an empty shell first: its ID survives Markdown parser errors.
-            page = self.create("v1/pages", dict(copy.deepcopy(definition.page),
+            page = self.create("v1/pages", dict(page_payload(definition),
                 parent={"type": "page_id", "page_id": self.data["root"]["pageId"]}), entry, "pageId")
             entry["url"] = page.get("url", "")
             self.state.save()
         if definition.kind == "document":
             self.managed_page(entry["pageId"])
-            self.api.request("PATCH", f"v1/pages/{entry['pageId']}", definition.page)
+            self.api.request("PATCH", f"v1/pages/{entry['pageId']}", page_payload(definition))
             self.managed_page(entry["pageId"])
             result = self.api.request("PATCH", f"v1/pages/{entry['pageId']}/markdown", {
                 "type": "replace_content", "replace_content": {"new_str": definition.content},
@@ -304,6 +341,8 @@ class Manager:
         else:
             self.rebuild_database(definition, entry)
         new_baseline = self.snapshot(entry)
+        if new_baseline["pageAppearance"] != page_appearance(definition.page):
+            raise FixtureError("Page icon/cover differs from fixture definition after restore; refusing to publish a baseline")
         if links and sorted(new_baseline.get("pageLinks", [])) != sorted(resolved[link["fixtureId"]] for link in links):
             raise FixtureError("Created page links do not match the requested Fixture targets")
         entry.pop("pending", None)
@@ -456,7 +495,7 @@ class Manager:
                 self.api.request("PATCH", f"v1/databases/{old['id']}", {"in_trash": True})
         self.clean_wrapper(entry, db["id"])
         self.managed_page(entry["pageId"])
-        self.api.request("PATCH", f"v1/pages/{entry['pageId']}", definition.page)
+        self.api.request("PATCH", f"v1/pages/{entry['pageId']}", page_payload(definition))
         entry.update(databaseId=db["id"], dataSourceId=ds["id"],
                      rowIds=[pending["rows"][str(i)] for i in range(len(definition.rows))],
                      viewIds=[pending["views"][str(i)] for i in range(len(definition.views))])

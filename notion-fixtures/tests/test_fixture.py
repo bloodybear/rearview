@@ -148,6 +148,53 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(repaired["pageId"], entry["pageId"])
         self.assertFalse(self.remote()["objects"][entry["pageId"]]["in_trash"])
 
+    def test_ensure_clears_unconfigured_icon_and_cover_for_document_and_database(self):
+        for definition in (self.doc, self.db):
+            with self.subTest(kind=definition.kind):
+                _, entry = self.run_fixture(definition)
+                self.edit(entry["pageId"], icon={"type": "emoji", "emoji": "tree"},
+                          cover={"type": "external", "external": {"url": "https://example.com/cover.png"}})
+                action, restored = self.run_fixture(definition)
+                self.assertEqual(action, "restored")
+                self.assertEqual(restored["pageId"], entry["pageId"])
+                page = self.remote()["objects"][entry["pageId"]]
+                self.assertIsNone(page["icon"])
+                self.assertIsNone(page["cover"])
+                self.assertEqual(restored["baseline"]["pageAppearance"], {"icon": None, "cover": None})
+                count = len(self.remote()["calls"])
+                self.assertEqual(self.run_fixture(definition)[0], "reused")
+                self.assertEqual(self.writes_since(count), [])
+
+    def test_legacy_baseline_does_not_accept_live_decoration_as_expected(self):
+        self.db.mutable_presentation = True
+        _, entry = self.run_fixture(self.db)
+        with State(self.root) as state:
+            state.data["fixtures"][self.db.name]["baseline"].pop("pageAppearance")
+            state.save()
+        self.edit(entry["pageId"], icon={"type": "emoji", "emoji": "tree"})
+        self.assertEqual(self.run_fixture(self.db)[0], "restored")
+        self.assertIsNone(self.remote()["objects"][entry["pageId"]]["icon"])
+
+    def test_legacy_clean_baseline_migrates_without_remote_writes(self):
+        _, entry = self.run_fixture(self.doc)
+        with State(self.root) as state:
+            state.data["fixtures"][self.doc.name]["baseline"].pop("pageAppearance")
+            state.save()
+        count = len(self.remote()["calls"])
+        self.assertEqual(self.run_fixture(self.doc)[0], "reused")
+        self.assertEqual(self.writes_since(count), [])
+
+    def test_configured_icon_and_cover_are_restored_not_always_removed(self):
+        definition = copy.deepcopy(self.doc)
+        definition.page.update(icon={"type": "emoji", "emoji": "star"},
+                               cover={"type": "external", "external": {"url": "https://example.com/expected.png"}})
+        _, entry = self.run_fixture(definition)
+        self.edit(entry["pageId"], icon=None, cover=None)
+        _, restored = self.run_fixture(definition)
+        page = self.remote()["objects"][restored["pageId"]]
+        self.assertEqual(page["icon"], definition.page["icon"])
+        self.assertEqual(page["cover"], definition.page["cover"])
+
     def test_database_create_views_pagination_reuse_and_row_edit(self):
         _, entry = self.run_fixture(self.db)
         self.assertEqual(len(entry["rowIds"]), len(self.db.rows))

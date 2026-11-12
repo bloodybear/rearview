@@ -1,0 +1,91 @@
+<!doctype html><html lang="ko"><meta charset="utf-8"><title>AX — __SCENARIO__</title>
+<style>
+body{font:14px system-ui;margin:20px;line-height:1.6}button{cursor:pointer}nav{display:flex;gap:8px;align-items:center;position:sticky;top:0;background:#fff;z-index:40;padding:10px 0;flex-wrap:wrap}nav button{padding:7px 14px}nav button[aria-pressed=true]{background:#222;color:white}.screen{position:relative;overflow:hidden}.screen img{width:100%;height:100%}.box{position:absolute;background:transparent;border:1px solid #d22;box-sizing:border-box;z-index:1}.box:hover{background:#8882}.number{position:absolute;z-index:20;background:rgba(255,255,255,.45);color:#a00000;border:1px solid currentColor;border-radius:3px;padding:1px 2px;font:bold 12px/1.2 monospace;cursor:copy}.paragraph{border:2px solid #16803c;color:#12652f}.line{border-color:#245bd4;color:#245bd4}.title-source{border:2px dashed #be7900}.related{background:#a000ff20!important;outline:2px solid #a000ff}dialog{max-width:800px;width:85vw;max-height:85vh;overflow:auto}dialog::backdrop{background:#0006}pre{white-space:pre-wrap;overflow-wrap:anywhere}#notice{position:fixed;bottom:15px;right:15px;background:#222;color:#fff;padding:12px;z-index:100}#members button{margin:3px}table{border-collapse:collapse}td,th{border:1px solid #ccc;padding:7px;vertical-align:top}[hidden]{display:none!important}
+</style>
+<h1>__SCENARIO__</h1>
+<p id="coverageNote" role="status" hidden></p>
+<p>문단보기는 번역 단위 후보를 표시합니다: 본문 AXTextArea, 탭·DB 셀의 native 컨트롤 라벨, 그 외 선택 텍스트. 원문을 조합하지 않으며 의미상 문단을 보증하지 않습니다. 노드·라인은 현재 선택 결과이며 픽셀 가시성은 미검증입니다. 번호 클릭: 참조 복사 / 박스 클릭: 원문·소속 관계. 번호가 박스보다 클릭 우선입니다.</p>
+<nav aria-label="박스 보기"><button data-mode="paragraph" aria-pressed="true">문단보기</button><button data-mode="node" aria-pressed="false">노드보기</button><button data-mode="line" aria-pressed="false">라인보기</button><button data-mode="none" aria-pressed="false">원본보기 (박스 없음)</button><button id="clear">소속 강조 해제</button><span id="count"></span></nav>
+<p id="modeNote"></p><div id="screen" class="screen"><img src="screen.png" alt="수집 시점 Notion 화면"></div>
+<dialog id="detail"><button id="close">닫기</button> <button id="copyDetail">참조 복사</button><h2 id="heading"></h2><h3>원문</h3><pre id="text"></pre><section id="translationSection"><h3>번역문 · 한국어</h3><pre id="translation"></pre></section><div id="members"></div><details id="axDetails"><summary>AX 정보·선택 근거</summary><pre id="info"></pre></details><textarea id="reference" readonly aria-label="참조 정보" style="width:100%;height:60px"></textarea></dialog><div id="notice" role="status" hidden></div>
+<details><summary id="unresolvedTitle"></summary><p>문단보기에서는 아래 항목을 문단 박스로 그리지 않습니다. 노드 번호를 누르면 노드보기에서 상세를 확인합니다.</p><ul id="unresolved"></ul></details>
+<details><summary>현재 선택 노드 전체</summary><ul id="selected"></ul></details>
+<details><summary>전체 관측값과 선택·제외 이유</summary><table><thead><tr><th>번호</th><th>역할</th><th>원문</th><th>결정·이유</th></tr></thead><tbody id="raw"></tbody></table></details>
+<script>
+const data=JSON.parse(new TextDecoder().decode(Uint8Array.from(atob('__PAYLOAD__'),c=>c.charCodeAt(0))));
+const screen=document.getElementById('screen'),dialog=document.getElementById('detail');
+if((data.coverageLimitations||[]).includes('menu_background_not_exposed_by_ax')){
+ const note=document.getElementById('coverageNote');note.hidden=false;
+ note.textContent='수집 한계: 메뉴가 열린 동안 배경 본문이 AX에 노출되지 않아 메뉴만 수집했습니다. 화면에 보이는 본문까지 수집 완료한 결과가 아닙니다.';
+}
+
+const nodes=new Map(data.nodes.map(n=>[n.id,n])),selected=new Map(data.selected.map(n=>[n.node,n]));
+let mode='paragraph',current,focusMembers=[];
+Object.assign(screen.style,{width:data.frame.width+'px',height:data.frame.height+'px'});
+if(data.selectionRegion){const r=data.selectionRegion,b=document.createElement('div');b.dataset.selectionOverlay='true';Object.assign(b.style,{position:'absolute',pointerEvents:'none',border:'2px dashed purple',boxSizing:'border-box',left:(r.x-data.frame.x)+'px',top:(r.y-data.frame.y)+'px',width:r.width+'px',height:r.height+'px'});screen.append(b);}
+const paragraphLines=data.paragraphs.flatMap(p=>(p.lineRanges||[]).map(l=>({...p,...l,kind:'line',paragraphNode:p.node})));
+const lines=paragraphLines.length||data.nodes.some(n=>n.paragraphLineInvestigation)?paragraphLines:data.selected.flatMap(n=>(n.lineRanges||[]).map(l=>({...n,...l,kind:'line'})));
+function reference(c){return 'notion-fixtures/evaluations/'+data.run+'/'+data.evaluation+'/index.html#'+(c.kind==='paragraph'||c.paragraphNode!==undefined?'paragraph=':'node=')+c.node+(c.kind==='line'?'&line='+c.line:'');}
+function notify(message){const n=document.getElementById('notice');n.textContent=message;n.hidden=false;clearTimeout(window.noticeTimer);window.noticeTimer=setTimeout(()=>n.hidden=true,2200);}
+async function copy(c){const value=reference(c);try{await navigator.clipboard.writeText(value);notify('참조를 복사했습니다');}catch(e){const f=document.createElement('textarea');f.value=value;(dialog.open?dialog:document.body).append(f);f.select();const ok=document.execCommand('copy');f.remove();if(ok)notify('참조를 복사했습니다');else{show(c);document.getElementById('reference').select();notify('선택된 참조를 직접 복사해주세요');}}}
+function parentOf(c){return data.paragraphs.find(p=>p.node===c.paragraphNode||p.members.includes(c.node));}
+function belongs(l,c){return l.paragraphNode!==undefined?l.paragraphNode===(c.kind==='paragraph'?c.node:(c.paragraphNode??parentOf(c)?.node)):(c.kind==='paragraph'?c.members.includes(l.node):l.node===c.node);}
+function related(c){return c.kind==='paragraph'||c.paragraphNode!==undefined?c.members:[c.node];}
+function choose(c,targetMode){focusMembers=related(c);if(dialog.open)dialog.close();setMode(targetMode);}
+function action(label,callback){const b=document.createElement('button');b.textContent=label;b.onclick=callback;return b;}
+function show(c){current=c;const parent=parentOf(c),members=c.kind==='paragraph'?c.members:[c.node];
+ document.getElementById('heading').textContent=data.scenario+' / '+(c.kind==='paragraph'?'문단 P'+c.node:c.kind==='line'?(c.paragraphNode!==undefined?'문단 P':'노드 ')+c.node+' / 라인 '+c.line:'노드 '+c.node);
+ document.getElementById('text').textContent=c.text;
+ document.getElementById('axDetails').open=false;
+ const unit=c.kind==='paragraph'?c:parent,result=unit?.translationResult;
+ document.getElementById('translationSection').hidden=!unit;
+ const segmentID=c.kind==='line'?c.segment:unit?.inlineContent?.find(s=>s.kind==='text'&&(s.sourceNodes||[]).includes(c.node))?.id;
+ const segmentResults=result?.segments;
+ let text=result?.status==='skipped_non_source_language'?'번역 대상 아님 (일본어 미포함)':result?.translation??'번역 결과 없음';
+ if(segmentResults){
+  const format=s=>s.status==='skipped_non_source_language'?'번역 대상 아님 (일본어 미포함)':s.status==='failed'?'번역 실패':s.translation??'';
+  if(segmentID!==undefined){const s=segmentResults.find(s=>s.id===segmentID);text=s?format(s):'번역 결과 없음';}
+  else text=(unit.inlineContent||[]).map(s=>s.kind==='math'?'[수식]':format(segmentResults.find(r=>r.id===s.id)||{})).filter(Boolean).join('\n');
+ }
+ document.getElementById('translation').textContent=text;
+ document.getElementById('reference').value=reference(c);
+ const area=document.getElementById('members');area.replaceChildren();
+ if(c.kind==='paragraph'){
+  const p=document.createElement('p');p.textContent=({'native_textarea':'본문·표 AXTextArea','native_control':'탭·셀·컨트롤 원문','selected_text':'독립 선택 텍스트'}[c.unitType]||'번역 단위 후보')+' · 선택된 소속 노드 '+members.length+'개 / 라인 '+lines.filter(l=>belongs(l,c)).length+'개. 아래 보기 전환 시 소속 항목을 보라색으로 강조합니다.';area.append(p);
+  area.append(action('소속 노드 보기',()=>choose(c,'node')),action('소속 라인 보기',()=>choose(c,'line')));
+  for(const id of members)area.append(action('노드 '+id,()=>{choose(c,'node');show({...selected.get(id),kind:'node'});}));
+ }else if(parent){area.append(action('부모 문단 P'+parent.node,()=>{setMode('paragraph');show(parent);}));}
+ const ownLines=lines.filter(l=>belongs(l,c));
+ for(const line of ownLines)area.append(action('라인 '+line.node+'.'+line.line,()=>{choose(c,'line');show(line);}));
+ document.getElementById('info').textContent=JSON.stringify({item:c,parentParagraph:parent?.node,rawAx:nodes.get(c.node)},null,2);
+ if(!dialog.open)dialog.showModal();
+}
+function draw(c){
+ const fragments=c.kind==='line'?[c.box]:(c.visibleBoxes||[c.box]);
+ for(const f of fragments){drawBox(c,f);}
+}
+function drawBox(c,f){if(!f||f.width<=0||f.height<=0)return;
+ const kind=c.kind||'node',box=document.createElement('button');box.className='box '+(kind==='paragraph'?'paragraph':kind==='line'?'line':c.textSource==='AXTitle'?'title-source':'');box.dataset.kind=kind;box.dataset.node=c.node;
+ if(focusMembers.includes(c.node)||((kind==='paragraph'||c.paragraphNode!==undefined)&&c.members.some(id=>focusMembers.includes(id))))box.classList.add('related');
+ Object.assign(box.style,{left:(f.x-data.frame.x)+'px',top:(f.y-data.frame.y)+'px',width:f.width+'px',height:f.height+'px'});
+ box.setAttribute('aria-label',(kind==='paragraph'?'문단 ':kind==='line'?'라인 ':'노드 ')+c.node+(kind==='line'?'.'+c.line:'')+' 상세');box.onclick=()=>show(c);screen.append(box);
+ const label=document.createElement('button');label.className='number '+(kind==='paragraph'?'paragraph':kind==='line'?'line':'');label.textContent=kind==='paragraph'?'P'+c.node:kind==='line'?(c.paragraphNode!==undefined?'P':'')+c.node+'.'+c.line:c.node;label.title='참조 복사';Object.assign(label.style,{left:box.style.left,top:box.style.top});label.onclick=e=>{e.stopPropagation();copy(c);};screen.append(label);
+}
+function setMode(value){mode=value;screen.querySelectorAll('button').forEach(b=>b.remove());document.querySelectorAll('[data-mode]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.mode===mode)));
+ screen.querySelectorAll('[data-selection-overlay]').forEach(b=>b.hidden=mode==='none');
+ const items=mode==='none'?[]:mode==='paragraph'?data.paragraphs:mode==='line'?lines:data.selected.map(c=>({...c,kind:'node'}));items.forEach(draw);
+ document.getElementById('count').textContent=mode==='none'?'':(mode==='paragraph'?'문단 후보 ':mode==='line'?'라인 ':'선택 노드 ')+items.length+'개';
+ const missing=data.paragraphs.filter(c=>!(c.lineRanges||[]).length).length;
+ document.getElementById('modeNote').textContent=mode==='none'?'박스·번호·선택 영역 표시 없이 수집 시점의 원본 화면만 표시합니다.':mode==='paragraph'?'초록: 번역 단위 후보의 native 박스(본문·탭·DB·독립 텍스트). 문단 미분류 '+data.unresolved.length+'개는 아래 목록에서 확인합니다. 화면 밖 박스는 화면 경계에서 잘라 표시하며 원문은 유지합니다.':mode==='line'?'파랑: 문단에 속한 표시용 라인입니다. 라인이 없는 문단 '+missing+'개는 문단보기에서 확인하세요. 노드 박스를 라인으로 대체 표시하지 않습니다.':'빨강: 선택 노드 박스 / 주황 점선: AXTitle 컨트롤 박스. 라인·문단 후보와 별개입니다.';
+}
+document.querySelectorAll('[data-mode]').forEach(b=>b.onclick=()=>setMode(b.dataset.mode));document.getElementById('clear').onclick=()=>{focusMembers=[];setMode(mode);};
+document.getElementById('close').onclick=()=>dialog.close();document.getElementById('copyDetail').onclick=()=>copy(current);
+dialog.onclick=e=>{if(e.target===dialog){const r=dialog.getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)dialog.close();}};
+document.getElementById('unresolvedTitle').textContent='문단 미분류 '+data.unresolved.length+'개';
+for(const r of data.unresolved){const li=document.createElement('li');li.append(action('노드 '+r.node,()=>{setMode('node');show({...selected.get(r.node),kind:'node'});}),' — '+r.reason);document.getElementById('unresolved').append(li);}
+for(const c of data.selected){const li=document.createElement('li');const p=parentOf(c);li.textContent=c.node+': '+c.text+' / '+(p?.lineMethod?'문단 P'+p.node+' · '+(p.lineRangeStatus||'라인 미취득'):(c.lineRangeStatus||'라인 미취득'));document.getElementById('selected').append(li);}
+for(const n of data.nodes){if(!n.value&&!n.title)continue;const tr=document.createElement('tr');for(const text of [n.id,n.role,n.value||n.title,(n.decision||'')+' / '+(n.decisionReason||'')]){const td=document.createElement('td');td.textContent=text;tr.append(td);}document.getElementById('raw').append(tr);}
+setMode(mode);
+function followHash(){const q=new URLSearchParams(location.hash.slice(1));if(q.has('paragraph')){const id=Number(q.get('paragraph'));const c=q.has('line')?lines.find(l=>l.paragraphNode===id&&l.line===Number(q.get('line'))):data.paragraphs.find(p=>p.node===id);if(c){setMode(q.has('line')?'line':'paragraph');show(c);}}else if(q.has('node')){const id=Number(q.get('node'));const c=q.has('line')?lines.find(l=>l.node===id&&l.line===Number(q.get('line'))):selected.get(id);if(c){setMode(q.has('line')?'line':'node');show(c);}else notify('현재 선택 결과에 없는 참조입니다');}}
+window.addEventListener('hashchange',followHash);followHash();
+</script></html>

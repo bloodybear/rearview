@@ -3129,6 +3129,114 @@
       "allowedUnsupported": [
         "zoom"
       ]
+    },
+    "database-wrap-row-clipped-top": {
+      "suite": "extended",
+      "purpose": "database-wrap-row-clipped-top",
+      "visibilityChecks": [],
+      "sourceReferences": [],
+      "checks": [
+        "실제 스크롤 경계에서 여러 줄 텍스트가 부분적으로 잘리는지 화면으로 확인한다.",
+        "AX 전체 문자열을 가시 원문으로 확정하지 않는다."
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "database-wrap-row-clipped-bottom": {
+      "suite": "extended",
+      "purpose": "database-wrap-row-clipped-bottom",
+      "visibilityChecks": [],
+      "sourceReferences": [],
+      "checks": [
+        "실제 스크롤 경계에서 여러 줄 텍스트가 부분적으로 잘리는지 화면으로 확인한다.",
+        "AX 전체 문자열을 가시 원문으로 확정하지 않는다."
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "layout-scroll-clipped-bottom": {
+      "suite": "extended",
+      "purpose": "layout-scroll-clipped-bottom",
+      "visibilityChecks": [],
+      "sourceReferences": [],
+      "checks": [
+        "실제 스크롤 경계에서 여러 줄 텍스트가 부분적으로 잘리는지 화면으로 확인한다.",
+        "AX 전체 문자열을 가시 원문으로 확정하지 않는다."
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "layout-scroll-clipped-top": {
+      "suite": "extended",
+      "purpose": "layout-scroll-clipped-top",
+      "visibilityChecks": [],
+      "sourceReferences": [],
+      "checks": [
+        "실제 스크롤 경계에서 여러 줄 텍스트가 부분적으로 잘리는지 화면으로 확인한다.",
+        "AX 전체 문자열을 가시 원문으로 확정하지 않는다."
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "math-research-top": {
+      "suite": "research",
+      "purpose": "수식 경계와 앞뒤 텍스트 범위의 AX 조사 (기본 집중 목록 제외)",
+      "visibilityChecks": [
+        {
+          "scope": "main",
+          "text": "M01｜通常の文章",
+          "expectation": "present"
+        }
+      ],
+      "sourceReferences": [
+        {
+          "scope": "main",
+          "fixtureId": "math-research",
+          "anchor": {
+            "text": "M01｜通常の文章"
+          }
+        }
+      ],
+      "checks": [
+        "AXDocumentMath 소속 여부로 수식과 일반 텍스트를 구분한다.",
+        "수식의 부모 프레임을 실제 전체 수식 영역과 같다고 가정하지 않는다.",
+        "앞뒤 텍스트 라인은 AX 원본 좌표로 비교하고 수식 객체를 가로질러 합치지 않는다."
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
+    },
+    "math-research-bottom": {
+      "suite": "research",
+      "purpose": "수식 경계와 앞뒤 텍스트 범위의 AX 조사 (기본 집중 목록 제외)",
+      "visibilityChecks": [
+        {
+          "scope": "main",
+          "text": "M06｜自動折り返し",
+          "expectation": "present"
+        }
+      ],
+      "sourceReferences": [
+        {
+          "scope": "main",
+          "fixtureId": "math-research",
+          "anchor": {
+            "text": "M06｜自動折り返し"
+          }
+        }
+      ],
+      "checks": [
+        "AXDocumentMath 소속 여부로 수식과 일반 텍스트를 구분한다.",
+        "수식의 부모 프레임을 실제 전체 수식 영역과 같다고 가정하지 않는다.",
+        "앞뒤 텍스트 라인은 AX 원본 좌표로 비교하고 수식 객체를 가로질러 합치지 않는다."
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
     }
   },
   "sequences": {

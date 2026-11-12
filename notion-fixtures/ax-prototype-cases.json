@@ -1,0 +1,314 @@
+[
+  {
+    "id": "layout-wrap-1024-closed",
+    "purpose": "일반 문단",
+    "groups": [
+      "regression",
+      "lines"
+    ]
+  },
+  {
+    "id": "layout-wrap-640-closed",
+    "purpose": "좁은 창 줄바꿈",
+    "groups": [
+      "regression",
+      "lines"
+    ]
+  },
+  {
+    "id": "layout-toggle-depth-0",
+    "purpose": "토글 접힘",
+    "groups": [
+      "regression"
+    ]
+  },
+  {
+    "id": "layout-toggle-depth-1",
+    "purpose": "바깥 토글 펼침",
+    "groups": [
+      "regression"
+    ]
+  },
+  {
+    "id": "layout-toggle-depth-2",
+    "purpose": "안쪽 토글 펼침: L09-DEEP 포함 확인",
+    "groups": [
+      "regression"
+    ]
+  },
+  {
+    "id": "layout-l06",
+    "purpose": "반복 문구와 위치",
+    "groups": [
+      "regression"
+    ]
+  },
+  {
+    "id": "layout-l05",
+    "purpose": "다단 읽기 순서",
+    "groups": [
+      "regression"
+    ]
+  },
+  {
+    "id": "rich-r04",
+    "purpose": "한 문장 내 서식 run",
+    "groups": [
+      "regression",
+      "lines"
+    ]
+  },
+  {
+    "id": "reading-d08",
+    "purpose": "긴 문서 중간",
+    "groups": [
+      "regression"
+    ]
+  },
+  {
+    "id": "reading-d16",
+    "purpose": "긴 문서 끝",
+    "groups": [
+      "regression"
+    ]
+  },
+  {
+    "id": "database-nowrap-left",
+    "purpose": "DB 말줄임",
+    "groups": [
+      "regression"
+    ]
+  },
+  {
+    "id": "database-wrap-left",
+    "purpose": "DB 줄바꿈",
+    "groups": [
+      "regression",
+      "lines"
+    ]
+  },
+  {
+    "id": "mixed-m01",
+    "purpose": "일한 혼합 언어",
+    "groups": [
+      "regression"
+    ]
+  },
+  {
+    "id": "media-i01",
+    "purpose": "이미지 내부 원문과 AX 한계",
+    "groups": [
+      "regression"
+    ]
+  },
+  {
+    "id": "layout-region-bottom-glyph",
+    "purpose": "선택 영역 하단 글자 중간 잘림",
+    "groups": [
+      "clipping"
+    ]
+  },
+  {
+    "id": "layout-region-bottom",
+    "purpose": "선택 영역 하단 잘림",
+    "groups": [
+      "clipping"
+    ]
+  },
+  {
+    "id": "layout-region-left-glyph",
+    "purpose": "선택 영역 왼쪽 글자 중간 잘림",
+    "groups": [
+      "clipping"
+    ]
+  },
+  {
+    "id": "layout-region-left",
+    "purpose": "선택 영역 왼쪽 잘림",
+    "groups": [
+      "clipping"
+    ]
+  },
+  {
+    "id": "layout-region-right-glyph",
+    "purpose": "선택 영역 오른쪽 글자 중간 잘림",
+    "groups": [
+      "clipping"
+    ]
+  },
+  {
+    "id": "layout-region-right",
+    "purpose": "선택 영역 오른쪽 잘림",
+    "groups": [
+      "clipping"
+    ]
+  },
+  {
+    "id": "layout-region-top-glyph",
+    "purpose": "선택 영역 상단 글자 중간 잘림",
+    "groups": [
+      "clipping"
+    ]
+  },
+  {
+    "id": "layout-region-top",
+    "purpose": "선택 영역 상단 잘림",
+    "groups": [
+      "clipping"
+    ]
+  },
+  {
+    "id": "database-board-default",
+    "purpose": "보드 / 기본",
+    "groups": [
+      "database"
+    ]
+  },
+  {
+    "id": "database-board-left",
+    "purpose": "보드 / 가로 왼쪽",
+    "groups": [
+      "database"
+    ]
+  },
+  {
+    "id": "database-board-narrow",
+    "purpose": "보드 / 좁은 창",
+    "groups": [
+      "database"
+    ]
+  },
+  {
+    "id": "database-board-right",
+    "purpose": "보드 / 가로 오른쪽",
+    "groups": [
+      "database"
+    ]
+  },
+  {
+    "id": "database-gallery-bottom",
+    "purpose": "갤러리 / 하단",
+    "groups": [
+      "database"
+    ]
+  },
+  {
+    "id": "database-gallery-default",
+    "purpose": "갤러리 / 기본",
+    "groups": [
+      "database"
+    ]
+  },
+  {
+    "id": "database-gallery-narrow",
+    "purpose": "갤러리 / 좁은 창",
+    "groups": [
+      "database"
+    ]
+  },
+  {
+    "id": "database-nowrap-middle",
+    "purpose": "말줄임 표 / 가로 중간",
+    "groups": [
+      "clipping"
+    ]
+  },
+  {
+    "id": "database-nowrap-right",
+    "purpose": "말줄임 표 / 가로 오른쪽",
+    "groups": [
+      "clipping"
+    ]
+  },
+  {
+    "id": "database-row-clipped-bottom",
+    "purpose": "한 줄 표 행의 하단 잘림",
+    "groups": [
+      "clipping"
+    ]
+  },
+  {
+    "id": "database-row-clipped-top",
+    "purpose": "한 줄 표 행의 상단 잘림",
+    "groups": [
+      "clipping"
+    ]
+  },
+  {
+    "id": "database-wrap-middle",
+    "purpose": "줄바꿈 표 / 가로 중간",
+    "groups": [
+      "clipping"
+    ]
+  },
+  {
+    "id": "database-wrap-right",
+    "purpose": "줄바꿈 표 / 가로 오른쪽",
+    "groups": [
+      "clipping"
+    ]
+  },
+  {
+    "id": "database-timeline-default",
+    "purpose": "타임라인 / 기본",
+    "groups": [
+      "database"
+    ]
+  },
+  {
+    "id": "database-timeline-left",
+    "purpose": "타임라인 / 가로 왼쪽",
+    "groups": [
+      "database"
+    ]
+  },
+  {
+    "id": "database-timeline-narrow",
+    "purpose": "타임라인 / 좁은 창",
+    "groups": [
+      "database"
+    ]
+  },
+  {
+    "id": "database-timeline-right",
+    "purpose": "타임라인 / 가로 오른쪽",
+    "groups": [
+      "database"
+    ]
+  },
+  {
+    "id": "mixed-m08",
+    "purpose": "이모지·UTF-16 범위",
+    "groups": [
+      "lines"
+    ]
+  },
+  {
+    "id": "database-wrap-row-clipped-top",
+    "purpose": "여러 줄 표 행의 상단 잘림",
+    "groups": [
+      "clipping"
+    ]
+  },
+  {
+    "id": "database-wrap-row-clipped-bottom",
+    "purpose": "여러 줄 표 행의 하단 잘림",
+    "groups": [
+      "clipping"
+    ]
+  },
+  {
+    "id": "layout-scroll-clipped-top",
+    "purpose": "문단의 실제 스크롤 상단 잘림",
+    "groups": [
+      "clipping"
+    ]
+  },
+  {
+    "id": "layout-scroll-clipped-bottom",
+    "purpose": "문단의 실제 스크롤 하단 잘림",
+    "groups": [
+      "clipping"
+    ]
+  }
+]

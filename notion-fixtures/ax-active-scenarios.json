@@ -1,0 +1,15 @@
+{
+  "description": "사용자 지정 임시 기본 테스트 범위. 명시적 요청 없이 전체 126개로 확대하지 않는다.",
+  "scenarios": [
+    "layout-toggle-depth-1", "rich-r04", "database-nowrap-left", "database-wrap-left", "layout-region-left",
+    "database-board-default", "database-gallery-default", "database-nowrap-middle", "database-row-clipped-bottom",
+    "database-row-clipped-top", "database-wrap-middle", "database-timeline-default", "database-timeline-left",
+    "database-timeline-narrow", "database-timeline-right", "mixed-m08", "database-wrap-row-clipped-bottom",
+    "layout-code-left", "layout-table-left", "layout-table-middle", "layout-wrap-1024-pinned", "media-i06",
+    "mixed-m03", "mixed-utf16-selection", "navigation-background-middle", "navigation-both-middle", "navigation-default",
+    "navigation-menu", "navigation-peek-center", "navigation-peek-layout-stress", "navigation-preview-middle",
+    "navigation-sidebar-peek", "database-peek-b09", "database-peek-b10", "database-peek-b18",
+    "database-sidebar-peek-horizontal", "rich-r06", "rich-r11", "rich-tab-checks", "media-i04-diagram",
+    "media-i04-source", "media-i05-diagram", "media-i05-source"
+  ]
+}

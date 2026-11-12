@@ -1,0 +1,52 @@
+{
+  "schemaVersion": 2,
+  "id": "math-research-top",
+  "name": "math-research-top",
+  "version": 1,
+  "fixtureId": "math-research",
+  "fixtureVersion": "777f0c4acea3f19fc379fbed42616b9f58d6cd208f98b21b8f4c17d09ea9c68b",
+  "fixtureVersions": {
+    "math-research": "777f0c4acea3f19fc379fbed42616b9f58d6cd208f98b21b8f4c17d09ea9c68b"
+  },
+  "state": {
+    "coordinateSystem": "screen-top-left-points",
+    "window": {
+      "x": 0,
+      "y": 60,
+      "width": 1024,
+      "height": 800
+    },
+    "zoomPercent": 100,
+    "sidebar": {
+      "mode": "closed"
+    },
+    "presentation": {
+      "mode": "none"
+    },
+    "focus": {
+      "mode": "clear"
+    },
+    "scrolls": [
+      {
+        "scope": "main",
+        "axis": "y",
+        "mode": "anchor",
+        "anchor": {
+          "text": "M01｜通常の文章"
+        },
+        "offset": 80
+      }
+    ],
+    "required": [
+      "target",
+      "window",
+      "zoom",
+      "sidebar",
+      "focus",
+      "screenshot",
+      "finalState",
+      "presentation",
+      "scroll.0"
+    ]
+  }
+}

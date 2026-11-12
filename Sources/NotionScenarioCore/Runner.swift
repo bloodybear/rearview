@@ -118,7 +118,7 @@ public final class ScenarioRunner {
         for attempt in 0..<maxAttempts {
             attempts = attempt + 1
             let captureTarget = item == "target" && request.operation == "capture"
-            stepDeadline = min(deadline, Date().addingTimeInterval(captureTarget ? 5 : (isToggle ? 6 : 10)))
+            stepDeadline = min(deadline, Date().addingTimeInterval(captureTarget ? 5 : (isToggle ? 15 : 10)))
             if item == "presentation" { result.environment["presentation.phase"] = "attempt-\(attempt + 1):starting" }
             do {
                 try checkTime()
@@ -324,6 +324,12 @@ public final class ScenarioRunner {
         for (index, toggle) in (state.toggles ?? []).enumerated() {
             await step("toggle.\(index)") {
                 try await self.locate(toggle.anchor)
+                // Find/ScrollToVisible can leave a formatting popover and selection
+                // above the disclosure. Clear transient UI before performing it.
+                if self.request.scenario.state.focus?.mode == "clear" {
+                    try await self.focus(FocusRequest(mode: "clear"))
+                }
+                self.result.environment["toggle.\(index).anchorLookup"] = self.result.environment["anchorLookup"]
                 let (expanded, button) = try self.toggleState(toggle.anchor)
                 if expanded != toggle.expanded {
                     // Prefer AXPress. Some Notion builds return success without changing
@@ -432,14 +438,33 @@ public final class ScenarioRunner {
         }
     }
     private func locate(_ anchor: Anchor) async throws {
-        if let e = try ax.unique(anchor, in: contentRoot), let r = ax.frame(e), r.height > 0 {
+        // Chromium clamps offscreen text to 1pt edge rectangles. A positive
+        // frame alone does not establish a safe click target; bring it into the
+        // body viewport first. This is replay geometry, not a glyph-visibility claim.
+        func usable(_ element: AXUIElement) throws -> Bool {
+            guard let r = ax.frame(element), r.width > 1, r.height > 1 else { return false }
+            let visible = r.intersection(try viewport().1)
+            return !visible.isNull && visible.width > 1 && visible.height > 1
+        }
+        func scanViewport() async throws -> Bool {
+            guard let pane = ax.viewport(contentRoot), let bounds = ax.frame(pane) else { return false }
+            try ax.wheel(100_000, viewport: pane)
+            try await pause()
+            for _ in 0..<64 {
+                if let node = try ax.unique(anchor, in: contentRoot), try usable(node) { return true }
+                try ax.wheel(-Int(max(100, bounds.height * 0.7)), viewport: pane)
+                try await pause()
+            }
+            return false
+        }
+        if let e = try ax.unique(anchor, in: contentRoot), try usable(e) {
             result.environment["anchorLookup"] = "visible-AX"
             return
         }
         if let element = try ax.unique(anchor, in: contentRoot) {
             try? ax.press(element, action: "AXScrollToVisible")
             try await pause()
-            if let current = try ax.unique(anchor, in: contentRoot), ax.frame(current).map({ $0.height > 0 && $0.width > 0 }) == true {
+            if let current = try ax.unique(anchor, in: contentRoot), try usable(current) {
                 result.environment["anchorLookup"] = "AXScrollToVisible"
                 return
             }
@@ -447,14 +472,8 @@ public final class ScenarioRunner {
         // Notion's Find command can search the background page even when the
         // peek editor owns AX focus. Discover virtualized preview anchors by
         // scrolling that pane itself, without changing either document.
-        if ax.classes(contentRoot).contains("notion-peek-renderer"), let pane = ax.viewport(contentRoot), let bounds = ax.frame(pane) {
-            try ax.wheel(100_000, viewport: pane)
-            try await pause()
-            for _ in 0..<64 {
-                if let node = try ax.unique(anchor, in: contentRoot), ax.frame(node).map({ $0.width > 0 && $0.height > 0 }) == true { return }
-                try ax.wheel(-Int(max(100, bounds.height * 0.7)), viewport: pane)
-                try await pause()
-            }
+        if ax.classes(contentRoot).contains("notion-peek-renderer") {
+            if try await scanViewport() { return }
             throw ScenarioFailure("anchor_missing", "Preview anchor was not exposed while scanning its own viewport")
         }
         if request.scenario.schemaVersion == 2, let editor = ax.editor(contentRoot) {
@@ -477,12 +496,18 @@ public final class ScenarioRunner {
         }
         try ax.set(field!, "AXValue", anchor.text as CFString)
         try await wait { self.ax.text(field!, "AXValue") == anchor.text }
+        // AXValue can update Find without submitting the query. Reserve time
+        // for Return instead of consuming the whole step deadline waiting for it.
+        let findDeadline = stepDeadline
+        stepDeadline = min(findDeadline, Date().addingTimeInterval(1))
         do {
             try await wait {
-                guard let e = try self.ax.unique(anchor, in: self.contentRoot), let r = self.ax.frame(e) else { return false }
-                return r.height > 0
+                guard let e = try self.ax.unique(anchor, in: self.contentRoot) else { return false }
+                return try usable(e)
             }
+            stepDeadline = findDeadline
         } catch let error as ScenarioFailure where error.code == "timeout" {
+            stepDeadline = findDeadline
             // Submit only after confirming keyboard focus belongs to Find. Without
             // this gate Return can reach the page editor when Notion ignores AX focus.
             guard let raw = ax.get(ax.app, "AXFocusedUIElement"), CFGetTypeID(raw) == AXUIElementGetTypeID(),
@@ -491,15 +516,27 @@ public final class ScenarioRunner {
             }
             result.environment["findReturnSubmitted"] = "true"
             ax.key(36)
-            try await wait {
-                guard let e = try self.ax.unique(anchor, in: self.contentRoot), let r = self.ax.frame(e) else { return false }
-                return r.height > 0
+            // Find can display the query without revealing an unloaded block.
+            // Reserve the rest of this replay step for scrolling that document.
+            stepDeadline = min(findDeadline, Date().addingTimeInterval(2))
+            do {
+                try await wait {
+                    guard let e = try self.ax.unique(anchor, in: self.contentRoot) else { return false }
+                    return try usable(e)
+                }
+            } catch let error as ScenarioFailure where error.code == "timeout" {
+                stepDeadline = findDeadline
+                try await closeFind()
+                result.environment["anchorLookup"] = "viewport scan after Find"
+                if try await scanViewport() { return }
+                throw ScenarioFailure("anchor_missing", "Anchor was not exposed by Find or viewport scanning")
             }
         }
+        stepDeadline = findDeadline
         try await closeFind()
         try await wait {
-            guard let e = try self.ax.unique(anchor, in: self.contentRoot), let r = self.ax.frame(e) else { return false }
-            return r.height > 0 && self.findFields().isEmpty
+            guard let e = try self.ax.unique(anchor, in: self.contentRoot) else { return false }
+            return try usable(e) && self.findFields().isEmpty
         }
     }
     private func findFields() -> [AXUIElement] {
@@ -1411,6 +1448,25 @@ private extension ScenarioRunner {
             if let rect = try markerBounds(element:element,text:anchor.text,location:location,length:length) { return rect }
             throw ScenarioFailure("unsupported", "Neither range API exposes bounds for the requested source-verified UTF-16 range")
         }
+        if scroll.scope == "database", scroll.axis == "x",
+           anchor.blockClass == "notion-timeline-item-properties",
+           ax.text(element, "AXRole") == "AXStaticText" {
+            // The pinned list clamps the AXFrame of a covered timeline label.
+            // Position replay with Chromium's unclipped text-range coordinates
+            // so an anchor can converge underneath the pinned panel as requested.
+            var range = CFRange(location: 0, length: anchor.text.utf16.count)
+            var value: CFTypeRef?
+            if let parameter = AXValueCreate(.cfRange, &range),
+               AXUIElementCopyParameterizedAttributeValue(element, "AXBoundsForRange" as CFString, parameter, &value) == .success,
+               let value, CFGetTypeID(value) == AXValueGetTypeID() {
+                var bounds = CGRect.zero
+                if AXValueGetValue(value as! AXValue, .cgRect, &bounds),
+                   bounds.width > 0, bounds.height > 0, !bounds.isInfinite {
+                    result.environment["timelineHorizontalAnchorBounds"] = "AXBoundsForRange; unclipped full source"
+                    return bounds
+                }
+            }
+        }
         return ax.frame(element)
     }
     func markerBounds(element: AXUIElement, text: String, location: Int, length: Int) throws -> CGRect? {
@@ -1530,6 +1586,7 @@ private extension ScenarioRunner {
                 guard let frame = try scrollFrame(scroll, source: source), frame.width > 0, frame.height > 0 else {
                     throw ScenarioFailure("anchor_missing", "Scoped scroll anchor is not visible")
                 }
+                result.observedGeometry["scroll.\(index).lastAnchorAttempt"] = Rect(frame)
                 let low = horizontal ? frame.minX : frame.minY
                 let high = horizontal ? frame.maxX : frame.maxY
                 let start = horizontal ? bounds.minX : bounds.minY
@@ -1558,13 +1615,24 @@ private extension ScenarioRunner {
             // A boundary must be witnessed by stable content geometry, with a reverse/return probe.
             struct Witness: Equatable { let text: String; let rect: Rect }
             func signature() -> [Witness] {
-                ax.nodes(viewport).filter {
-                    ["AXTextArea", "AXStaticText", "AXCell", "AXLink"].contains(ax.text($0, "AXRole")) &&
-                    !ax.classes($0).contains("whenContentEditable")
-                }.compactMap { node -> Witness? in
-                    guard let frame = ax.frame(node), frame.width > 2, frame.height > 2 else { return nil }
-                    return Witness(text: ax.label(node), rect: Rect(frame))
-                }.prefix(30).map { $0 }
+                let observed = ax.nodes(viewport)
+                func witnesses(roles: [String], confinedToViewport: Bool) -> [Witness] {
+                    observed.filter {
+                        roles.contains(ax.text($0, "AXRole")) &&
+                        !ax.classes($0).contains("whenContentEditable")
+                    }.compactMap { node -> Witness? in
+                        guard let frame = ax.frame(node), frame.width > 2, frame.height > 2 else { return nil }
+                        let text = ax.label(node)
+                        if confinedToViewport && (text.isEmpty || !frame.intersects(bounds)) { return nil }
+                        return Witness(text: text, rect: Rect(frame))
+                    }.prefix(30).map { $0 }
+                }
+                let text = witnesses(roles: ["AXTextArea", "AXStaticText", "AXCell", "AXLink"],
+                                     confinedToViewport: false)
+                if !text.isEmpty { return text }
+                // Some DB views expose their content solely as titled controls.
+                return witnesses(roles: ["AXButton", "AXPopUpButton", "AXRadioButton"],
+                                 confinedToViewport: true)
             }
             let delta = Int((horizontal ? bounds.width : bounds.height).rounded()) * (scroll.mode == "start" ? 1 : -1)
             var previous: [Witness] = [], stable = 0
@@ -1597,6 +1665,7 @@ private extension ScenarioRunner {
                 scrollObservations[index] = witness.rect.cgRect
                 boundaryElements[index] = (node, witness.rect.cgRect)
                 boundaryLabels[index] = witness.text
+                result.environment["scroll.\(index).boundaryWitness"] = witness.text
             } else { throw ScenarioFailure("unsupported", "No persistent content witness for final boundary readback") }
         }
     }

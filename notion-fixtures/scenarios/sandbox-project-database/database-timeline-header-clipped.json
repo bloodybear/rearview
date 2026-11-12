@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 2,
+  "id": "database-timeline-header-clipped",
+  "name": "Database Timeline Sticky Header Clipped Rows",
+  "version": 1,
+  "fixtureId": "sandbox-project-database",
+  "fixtureVersion": "d4bdb44ef8b0ef1a89d0cdd38aba25341836646d5532cb6a16caed3a8858ed07",
+  "fixtureVersions": {
+    "sandbox-project-database": "d4bdb44ef8b0ef1a89d0cdd38aba25341836646d5532cb6a16caed3a8858ed07"
+  },
+  "state": {
+    "coordinateSystem": "screen-top-left-points",
+    "window": {
+      "x": 0,
+      "y": 60,
+      "width": 1024,
+      "height": 700
+    },
+    "zoomPercent": 100,
+    "sidebar": {
+      "mode": "closed"
+    },
+    "presentation": {
+      "mode": "none"
+    },
+    "focus": {
+      "mode": "clear"
+    },
+    "scrolls": [
+      {
+        "scope": "database",
+        "axis": "y",
+        "mode": "anchor",
+        "anchor": {
+          "text": "左右のカラムに表示された同じ文章を別々の矩形として扱い、画面外へ移動した文章の古い座標を残さないことを確認するための長い申請名",
+          "blockClass": "notion-collection-item"
+        },
+        "offset": 236
+      }
+    ],
+    "databaseView": "タイムライン：期間と重なり",
+    "required": [
+      "target",
+      "window",
+      "zoom",
+      "sidebar",
+      "focus",
+      "screenshot",
+      "finalState",
+      "databaseView",
+      "presentation",
+      "scroll.0"
+    ]
+  }
+}

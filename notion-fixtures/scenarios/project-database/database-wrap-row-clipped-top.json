@@ -1,0 +1,65 @@
+{
+  "schemaVersion": 2,
+  "id": "database-wrap-row-clipped-top",
+  "name": "database-wrap-row-clipped-top",
+  "version": 2,
+  "fixtureId": "project-database",
+  "fixtureVersion": "1b799a290d6987b170044914a450a732314c895194999f7322fec8f136a4c86c",
+  "fixtureVersions": {
+    "project-database": "1b799a290d6987b170044914a450a732314c895194999f7322fec8f136a4c86c"
+  },
+  "state": {
+    "coordinateSystem": "screen-top-left-points",
+    "window": {
+      "x": 0,
+      "y": 60,
+      "width": 1024,
+      "height": 700
+    },
+    "zoomPercent": 100,
+    "sidebar": {
+      "mode": "closed"
+    },
+    "presentation": {
+      "mode": "none"
+    },
+    "focus": {
+      "mode": "clear"
+    },
+    "scrolls": [
+      {
+        "scope": "database",
+        "axis": "y",
+        "mode": "anchor",
+        "anchor": {
+          "text": "年間料金ではありません。途中解約による日割り返金はありません。ただし、誤請求の返金は別です。"
+        },
+        "offset": -8
+      },
+      {
+        "scope": "database",
+        "axis": "x",
+        "mode": "anchor",
+        "anchor": {
+          "text": "備考",
+          "blockClass": "notion-table-view-header-row"
+        },
+        "offset": -8
+      }
+    ],
+    "databaseView": "表：複数行で折り返し",
+    "required": [
+      "target",
+      "window",
+      "zoom",
+      "sidebar",
+      "focus",
+      "screenshot",
+      "finalState",
+      "databaseView",
+      "presentation",
+      "scroll.0",
+      "scroll.1"
+    ]
+  }
+}

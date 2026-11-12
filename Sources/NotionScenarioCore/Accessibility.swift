@@ -131,7 +131,9 @@ final class Accessibility {
     func matching(_ anchor: Anchor, in root: AXUIElement) -> [AXUIElement] {
         let editable = leaves(root).filter { text($0, "AXValue") == anchor.text }
         let candidates = editable.isEmpty ? nodes(root).filter {
-            ["AXStaticText", "AXCell", "AXColumn", "AXButton"].contains(text($0, "AXRole")) && label($0) == anchor.text
+            // Observed Notion column headers expose AXPopUpButton, and view
+            // tabs expose AXRadioButton. Their titles are replay anchors too.
+            ["AXStaticText", "AXCell", "AXColumn", "AXButton", "AXPopUpButton", "AXRadioButton"].contains(text($0, "AXRole")) && label($0) == anchor.text
         } : editable
         return candidates.filter { e in
             var current: AXUIElement? = e
@@ -188,7 +190,12 @@ final class Accessibility {
             throw ScenarioFailure("unsupported", "Cannot read body viewport for scroll input")
         }
         let system = AXUIElementCreateSystemWide()
-        let candidates: [(CGFloat, CGFloat)] = [(0.12,0.5),(0.88,0.5),(0.5,0.1),(0.5,0.5),(0.5,0.8),(0.25,0.25),(0.75,0.75)]
+        // A database body's right side reaches the movable timeline canvas
+        // beside its pinned list. Other panes keep their established input order.
+        let preferRightSide = horizontal && classes(viewport).contains("notion-collection-view-body")
+        let candidates: [(CGFloat, CGFloat)] = preferRightSide
+            ? [(0.88,0.5),(0.12,0.5),(0.5,0.1),(0.5,0.5),(0.5,0.8),(0.25,0.25),(0.75,0.75)]
+            : [(0.12,0.5),(0.88,0.5),(0.5,0.1),(0.5,0.5),(0.5,0.8),(0.25,0.25),(0.75,0.75)]
         var destination: CGPoint?
         for (x,y) in candidates {
             let point = CGPoint(x: rect.minX + rect.width*x, y: rect.minY + rect.height*y)

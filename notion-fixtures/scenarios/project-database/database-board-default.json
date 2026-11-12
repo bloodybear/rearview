@@ -2,11 +2,11 @@
   "schemaVersion": 2,
   "id": "database-board-default",
   "name": "Database Board Default",
-  "version": 1,
+  "version": 3,
   "fixtureId": "project-database",
-  "fixtureVersion": "e91b9f0a459086eaa720dcb4415c1bc66989dc86bdb9aca337a0b20c3ed132b9",
+  "fixtureVersion": "1b799a290d6987b170044914a450a732314c895194999f7322fec8f136a4c86c",
   "fixtureVersions": {
-    "project-database": "e91b9f0a459086eaa720dcb4415c1bc66989dc86bdb9aca337a0b20c3ed132b9"
+    "project-database": "1b799a290d6987b170044914a450a732314c895194999f7322fec8f136a4c86c"
   },
   "state": {
     "coordinateSystem": "screen-top-left-points",
@@ -31,6 +31,11 @@
         "scope": "main",
         "axis": "y",
         "mode": "start"
+      },
+      {
+        "scope": "database",
+        "axis": "x",
+        "mode": "start"
       }
     ],
     "databaseView": "ボード：状態ごとのカード",
@@ -44,7 +49,8 @@
       "finalState",
       "databaseView",
       "presentation",
-      "scroll.0"
+      "scroll.0",
+      "scroll.1"
     ]
   }
 }

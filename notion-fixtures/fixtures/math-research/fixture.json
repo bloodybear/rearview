@@ -1,0 +1,11 @@
+{
+  "kind": "document",
+  "page": {
+    "properties": {
+      "title": {
+        "title": [{"text": {"content": "数式と本文の境界｜AX研究 | math-research"}}]
+      }
+    }
+  },
+  "content": "content.md"
+}

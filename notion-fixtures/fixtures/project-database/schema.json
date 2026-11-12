@@ -7,7 +7,30 @@
       "rich_text": {}
     },
     "状態": {
-      "status": {}
+      "status": {
+        "options": [
+          {
+            "name": "Not started",
+            "color": "default",
+            "group": "To-do"
+          },
+          {
+            "name": "In progress",
+            "color": "blue",
+            "group": "In progress"
+          },
+          {
+            "name": "Done",
+            "color": "green",
+            "group": "Complete"
+          },
+          {
+            "name": "担当者による申請内容の確認と追加資料の提出を待っています",
+            "color": "orange",
+            "group": "In progress"
+          }
+        ]
+      }
     },
     "優先度": {
       "select": {
@@ -60,6 +83,11 @@
       "url": {}
     },
     "見積時間の二倍": {
+      "formula": {
+        "expression": "prop(\"見積時間\") * 2"
+      }
+    },
+    "申請内容の確認と追加資料の提出に必要な見積時間の二倍": {
       "formula": {
         "expression": "prop(\"見積時間\") * 2"
       }

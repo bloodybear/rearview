@@ -27,6 +27,7 @@ let package = Package(
         .executableTarget(name: "NotionAXEvaluation", dependencies: ["NotionScenarioCore"]),
         .target(name: "NotionScenarioCore"),
         .executableTarget(name: "NotionScenarios", dependencies: ["NotionScenarioCore"]),
+        .testTarget(name: "NotionAXEvaluationTests", dependencies: ["NotionAXEvaluation"]),
         .testTarget(name: "NotionScenarioTests", dependencies: ["NotionScenarioCore"]),
         .testTarget(
             name: "RearviewTests",
