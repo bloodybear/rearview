@@ -38,6 +38,10 @@
     {
       "after": "N06｜参照する文書：project-database",
       "fixtureId": "project-database"
+    },
+    {
+      "after": "N19｜参照する文書：math-research",
+      "fixtureId": "math-research"
     }
   ]
 }

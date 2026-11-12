@@ -2,17 +2,18 @@
   "schemaVersion": 2,
   "id": "navigation-peek-layout-stress",
   "name": "[core] Navigation Peek Layout Stress",
-  "version": 3,
+  "version": 4,
   "fixtureId": "page-navigation",
-  "fixtureVersion": "892173cb1b992fde8a69a438198e35b1d7fc8dd7e857b630cce84ecc542c6d38",
+  "fixtureVersion": "6f8e723b6ba73456c90100d881271b7c01caa75ed51952431ea3c003ea7e95b7",
   "fixtureVersions": {
     "layout-stress": "e4fb079951259477037a1b889db20cdaa4b345f6c8e9a93df3ba47d5a3a9bc8c",
     "long-reading": "9c15519ecca1278d348c6621293246798c86c0fb870e25c70a8d4cb4def35d17",
     "media-diagrams": "896a5a3cf10dec24a51e3e57236f23e1c55ee409c4f43ff9a57068517e14cfc2",
     "mixed-language": "f441165f623e5bd04033a630f56e9a5d0311469a25fc4ad5658b479905d1dfc6",
-    "page-navigation": "892173cb1b992fde8a69a438198e35b1d7fc8dd7e857b630cce84ecc542c6d38",
+    "page-navigation": "6f8e723b6ba73456c90100d881271b7c01caa75ed51952431ea3c003ea7e95b7",
     "project-database": "1b799a290d6987b170044914a450a732314c895194999f7322fec8f136a4c86c",
-    "rich-document": "31f56af7eada8fbdc9410be4e21d4342e30c1235508ff6b838aee4505fbfec30"
+    "rich-document": "31f56af7eada8fbdc9410be4e21d4342e30c1235508ff6b838aee4505fbfec30",
+    "math-research": "777f0c4acea3f19fc379fbed42616b9f58d6cd208f98b21b8f4c17d09ea9c68b"
   },
   "state": {
     "coordinateSystem": "screen-top-left-points",
