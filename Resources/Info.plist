@@ -20,6 +20,6 @@
     <key>SUAutomaticallyUpdate</key><false/>
     <key>SUScheduledCheckInterval</key><real>86400</real>
     <key>SUFeedURL</key><string>https://raw.githubusercontent.com/bloodybear/rearview/main/appcast.xml</string>
-    <key>SUPublicEDKey</key><string>SVbzPmylGh4qjywwcxbe0O03692LmfUh+5R9pnzj5tA=</string>
+    <key>SUPublicEDKey</key><string>NsZ/uw4jGTHtVJuI280ohtF7NEReTW4xN3ya3Eju5lo=</string>
 </dict>
 </plist>
