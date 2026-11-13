@@ -19,7 +19,7 @@ final class AXLineRenderingTests: XCTestCase {
         if math {
             paragraph["inlineContent"] = [["kind":"text","id":0,"text":"日本語","sourceNodes":[1],"lineRanges":paragraph["lineRanges"]!], ["kind":"math","id":1,"node":2]]
         }
-        let nodes: [[String:Any]] = axRed ? [["id":1,"role":"AXStaticText","value":"日本語","title":"","foregroundColor":["red":1,"green":0,"blue":0,"alpha":1]]] : []
+        let nodes: [[String:Any]] = axRed ? [["id":1,"role":"AXStaticText","value":"日本語","title":"","foregroundColorStatus":"uniform","foregroundColor":["red":0.7,"green":0,"blue":0,"alpha":1]]] : []
         let snapshot = try AXExtractionSnapshot(nodes:nodes,selected:[],paragraphs:[paragraph],metadata:["status":"complete","selectionRegion":["x":0,"y":0,"width":300/pixelScale,"height":Double(canvasHeight)/pixelScale]])
         var payload: [String:Any] = ["provider":"test","node":1,"source":source,"sourceLanguage":"ja","targetLanguage":"ko","protectNonSourceText":false,"sourceLanguageEligible":true,"status":"translated","translation":translation]
         if math { payload["segments"] = [["id":0,"source":"日本語","status":"translated","translation":translation]] }
@@ -71,6 +71,8 @@ final class AXLineRenderingTests: XCTestCase {
         XCTAssertNotEqual(red.text!.dataProvider!.data! as Data,sampled.text!.dataProvider!.data! as Data)
         let bytes = [UInt8](red.text!.dataProvider!.data! as Data)
         XCTAssertTrue(stride(from:0,to:bytes.count,by:4).contains { bytes[$0] > bytes[$0+1] && bytes[$0+3] > 0 })
+        XCTAssertEqual(red.diagnostics.first?.foregroundSource,"ax_uniform")
+        XCTAssertGreaterThanOrEqual(red.diagnostics.first!.foregroundContrast!,4.5)
     }
     func testEmptyClipNeverPaintsText() throws {
         let result = try render(hidden:true)

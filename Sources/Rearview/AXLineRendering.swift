@@ -13,6 +13,9 @@ struct AXRenderDiagnostic: Codable, Sendable {
     var clipped = false
     var lineBoxes: [CGRect] = []
     var heightRatio: Double = 1
+    var backgroundColor, foregroundColor: [Double]?
+    var foregroundSource: String?
+    var foregroundContrast: Double?
 }
 
 struct AXRenderArtwork: @unchecked Sendable {
@@ -54,6 +57,7 @@ enum AXLineRendering {
         let bg = context(), fg = context(), debug = context()
         var clipRects: [CGRect] = []
         var diagnostics: [AXRenderDiagnostic] = [], items: [MirrorItem] = [], fragments: [NativeMirrorRenderedFragment] = []
+        let observations = Dictionary(uniqueKeysWithValues:value.frame.snapshot.observations.map { ($0.id,$0) })
         let metadata = (try? JSONSerialization.jsonObject(with:value.frame.snapshot.metadata)) as? [String:Any]
         let selection = metadata?["selectionRegion"] as? [String:Double] ?? [:]
         let region = CGRect(x:selection["x"] ?? 0,y:selection["y"] ?? 0,
@@ -96,6 +100,13 @@ enum AXLineRendering {
                 }
                 parts = [(nil,entry.translation ?? "",paragraph.lineRanges)]
             }
+            // Color belongs to the whole paragraph, including all text segments
+            // around math. Sampling/selection happen once; only drawing is clipped.
+            let sampleBox = clips.max { $0.width*$0.height < $1.width*$1.height }
+            let sampledBackground = sampleBox.map { ColorSampler.colors(in:image,normalizedRect:normalized($0)).background } ?? .lightBackground
+            let sourceIDs = paragraph.inlineContent.map { $0.filter { $0.kind == "text" }.flatMap { $0.sourceNodes ?? [] } }
+                ?? paragraph.lineSourceNodes ?? paragraph.members
+            let colors = AXRenderColors.select(background:sampledBackground,sourceIDs:sourceIDs,observations:observations)
             for (segment,text,lines) in parts {
                 if newline(text) { excluded("translation_newline_unsupported",segment:segment); continue }
                 guard !lines.isEmpty, !text.isEmpty else { excluded("line_unavailable",segment:segment); continue }
@@ -125,15 +136,7 @@ enum AXLineRendering {
                     clipRects += allowed
                     let area = allowed.reduce(CGFloat(0)) { $0+$1.width*$1.height }
                     clipped = clipped || area+0.01 < rect.width*rect.height
-                    let sampled = ColorSampler.colors(in:image,normalizedRect:normalized(rect))
-                    let sourceIDs = paragraph.inlineContent?.first(where: { $0.id == segment })?.sourceNodes ?? paragraph.lineSourceNodes ?? paragraph.members
-                    let sourceNodes = sourceIDs.compactMap { id in value.frame.snapshot.observations.first { $0.id == id } }
-                    func color(_ c: AXTextColor?) -> RGBAColor? {
-                        c.map { RGBAColor(red:$0.red,green:$0.green,blue:$0.blue,alpha:$0.alpha) }
-                    }
-                    let colors = (background:color(sourceNodes.compactMap(\.backgroundColor).first) ?? sampled.background,
-                                  foreground:color(sourceNodes.compactMap(\.foregroundColor).first) ?? sampled.foreground)
-                    for clip in allowed { bg?.setFillColor(colors.background.nsColor.withAlphaComponent(1).cgColor); bg?.fill(clip) }
+                    for clip in allowed { bg?.setFillColor(colors.background.nsColor.cgColor); bg?.fill(clip) }
                     guard location < string.length else { continue }
                     let end: Int
                     if index == rects.count-1 {
@@ -189,8 +192,11 @@ enum AXLineRendering {
                     location = end
                 }
                 items.append(MirrorItem(id:itemID,translatedText:text,presentation:.translated,
-                    normalizedRect:normalized(pixel(paragraph.box.cgRect)),background:.lightBackground,foreground:.darkText))
-                diagnostics.append(.init(node:paragraph.node,segment:segment,status:"rendered",box:pixel(paragraph.box.cgRect),fontSize:Double(fontSize),commonScale:Double(common),lineScales:scales,clipped:clipped,lineBoxes:rects,heightRatio:(lines.map { $0.box.height }.max() ?? minHeight)/minHeight))
+                    normalizedRect:normalized(pixel(paragraph.box.cgRect)),background:colors.background,foreground:colors.foreground))
+                diagnostics.append(.init(node:paragraph.node,segment:segment,status:"rendered",box:pixel(paragraph.box.cgRect),fontSize:Double(fontSize),commonScale:Double(common),lineScales:scales,clipped:clipped,lineBoxes:rects,heightRatio:(lines.map { $0.box.height }.max() ?? minHeight)/minHeight,
+                    backgroundColor:[Double(colors.background.red),Double(colors.background.green),Double(colors.background.blue)],
+                    foregroundColor:[Double(colors.foreground.red),Double(colors.foreground.green),Double(colors.foreground.blue)],
+                    foregroundSource:colors.foregroundSource,foregroundContrast:colors.contrast))
             }
         }
         for d in diagnostics {

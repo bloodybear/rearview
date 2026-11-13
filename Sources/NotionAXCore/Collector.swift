@@ -559,24 +559,18 @@ static func collect(_ request: AXExtractionRequest, window: AXUIElement, cancell
             attributed = native
             rows[n]["colorSource"] = "native_text_marker_range"
         } else {
-            var range = CFRange(location:0,length:1)
+            var range = CFRange(location:0,length:value.utf16.count)
             if let argument = AXValueCreate(.cfRange,&range),
                let native = colorQuery("AXAttributedStringForRange",argument) as? NSAttributedString,
-               !native.string.isEmpty, value.hasPrefix(native.string) {
+               native.string.utf16.elementsEqual(value.utf16) {
                 attributed = native
                 rows[n]["colorSource"] = "native_integer_range"
             }
         }
-        if let attributed, attributed.length > 0 {
-            for (key, destination) in [("AXForegroundColor","foregroundColor"),("AXBackgroundColor","backgroundColor")] {
-                if let raw = attributed.attribute(NSAttributedString.Key(key),at:0,effectiveRange:nil),
-                   CFGetTypeID(raw as CFTypeRef) == CGColor.typeID {
-                    let color = unsafeBitCast(raw as CFTypeRef,to:CGColor.self)
-                    if let rgb = color.converted(to:CGColorSpaceCreateDeviceRGB(),intent:.defaultIntent,options:nil), let c = rgb.components, c.count == 4 {
-                        rows[n][destination] = ["red":c[0],"green":c[1],"blue":c[2],"alpha":c[3]]
-                    }
-                }
-            }
+        rows[n]["foregroundColorStatus"] = "mixed_or_unavailable"
+        if let attributed, let color = AXForegroundStyle.uniformColor(in:attributed,matching:value) {
+            rows[n]["foregroundColor"] = ["red":color.red,"green":color.green,"blue":color.blue,"alpha":color.alpha]
+            rows[n]["foregroundColorStatus"] = "uniform"
         }
     }
     let truncated = Date() > deadline || investigator.limitReached || !stack.isEmpty || rows.contains{$0["depthLimitReached"] as? Bool == true}

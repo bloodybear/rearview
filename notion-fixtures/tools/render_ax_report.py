@@ -217,9 +217,9 @@ def render(folder):
         review += "<button onclick=\"document.getElementById('axRenderDebug').hidden=!document.getElementById('axRenderDebug').hidden\">진단 경계</button>"
         review += '<div style="position:relative"><img id="axRenderImage" style="display:block;width:100%" src="render-translated.png"><img id="axRenderDebug" hidden style="position:absolute;inset:0;width:100%;pointer-events:none" src="render-debug.png"></div>'
         diagnostics = json.loads((folder/'render-layout.json').read_text())
-        review += '<details><summary>문단별 배치·압축·clip 상세</summary><table><tr><th>문단/구간</th><th>상태</th><th>폰트</th><th>공통 압축</th><th>라인 추가 압축</th><th>clip</th></tr>'
+        review += '<details><summary>문단별 배치·압축·clip 상세</summary><table><tr><th>문단/구간</th><th>상태</th><th>폰트</th><th>공통 압축</th><th>라인 추가 압축</th><th>clip</th><th>배경 RGB</th><th>전경 RGB</th><th>전경 선택</th><th>명암비</th></tr>'
         for d in diagnostics:
-            review += '<tr>'+''.join('<td>'+html.escape(str(v))+'</td>' for v in [str(d['node'])+'/'+str(d.get('segment','')),d['status'],round(d['fontSize'],2),round(d['commonScale'],3),[round(x,3) for x in d['lineScales']],d['clipped']])+'</tr>'
+            review += '<tr>'+''.join('<td>'+html.escape(str(v))+'</td>' for v in [str(d['node'])+'/'+str(d.get('segment','')),d['status'],round(d['fontSize'],2),round(d['commonScale'],3),[round(x,3) for x in d['lineScales']],d['clipped'],d.get('backgroundColor'),d.get('foregroundColor'),d.get('foregroundSource'),round(d['foregroundContrast'],2) if d.get('foregroundContrast') is not None else None])+'</tr>'
         review += '</table><a href="render-layout.json">배치 데이터</a></details>'
         source_png = folder/'render-source.png'
         if source_png.exists():

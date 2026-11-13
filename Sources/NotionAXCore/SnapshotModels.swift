@@ -32,7 +32,7 @@ public struct AXParagraph: Codable, Sendable {
     public let inlineContent: [AXInlineContent]?
     public let isCodeBlock, protectNonSourceText: Bool
 }
-public struct AXTextColor: Codable, Sendable {
+public struct AXTextColor: Codable, Sendable, Equatable {
     public let red, green, blue, alpha: Double
 }
 public struct AXNode: Codable, Sendable {
@@ -42,5 +42,6 @@ public struct AXNode: Codable, Sendable {
     public let frame: AXBox?
     public let decision, decisionReason: String?
     public let foregroundColor, backgroundColor: AXTextColor?
+    public let foregroundColorStatus: String?
 }
 public enum AXCollectionStatus: String, Codable, Sendable { case complete, partial, failed }
