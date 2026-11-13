@@ -525,7 +525,6 @@ static func collect(_ request: AXExtractionRequest, window: AXUIElement, cancell
         rows[unit]["rangeInvestigations"]=[rawProbe]
     }
     let valid = frame(window).map{AXWindowMatch.near($0, before)} == true
-    let collectionElapsed = Date().timeIntervalSince(started)
     // Report coverage separately from successful execution. Notion can remove
     // the background subtree entirely while an Actions menu is open. Do not
     // fabricate background text from previous captures or close menus to extract.
@@ -536,10 +535,54 @@ static func collect(_ request: AXExtractionRequest, window: AXUIElement, cancell
 
     try cancellation.check()
     let paragraphs = AXParagraphBuilder.build(nodes: rows, selected: candidates)
+    let colorStarted = Date()
+    var colorCalls = 0
+    let colorNodes = Set(paragraphs.flatMap { ($0["lineSourceNodes"] as? [Int]) ?? ($0["members"] as? [Int] ?? []) })
+    for n in colorNodes.sorted() {
+        if Date() > deadline { break }
+        try cancellation.check()
+        guard rows[n]["mathOwner"] == nil, let value = rows[n]["value"] as? String, !value.isEmpty else { continue }
+        func colorQuery(_ key: String, _ argument: CFTypeRef) -> CFTypeRef? {
+            if cancellation.isCancelled || Date() > deadline { return nil }
+            var result: CFTypeRef?
+            colorCalls += 1; recordAXQuery()
+            return AXUIElementCopyParameterizedAttributeValue(elements[n],key as CFString,argument,&result) == .success ? result : nil
+        }
+        // Chromium's integer-range string can have no style attributes. Its
+        // original element marker range carries style; validate native text
+        // before consuming it. No marker bytes or formula geometry are queried.
+        var attributed: NSAttributedString?
+        if let marker = colorQuery("AXTextMarkerRangeForUIElement",elements[n]),
+           CFGetTypeID(marker) == AXTextMarkerRangeGetTypeID(),
+           let native = colorQuery("AXAttributedStringForTextMarkerRange",marker) as? NSAttributedString,
+           native.string.utf16.elementsEqual(value.utf16) {
+            attributed = native
+            rows[n]["colorSource"] = "native_text_marker_range"
+        } else {
+            var range = CFRange(location:0,length:1)
+            if let argument = AXValueCreate(.cfRange,&range),
+               let native = colorQuery("AXAttributedStringForRange",argument) as? NSAttributedString,
+               !native.string.isEmpty, value.hasPrefix(native.string) {
+                attributed = native
+                rows[n]["colorSource"] = "native_integer_range"
+            }
+        }
+        if let attributed, attributed.length > 0 {
+            for (key, destination) in [("AXForegroundColor","foregroundColor"),("AXBackgroundColor","backgroundColor")] {
+                if let raw = attributed.attribute(NSAttributedString.Key(key),at:0,effectiveRange:nil),
+                   CFGetTypeID(raw as CFTypeRef) == CGColor.typeID {
+                    let color = unsafeBitCast(raw as CFTypeRef,to:CGColor.self)
+                    if let rgb = color.converted(to:CGColorSpaceCreateDeviceRGB(),intent:.defaultIntent,options:nil), let c = rgb.components, c.count == 4 {
+                        rows[n][destination] = ["red":c[0],"green":c[1],"blue":c[2],"alpha":c[3]]
+                    }
+                }
+            }
+        }
+    }
     let truncated = Date() > deadline || investigator.limitReached || !stack.isEmpty || rows.contains{$0["depthLimitReached"] as? Bool == true}
     let partial = truncated || paragraphs.contains { ($0["lineRangeStatus"] as? String ?? "unavailable") != "complete_unverified" }
     let metadata: [String: Any] = ["status": valid ? (partial ? "partial" : "complete") : "failed",
-        "targetAndFrameMatch":valid,"coordinateSystem":"screen-top-left-points", "elapsed":collectionElapsed,
+        "targetAndFrameMatch":valid,"coordinateSystem":"screen-top-left-points", "elapsed":Date().timeIntervalSince(started), "colorQueries":colorCalls, "colorQuerySeconds":Date().timeIntervalSince(colorStarted),
         "totalAXCalls":Thread.current.threadDictionary["rearview.ax.queryCount"] as? Int ?? 0,"rangeCalls":investigator.calls,"rangeElapsed":investigator.elapsed,"rangeLimitReached":investigator.limitReached,
         "truncated":truncated,"coverageLimitations":coverageLimitations,"visibleSearches":visibleSearches,
         "visibleSearchElapsed":visibleSearchElapsed,"controlTextResolution":controlTextResolution,

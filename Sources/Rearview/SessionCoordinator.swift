@@ -116,16 +116,17 @@ final class SessionCoordinator {
     private let targetResolver: any SessionTargetResolver
     private let ax: any SessionAXProvider
     private(set) var textExtractionMode: TextExtractionMode = .ocr
-    struct AXFrameSnapshot {
+    struct AXFrameSnapshot: @unchecked Sendable {
         let snapshot: AXExtractionSnapshot
         let image: CGImage
         let frameID: UInt64
         let receivedAt: UInt64
     }
-    struct AXTranslatedFrame {
+    struct AXTranslatedFrame: Sendable {
         let frame: AXFrameSnapshot
         let entries: [AXParagraphTranslation]
     }
+    private(set) var latestAXRenderedFrame: MirrorFrame?
     private(set) var latestAXTranslation: AXTranslatedFrame?
     var onAXTranslation: ((AXTranslatedFrame) -> Void)?
     var onAXTranslationProgress: ((AXTranslatedFrame) -> Void)?
@@ -271,14 +272,26 @@ final class SessionCoordinator {
                             }
                         }
                         var completed: [(Int, AXParagraphTranslation)] = []
+                        var lastPresentation = ContinuousClock.now
                         for try await entry in group {
                             try Task.checkCancellation()
                             guard self.generation == activeGeneration, self.contentRevision == activeRevision,
                                   self.ocrTaskSequence == sequence else { throw CancellationError() }
                             completed.append(entry)
                             if let captured = self.latestAXFrame {
-                                self.onAXTranslationProgress?(AXTranslatedFrame(frame:captured,
-                                    entries:completed.sorted { $0.0 < $1.0 }.map { $0.1 }))
+                                let progress = AXTranslatedFrame(frame:captured,entries:completed.sorted { $0.0 < $1.0 }.map { $0.1 })
+                                self.onAXTranslationProgress?(progress)
+                                if self.mirrorUpdateStyle == .progressive, ContinuousClock.now-lastPresentation >= .milliseconds(50) {
+                                    let artwork = await AXLineRendering.render(progress)
+                                    try Task.checkCancellation()
+                                    guard self.generation == activeGeneration, self.contentRevision == activeRevision,
+                                          self.ocrTaskSequence == sequence else { throw CancellationError() }
+                                    var presentation = MirrorFrame(image:captured.image,translatedItems:artwork.items,frameID:captured.frameID)
+                                    presentation.axArtwork = artwork
+                                    self.latestAXRenderedFrame = presentation
+                                    self.display(presentation)
+                                    lastPresentation = .now
+                                }
                             }
                             self.showProcessingStatus(.translating(completed:completed.count,total:total),frameID:frame.id,origin:origin)
                         }
@@ -288,6 +301,13 @@ final class SessionCoordinator {
                           self.contentRevision == activeRevision, self.ocrTaskSequence == sequence,
                           let captured = self.latestAXFrame else { return }
                     let translated = AXTranslatedFrame(frame:captured,entries:entries)
+                    let artwork = await AXLineRendering.render(translated)
+                    guard !Task.isCancelled, self.generation == activeGeneration,
+                          self.contentRevision == activeRevision, self.ocrTaskSequence == sequence else { return }
+                    var rendered = MirrorFrame(image:captured.image,translatedItems:artwork.items,frameID:captured.frameID)
+                    rendered.axArtwork = artwork
+                    self.latestAXRenderedFrame = rendered
+                    self.display(rendered)
                     self.latestAXTranslation = translated
                     self.showProcessingStatus(.completed(failures:entries.filter { $0.status == "failed" }.count + (result.status == .complete ? 0 : 1)),frameID:frame.id,origin:origin)
                     self.onAXTranslation?(translated)
@@ -380,7 +400,7 @@ final class SessionCoordinator {
 
     func stop() async {
         latestAXFrame = nil
-        latestAXTranslation = nil
+        latestAXTranslation = nil; latestAXRenderedFrame = nil
         guard !stopping else { return }
         stopping = true
         defer { stopping = false }
@@ -438,7 +458,7 @@ final class SessionCoordinator {
     func setTranslationDirection(_ direction: TranslationDirection) {
         guard translationDirection != direction else { return }
         translationDirection = direction
-        latestAXFrame = nil; latestAXTranslation = nil
+        latestAXFrame = nil; latestAXTranslation = nil; latestAXRenderedFrame = nil
         direction.save()
         contentRevision += 1
         ocrTask?.cancel(); ocrTask = nil; ocrTaskRevision = nil
@@ -456,7 +476,7 @@ final class SessionCoordinator {
     func setProtectsNonSourceText(_ enabled: Bool) {
         guard protectsNonSourceText != enabled else { return }
         protectsNonSourceText = enabled
-        latestAXFrame = nil; latestAXTranslation = nil
+        latestAXFrame = nil; latestAXTranslation = nil; latestAXRenderedFrame = nil
         TranslationTextProtection.save(enabled)
         contentRevision += 1
         ocrTask?.cancel(); ocrTask = nil; ocrTaskRevision = nil
@@ -742,7 +762,7 @@ final class SessionCoordinator {
 
     private func suspendAutomaticProcessing() {
         latestAXFrame = nil
-        latestAXTranslation = nil
+        latestAXTranslation = nil; latestAXRenderedFrame = nil
         contentRevision += 1
         ocrTask?.cancel()
         ocrTask = nil
@@ -1176,7 +1196,7 @@ final class SessionCoordinator {
 
     private func invalidateCapturedContent() {
         latestAXFrame = nil
-        latestAXTranslation = nil
+        latestAXTranslation = nil; latestAXRenderedFrame = nil
         contentRevision += 1
         ocrTask?.cancel()
         ocrTask = nil

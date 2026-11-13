@@ -70,3 +70,27 @@ class NativeAXReportTests(unittest.TestCase):
                         (folder/'native-translations.json').write_text(json.dumps(dict(frameID=999,entries=[])))
                         with self.assertRaisesRegex(ValueError,'frame mismatch'):
                             report.render(folder)
+
+    def test_app_render_images_are_exposed_and_bound_to_frame(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root/'tools').mkdir()
+            (root/'tools/ax_report.html').write_text('<style></style>__PAYLOAD__')
+            (root/'runs/replay').mkdir(parents=True)
+            (root/'runs/replay/result.json').write_text(json.dumps({'scenarioId':'example','fixtureId':'fixture','screenshot':{'frame':{}}}))
+            folder = root/'evaluations/replay/evaluation'
+            folder.mkdir(parents=True)
+            metadata = dict(runId='replay',frameID=42,renderFrameID=42,skipTranslation=True)
+            for name, value in [('rawAx',[]),('candidate',[]),('metadata',metadata),('render-layout',[]),('native-paragraphs',dict(units=[],unresolved=[]))]:
+                (folder/(name+'.json')).write_text(json.dumps(value))
+            (folder/'render-translated.png').write_bytes(b'fixture')
+            with patch.object(report,'__file__',str(root/'tools/render_ax_report.py')), patch.object(report,'translation_policy_id',return_value='test'):
+                report.render(folder)
+                page = (folder/'index.html').read_text()
+                self.assertIn('id="axRenderImage"',page)
+                self.assertIn('render-source.png',page)
+                self.assertIn('render-debug.png',page)
+                metadata['renderFrameID'] = 43
+                (folder/'metadata.json').write_text(json.dumps(metadata))
+                with self.assertRaisesRegex(ValueError,'rendering frame mismatch'):
+                    report.render(folder)

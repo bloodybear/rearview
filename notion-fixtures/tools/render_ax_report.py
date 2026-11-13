@@ -2,6 +2,7 @@
 """Render three independent AX layers from one captured tree; no AX calls or text joining."""
 import argparse
 import base64
+import struct
 import html
 import hashlib
 import json
@@ -207,6 +208,33 @@ def render(folder):
     encoded = base64.b64encode(json.dumps(data, ensure_ascii=False).encode()).decode()
     template = Path(__file__).with_name('ax_report.html').read_text()
     page = template.replace('__PAYLOAD__', encoded).replace('__SCENARIO__', html.escape(data['scenario']))
+    if (folder/'render-translated.png').exists():
+        if metadata.get('renderFrameID') != metadata.get('frameID'):
+            raise ValueError('AX rendering frame mismatch')
+        review = '<details open style="background:#20252d;color:white;padding:12px"><summary>Rearview 실제 렌더링 · 같은 캡처 프레임</summary><p>아래 기존 AX 관측 화면은 별도 시점입니다.</p>'
+        for label, name in [('원본','render-source.png'),('번역','render-translated.png')]:
+            review += f"<button onclick=\"document.getElementById('axRenderImage').src='{name}'\">{label}</button> "
+        review += "<button onclick=\"document.getElementById('axRenderDebug').hidden=!document.getElementById('axRenderDebug').hidden\">진단 경계</button>"
+        review += '<div style="position:relative"><img id="axRenderImage" style="display:block;width:100%" src="render-translated.png"><img id="axRenderDebug" hidden style="position:absolute;inset:0;width:100%;pointer-events:none" src="render-debug.png"></div>'
+        diagnostics = json.loads((folder/'render-layout.json').read_text())
+        review += '<details><summary>문단별 배치·압축·clip 상세</summary><table><tr><th>문단/구간</th><th>상태</th><th>폰트</th><th>공통 압축</th><th>라인 추가 압축</th><th>clip</th></tr>'
+        for d in diagnostics:
+            review += '<tr>'+''.join('<td>'+html.escape(str(v))+'</td>' for v in [str(d['node'])+'/'+str(d.get('segment','')),d['status'],round(d['fontSize'],2),round(d['commonScale'],3),[round(x,3) for x in d['lineScales']],d['clipped']])+'</tr>'
+        review += '</table><a href="render-layout.json">배치 데이터</a></details>'
+        source_png = folder/'render-source.png'
+        if source_png.exists():
+            image_width, image_height = struct.unpack('>II', source_png.read_bytes()[16:24])
+            review += '<details><summary>문단별 실제 렌더링 확대 (2배)</summary>'
+            for d in diagnostics:
+                (x, y), (width, height) = d['box']
+                left, top = max(0, x), max(0, image_height-y-height)
+                right, bottom = min(image_width, x+width), min(image_height, image_height-y)
+                if right <= left or bottom <= top:
+                    continue
+                review += f'<details><summary>{d["node"]}/{d.get("segment", "")} · {html.escape(d["status"])}</summary><div style="max-width:100%;overflow:auto"><div style="position:relative;overflow:hidden;width:{(right-left)*2}px;height:{(bottom-top)*2}px"><img loading="lazy" src="render-translated.png" style="position:absolute;max-width:none;width:{image_width*2}px;height:{image_height*2}px;left:{-left*2}px;top:{-top*2}px"></div></div></details>'
+            review += '</details>'
+        review += '</details>'
+        page = page.replace('</style>', '</style>'+review, 1)
     (folder/'index.html').write_text(page)
     (folder/'paragraphs.json').write_text(json.dumps({'policy':'all selected inputs covered by native text areas, control labels or atomic selected text; no source concatenation', 'units':paragraphs,'unresolved':unresolved},ensure_ascii=False,indent=2))
     return {'report':str(folder/'index.html'),'paragraphs':len(paragraphs),'unresolved':len(unresolved)}

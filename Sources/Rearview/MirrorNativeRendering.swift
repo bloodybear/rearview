@@ -1,7 +1,7 @@
 import AppKit
 import CoreText
 
-struct NativeMirrorRenderedFragment {
+struct NativeMirrorRenderedFragment: Sendable {
     let itemID: UUID
     let text: String
     let rect: CGRect
@@ -172,6 +172,7 @@ private final class NativeMirrorRenderer {
     private func fingerprint(for frame: MirrorFrame) -> Int {
         var hasher = Hasher()
         hasher.combine(frame.frameID)
+        hasher.combine(frame.axArtwork?.identity)
         hasher.combine(frame.image.width)
         hasher.combine(frame.image.height)
         for item in frame.translatedItems {
@@ -209,6 +210,10 @@ private final class NativeMirrorRenderer {
 
     private func buildArtwork(for frame: MirrorFrame) -> NativeMirrorArtwork? {
         artworkBuildCount += 1
+        if let ax = frame.axArtwork {
+            let rects = Dictionary(uniqueKeysWithValues: ax.items.map { ($0.id, mirrorItemRect(normalizedRect:$0.normalizedRect,imageRect:CGRect(x:0,y:0,width:frame.image.width,height:frame.image.height))) })
+            return NativeMirrorArtwork(frameID:frame.frameID,imageSize:CGSize(width:frame.image.width,height:frame.image.height),backgroundLayer:ax.background,textLayer:ax.text,textRects:rects,layouts:[:],fragments:ax.fragments)
+        }
         layoutCacheHits = 0
         layoutCacheMisses = 0
         let imageSize = CGSize(width: frame.image.width, height: frame.image.height)
@@ -943,6 +948,9 @@ final class NativeTranslationMirrorView: NSView, NSMenuItemValidation {
             )
         }
         if ocrDebugOverlayEnabled {
+            if let debug = snapshot.axArtwork?.debug {
+                NSImage(cgImage:debug,size:imageRect.size).draw(in:imageRect)
+            }
             for item in snapshot.ocrDebugItems {
                 let rect = mirrorItemRect(
                     normalizedRect: item.normalizedRect, imageRect: imageRect
@@ -954,8 +962,19 @@ final class NativeTranslationMirrorView: NSView, NSMenuItemValidation {
             }
         }
         drawSelectionModeDim(for: snapshot, in: imageRect)
+        NSGraphicsContext.current?.cgContext.saveGState()
+        if let ax = snapshot.axArtwork, let context = NSGraphicsContext.current?.cgContext {
+            context.addRects(ax.clipRects.map { rect in
+                CGRect(x:imageRect.minX+rect.minX/CGFloat(snapshot.image.width)*imageRect.width,
+                       y:imageRect.minY+rect.minY/CGFloat(snapshot.image.height)*imageRect.height,
+                       width:rect.width/CGFloat(snapshot.image.width)*imageRect.width,
+                       height:rect.height/CGFloat(snapshot.image.height)*imageRect.height)
+            })
+            context.clip()
+        }
         drawSelectionHighlight()
         drawSearchHighlight()
+        NSGraphicsContext.current?.cgContext.restoreGState()
     }
 
     func compositedImage() -> NSImage? {
@@ -1259,8 +1278,19 @@ final class NativeTranslationMirrorView: NSView, NSMenuItemValidation {
     @objc private func copyAndClearSelectionFromMenu(_ sender: Any?) { copyAndClearSelection() }
     func copyAndClearSelection() { copy(nil); clearSelection(nil) }
 
+    func clipboardText() -> String {
+        guard frameSnapshot?.axArtwork != nil else { return mirrorClipboardText(items:frameSnapshot?.translatedItems ?? []) }
+        rebuildSelectionFragments()
+        return selectionFragments.enumerated().reduce(into: "") { text, pair in
+            if pair.offset > 0 {
+                let previous = selectionFragments[pair.offset-1]
+                if previous.itemID != pair.element.itemID || pair.element.characterOffset != previous.characterOffset + (previous.text as NSString).length { text += "\n" }
+            }
+            text += pair.element.text
+        }
+    }
     @objc private func copyAll(_ sender: Any?) {
-        let text = mirrorClipboardText(items: frameSnapshot?.translatedItems ?? [])
+        let text = clipboardText()
         guard !text.isEmpty else { return }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
@@ -1357,7 +1387,8 @@ final class NativeTranslationMirrorView: NSView, NSMenuItemValidation {
             let fragment = selectionFragments[index]
             let separator = index > selectionFragments.startIndex
                 && selectionFragments[index - 1].itemID != fragment.itemID
-                ? (separatorBeforeItem[fragment.itemID] ?? "\n") : nil
+                ? (separatorBeforeItem[fragment.itemID] ?? "\n") : (index > selectionFragments.startIndex && frameSnapshot?.axArtwork != nil
+                    && fragment.characterOffset != selectionFragments[index-1].characterOffset + (selectionFragments[index-1].text as NSString).length ? "\n" : nil)
             return (fragment.text, separator)
         }
         let text = MirrorSearchTextAssembler.text(parts: parts)

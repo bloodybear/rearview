@@ -5,6 +5,47 @@ import NotionAXReportSupport
 @preconcurrency import Translation
 
 @MainActor enum AXReportCollectionRunner {
+    // Native product views over a captured product frame; no capture permission
+    // or model requests are needed to review an already collected report.
+    static func reviewSaved() async -> Int32 {
+        do {
+            guard let index = CommandLine.arguments.firstIndex(of:"--review-ax-report"), index+1 < CommandLine.arguments.count else { return 1 }
+            let folder = URL(fileURLWithPath:CommandLine.arguments[index+1])
+            func read(_ name:String) throws -> Data { try Data(contentsOf:folder.appendingPathComponent(name)) }
+            let snapshot = try AXExtractionSnapshot(nodes:read("rawAx.json"),selected:read("candidate.json"),paragraphs:read("native-paragraphs.json"),metadata:read("metadata.json"))
+            struct Export: Decodable { let frameID: UInt64; let entries: [AXParagraphTranslation] }
+            let translations = try JSONDecoder().decode(Export.self,from:read("native-translations.json"))
+            let metadata = try JSONSerialization.jsonObject(with:read("metadata.json")) as! [String:Any]
+            guard (metadata["frameID"] as? NSNumber)?.uint64Value == translations.frameID,
+                  let image = NSBitmapImageRep(data:try read("render-source.png"))?.cgImage,
+                  let region = metadata["selectionRegion"] as? [String:Double],
+                  let screen = NSScreen.screens.first else { throw CocoaError(.coderInvalidValue) }
+            let captured = SessionCoordinator.AXTranslatedFrame(frame:.init(snapshot:snapshot,image:image,frameID:translations.frameID,receivedAt:0),entries:translations.entries)
+            fputs("AX review: loaded captured frame\n",stderr)
+            let art = await AXLineRendering.render(captured)
+            fputs("AX review: layout ready\n",stderr)
+            var frame = MirrorFrame(image:image,translatedItems:art.items,frameID:translations.frameID)
+            frame.axArtwork = art
+            let display = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as! NSNumber
+            let selection = appKitSelectionRect(for:CGRect(x:region["x"]!,y:region["y"]!,width:region["width"]!,height:region["height"]!),screenFrame:screen.frame,displayBounds:CGDisplayBounds(display.uint32Value))
+            let modeIndex = CommandLine.arguments.firstIndex(of:"--ax-review-display-mode")
+            let modeValue = modeIndex.flatMap { $0+1 < CommandLine.arguments.count ? CommandLine.arguments[$0+1] : nil } ?? "mirror"
+            guard let mode = TranslationDisplayMode(rawValue:modeValue) else { throw CocoaError(.coderInvalidValue) }
+            NSApplication.shared.setActivationPolicy(.regular)
+            let window = TranslationMirrorWindow(selection:selection,screen:screen,backgroundOpacity:MirrorBackgroundOpacity.load(),displayMode:mode,overlaySettings:OverlayPresentationSettings.load())
+            window.title = "AX 렌더링 검토 · 수집 프레임"
+            window.setDebugFeaturesEnabled(true); window.display(frame)
+            fputs("AX review: window ready\n",stderr)
+            let i = CommandLine.arguments.firstIndex(of:"--ax-review-seconds")
+            let seconds = i.flatMap { $0+1 < CommandLine.arguments.count ? Double(CommandLine.arguments[$0+1]) : nil } ?? 180
+            let deadline = ContinuousClock.now + .seconds(min(600,max(0,seconds)))
+            while ContinuousClock.now < deadline {
+                try await Task.sleep(for:.milliseconds(50))
+            }
+            window.close()
+            return 0
+        } catch { fputs("AX saved-frame review failed: \(error)\n",stderr); return 1 }
+    }
     static func run() async -> Int32 {
         let skip = CommandLine.arguments.contains("--skip-translation")
         let directionIndex = CommandLine.arguments.firstIndex(of:"--ax-translation-direction")
@@ -21,6 +62,7 @@ import NotionAXReportSupport
         defer { coordinator.setRefreshMode(previousRefresh) }
         do {
             _ = NSApplication.shared
+            let showsWindow = CommandLine.arguments.contains("--show-ax-render")
             PerformanceProfiler.shared.start()
             defer { _ = PerformanceProfiler.shared.stop(translationDirection:direction) }
             let input = try AXReportInput(arguments:CommandLine.arguments)
@@ -57,7 +99,8 @@ import NotionAXReportSupport
             coordinator.onAXTranslation = { value in
                 translated = value; finishedCount += 1
                 translationSamples.append(["frameID":value.frame.frameID,
-                    "elapsed":Date().timeIntervalSince(translationStartedAt),
+                    "elapsed":max(0,Date().timeIntervalSince(translationStartedAt)-(coordinator.latestAXRenderedFrame?.axArtwork?.elapsed ?? 0)),
+                    "renderSeconds":coordinator.latestAXRenderedFrame?.axArtwork?.elapsed ?? 0,
                     "paragraphs":value.entries.count,
                     "failures":value.entries.filter { $0.status == "failed" }.count])
             }
@@ -100,6 +143,28 @@ import NotionAXReportSupport
             }
             let output = try input.write(collected,collector:"rearview",frameID:frameID,sessionCollections:samples)
             var metadata = try JSONSerialization.jsonObject(with:Data(contentsOf:output.appendingPathComponent("metadata.json"))) as! [String:Any]
+            if let frame = coordinator.latestAXRenderedFrame, frame.frameID == frameID, let art = frame.axArtwork {
+                func png(_ image: CGImage?, _ name: String) throws {
+                    guard let image else { return }
+                    let bitmap = NSBitmapImageRep(cgImage:image)
+                    try bitmap.representation(using:.png,properties:[:])?.write(to:output.appendingPathComponent(name))
+                }
+                try png(frame.image,"render-source.png")
+                let view = NativeTranslationMirrorView(frame:CGRect(x:0,y:0,width:frame.image.width,height:frame.image.height))
+                view.setRenderingActive(true); view.backgroundOpacity = 1; view.frameSnapshot = frame
+                if let result = view.compositedImage(), let tiff = result.tiffRepresentation, let bitmap = NSBitmapImageRep(data:tiff) {
+                    try bitmap.representation(using:.png,properties:[:])?.write(to:output.appendingPathComponent("render-translated.png"))
+                }
+                try png(art.debug,"render-debug.png")
+                try JSONSerialization.data(withJSONObject:["frameID":frame.frameID,
+                    "clipRects":art.clipRects.map { ["x":$0.minX,"y":$0.minY,"width":$0.width,"height":$0.height] },
+                    "fragments":art.fragments.map { ["text":$0.text,"offset":$0.characterOffset,"x":$0.rect.minX,"y":$0.rect.minY,"width":$0.rect.width,"height":$0.rect.height] }],options:[.sortedKeys,.prettyPrinted])
+                    .write(to:output.appendingPathComponent("render-geometry.json"))
+                let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted,.sortedKeys]
+                try encoder.encode(art.diagnostics).write(to:output.appendingPathComponent("render-layout.json"))
+                metadata["renderFrameID"] = frame.frameID
+                metadata["renderSeconds"] = art.elapsed
+            }
             metadata["skipTranslation"] = skip
             metadata["translationSource"] = skip ? "disabled" : "rearview-session"
             metadata["translationPreparationSeconds"] = preparationSeconds
@@ -121,6 +186,16 @@ import NotionAXReportSupport
                 try encoder.encode(profile).write(to:output.appendingPathComponent("translation-profile.json"),options:.atomic)
             }
             await coordinator.stop()
+            if showsWindow {
+                let index = CommandLine.arguments.firstIndex(of:"--ax-review-seconds")
+                let seconds = index.flatMap { $0+1 < CommandLine.arguments.count ? Double(CommandLine.arguments[$0+1]) : nil } ?? 180
+                let review = Process(); review.executableURL = URL(fileURLWithPath:"/usr/bin/open")
+                review.arguments = ["-n","-g","-W","-a",Bundle.main.bundleURL.path,"--args","--review-ax-report",output.path,"--ax-review-seconds",String(min(600,max(0,seconds)))]
+                review.standardOutput = FileHandle.standardError
+                try review.run()
+                while review.isRunning { try await Task.sleep(for:.milliseconds(50)) }
+                guard review.terminationStatus == 0 else { throw CocoaError(.executableRuntimeMismatch) }
+            }
             print(output.path)
             return timedOut || exportEntries.contains { $0.status == "failed" } ? 2 : 0
         } catch {

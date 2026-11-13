@@ -2068,7 +2068,7 @@ final class TranslationMirrorWindow: NSPanel, NSWindowDelegate {
     }
 
     func copyAllText() {
-        let text = mirrorClipboardText(items: activeTranslationView.frameSnapshot?.translatedItems ?? [])
+        let text = activeTranslationView.clipboardText()
         guard !text.isEmpty else { return }
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()

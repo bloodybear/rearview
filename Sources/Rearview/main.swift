@@ -1,20 +1,41 @@
 import AppKit
 import ScreenCaptureKit
 
+// Keep the application entry point synchronous: AppKit owns the main run
+// loop, and asynchronous developer commands run as jobs on that loop.
+@MainActor func runAsyncCommand(_ command: @escaping @MainActor () async -> Int32) -> Never {
+    let app = NSApplication.shared
+    app.setActivationPolicy(.accessory)
+    Task { @MainActor in
+        let status = await command()
+#if !LST_EXCLUDE_DEBUG_FEATURES
+        if let i = CommandLine.arguments.firstIndex(of:"--command-status-file"), i+1 < CommandLine.arguments.count {
+            do { try String(status).write(toFile:CommandLine.arguments[i+1],atomically:true,encoding:.utf8) }
+            catch { fputs("Command status receipt failed: \(error)\n",stderr); exit(EXIT_FAILURE) }
+        }
+#endif
+        exit(status)
+    }
+    app.run()
+    exit(EXIT_FAILURE)
+}
+
 if CommandLine.arguments.contains("--self-test") {
-    await SelfTest.run()
-    exit(EXIT_SUCCESS)
+    runAsyncCommand { await SelfTest.run(); return EXIT_SUCCESS }
 }
 
 #if !LST_EXCLUDE_DEBUG_FEATURES
+if CommandLine.arguments.contains("--review-ax-report") {
+    runAsyncCommand { await AXReportCollectionRunner.reviewSaved() }
+}
 if CommandLine.arguments.contains("--collect-ax-report") {
-    exit(await AXReportCollectionRunner.run())
+    runAsyncCommand { await AXReportCollectionRunner.run() }
 }
 if CommandLine.arguments.contains("--translate-ax-report") {
-    exit(await AXReportTranslationRunner.run())
+    runAsyncCommand { await AXReportTranslationRunner.run() }
 }
 if CommandLine.arguments.contains("--translation-provider-smoke") {
-    exit(await TranslationProviderSmokeRunner.run())
+    runAsyncCommand { await TranslationProviderSmokeRunner.run() }
 }
 #endif
 
@@ -23,18 +44,20 @@ if CommandLine.arguments.contains("--check-screen-permission") {
         print("Screen capture permission: granted")
         exit(EXIT_SUCCESS)
     }
+    runAsyncCommand {
     do {
         _ = try await SCShareableContent.excludingDesktopWindows(
             true, onScreenWindowsOnly: true
         )
         print("Screen capture permission: granted (ScreenCaptureKit probe)")
-        exit(EXIT_SUCCESS)
+        return EXIT_SUCCESS
     } catch {
         fputs(
             "Screen capture permission: denied. 시스템 설정 > 개인정보 보호 및 보안 > 화면 및 시스템 오디오 녹음에서 Rearview를 허용한 뒤 앱을 다시 실행하세요.\n",
             stderr
         )
-        exit(2)
+        return 2
+    }
     }
 }
 

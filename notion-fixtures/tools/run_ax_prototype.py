@@ -7,8 +7,31 @@ import json
 import math
 from pathlib import Path
 import subprocess
+import tempfile
 import sys
 
+
+
+def run_rearview_app(app, arguments, run, name, log_folder):
+    """Launch the signed .app through LaunchServices and preserve its real status."""
+    with tempfile.TemporaryDirectory(prefix='rearview-ax-') as temporary:
+        temporary = Path(temporary)
+        stdout, stderr, status = (temporary / n for n in ('stdout', 'stderr', 'status'))
+        command = ['/usr/bin/open', '-n', '-g', '-W', '-a', str(app),
+                   '--stdout', str(stdout), '--stderr', str(stderr), '--args',
+                   '--collect-ax-report'] + arguments + ['--command-status-file', str(status)]
+        launched = run(command, name + '-launch')
+        output = stdout.read_text() if stdout.exists() else ''
+        error = stderr.read_text() if stderr.exists() else ''
+        if launched.returncode:
+            code, error = launched.returncode, error + launched.stderr
+        else:
+            try:
+                code = int(status.read_text().strip())
+            except (OSError, ValueError):
+                code, error = 1, error + '\nRearview app command status receipt missing or invalid'
+        (log_folder / (name + '.log')).write_text(output + '\n' + error)
+        return subprocess.CompletedProcess(command, code, output, error)
 
 
 def validate_collection(folder, candidates):
@@ -279,8 +302,11 @@ def main():
             unexpected = [step for step in result['steps'] if step['status'] != 'verified' and not (step['item'] == 'zoom' and step['status'] == 'unsupported')]
             if unexpected:
                 raise ValueError('재생 검증 실패: ' + json.dumps(unexpected, ensure_ascii=False))
-            collector_command = [str(repo / 'dist/Rearview-dev.app/Contents/MacOS/Rearview'), '--collect-ax-report'] if args.collector == 'rearview' else [str(repo / '.build/debug/NotionAXEvaluation'), 'collect']
-            collected = run(collector_command + [ '--root', str(root), '--run-id', result['runId'], '--activation', args.activation] + (['--ax-translation-direction', args.ax_translation_direction] + (['--skip-translation'] if args.skip_translation else []) if args.collector == 'rearview' else []) + (['--offscreen-study'] if args.offscreen_study else []) + (['--disable-1pt-filter'] if args.disable_1pt_filter else []) + (['--control-title-study'] if args.control_title_study else []), f'{scenario}-collect')
+            collector_arguments = [ '--root', str(root), '--run-id', result['runId'], '--activation', args.activation] + (['--ax-translation-direction', args.ax_translation_direction] + (['--skip-translation'] if args.skip_translation else []) if args.collector == 'rearview' else []) + (['--offscreen-study'] if args.offscreen_study else []) + (['--disable-1pt-filter'] if args.disable_1pt_filter else []) + (['--control-title-study'] if args.control_title_study else [])
+            if args.collector == 'rearview':
+                collected = run_rearview_app(repo / 'dist/Rearview-dev.app', collector_arguments, run, f'{scenario}-collect', batch)
+            else:
+                collected = run([str(repo / '.build/debug/NotionAXEvaluation'), 'collect'] + collector_arguments, f'{scenario}-collect')
             if collected.returncode not in ((0, 2) if args.collector == 'rearview' else (0,)):
                 raise ValueError('AX 수집 실패: ' + collected.stderr)
             folder = Path(collected.stdout.strip())

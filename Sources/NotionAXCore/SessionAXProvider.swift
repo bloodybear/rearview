@@ -25,6 +25,15 @@ public struct AXExtractionSnapshot: Sendable {
     public let selected: Data
     public let paragraphs: Data
     public let metadata: Data
+    package init(nodes: Data, selected: Data, paragraphs: Data, metadata: Data) throws {
+        struct Units: Decodable { let units: [AXParagraph] }
+        self.nodes = nodes; self.selected = selected; self.paragraphs = paragraphs; self.metadata = metadata
+        let decoder = JSONDecoder()
+        observations = try decoder.decode([AXNode].self,from:nodes)
+        paragraphUnits = try decoder.decode(Units.self,from:paragraphs).units
+        let fields = try JSONSerialization.jsonObject(with:metadata) as? [String:Any]
+        status = AXCollectionStatus(rawValue:fields?["status"] as? String ?? "failed") ?? .failed
+    }
     init(nodes: [[String: Any]], selected: [[String: Any]], paragraphs: [[String: Any]], metadata: [String: Any]) throws {
         let options: JSONSerialization.WritingOptions = [.sortedKeys, .prettyPrinted]
         self.nodes = try JSONSerialization.data(withJSONObject: nodes, options: options)

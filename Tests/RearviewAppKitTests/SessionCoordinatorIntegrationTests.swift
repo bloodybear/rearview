@@ -253,6 +253,8 @@ final class SessionCoordinatorIntegrationTests: XCTestCase {
         await fulfillment(of:[done],timeout:2)
         XCTAssertEqual(output.frames.last?.translatedItems.count,0)
         XCTAssertEqual(coordinator.latestAXTranslation?.frame.frameID,1)
+        XCTAssertNotNil(output.frames.last?.axArtwork)
+        XCTAssertEqual(coordinator.latestAXRenderedFrame?.frameID,1)
         XCTAssertTrue(output.statuses.contains(.completed(failures:1)))
     }
 

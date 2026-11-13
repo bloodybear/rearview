@@ -1614,6 +1614,7 @@ func makeMirrorItems(
 }
 
 struct MirrorFrame {
+    var axArtwork: AXRenderArtwork? = nil
     let image: CGImage
     let translatedItems: [MirrorItem]
     let ocrDebugItems: [OCRDebugItem]
