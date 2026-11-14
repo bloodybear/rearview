@@ -10,6 +10,7 @@ struct AXRenderDiagnostic: Codable, Sendable {
     var fontSize: Double = 0
     var commonScale: Double = 1
     var lineScales: [Double] = []
+    var hiddenWrapSpaceOffsets: [Int] = []
     var clipped = false
     var lineBoxes: [CGRect] = []
     var heightRatio: Double = 1
@@ -137,6 +138,7 @@ enum AXLineRendering {
                 guard total.isFinite, total > 0, capacity > 0 else { excluded("measurement_failed",segment:segment); continue }
                 let common = min(1,capacity/total)
                 var credit: CGFloat = 0, location = 0, scales: [Double] = []
+                var hiddenWrapSpaceOffsets: [Int] = []
                 let itemID = UUID()
                 var clipped = false
                 for (index,rect) in rects.enumerated() {
@@ -146,6 +148,19 @@ enum AXLineRendering {
                     let area = allowed.reduce(CGFloat(0)) { $0+$1.width*$1.height }
                     clipped = clipped || area+0.01 < rect.width*rect.height
                     for clip in allowed { bg?.setFillColor(colors.background.nsColor.cgColor); bg?.fill(clip) }
+                    // Consume exactly one ordinary space at a soft-wrapped line start.
+                    // Keep the original string/UTF-16 offsets; additional spaces, tabs and
+                    // nonbreaking spaces retain their normal layout and selection geometry.
+                    if index > 0, location < string.length, string.character(at:location) == 0x20 {
+                        hiddenWrapSpaceOffsets.append(location)
+                        // A minimal selection anchor preserves copy/search continuity
+                        // without drawing the space or advancing the text position.
+                        let anchor = CGRect(x:rect.minX,y:rect.minY,width:0.1,height:rect.height)
+                        if allowed.contains(where: { $0.intersects(anchor) }) {
+                            fragments.append(.init(itemID:itemID,text:" ",rect:anchor,characterOffset:location))
+                        }
+                        location += 1
+                    }
                     guard location < string.length else { continue }
                     let end: Int
                     if index == rects.count-1 {
@@ -202,7 +217,7 @@ enum AXLineRendering {
                 }
                 items.append(MirrorItem(id:itemID,translatedText:text,presentation:.translated,
                     normalizedRect:normalized(pixel(paragraph.box.cgRect)),background:colors.background,foreground:colors.foreground))
-                diagnostics.append(.init(node:paragraph.node,segment:segment,status:"rendered",box:pixel(paragraph.box.cgRect),fontSize:Double(fontSize),commonScale:Double(common),lineScales:scales,clipped:clipped,lineBoxes:rects,heightRatio:(lines.map { $0.box.height }.max() ?? minHeight)/minHeight,
+                diagnostics.append(.init(node:paragraph.node,segment:segment,status:"rendered",box:pixel(paragraph.box.cgRect),fontSize:Double(fontSize),commonScale:Double(common),lineScales:scales,hiddenWrapSpaceOffsets:hiddenWrapSpaceOffsets,clipped:clipped,lineBoxes:rects,heightRatio:(lines.map { $0.box.height }.max() ?? minHeight)/minHeight,
                     selectedFontHeight:minHeight,fontHeightDecisions:heightDecisions,backgroundColor:[Double(colors.background.red),Double(colors.background.green),Double(colors.background.blue)],
                     foregroundColor:[Double(colors.foreground.red),Double(colors.foreground.green),Double(colors.foreground.blue)],
                     backgroundSample:sample,foregroundSource:colors.foregroundSource,foregroundContrast:colors.contrast))

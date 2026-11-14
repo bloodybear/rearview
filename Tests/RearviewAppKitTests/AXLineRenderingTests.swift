@@ -34,6 +34,29 @@ final class AXLineRenderingTests: XCTestCase {
         XCTAssertLessThan(result.diagnostics[0].commonScale,0.65)
         XCTAssertTrue(result.fragments.allSatisfy { $0.rect.maxX <= 22.001 })
     }
+    func testSoftWrapConsumesOnlyOneOrdinarySpaceAndPreservesOffsets() throws {
+        let probe = CTFontCreateUIFontForLanguage(.system,1,nil)!
+        let h = CTFontGetAscent(probe)+CTFontGetDescent(probe)+max(0,CTFontGetLeading(probe))
+        let font = CTFontCreateCopyWithAttributes(probe,18*0.98/h,nil,nil)
+        let line = CTLineCreateWithAttributedString(NSAttributedString(string:"가",attributes:[NSAttributedString.Key(kCTFontAttributeName as String):font]))
+        let glyph = CTLineGetTypographicBounds(line,nil,nil,nil)
+        for spaces in [" ","   ","\t","\u{00a0}"] {
+            let text = "가나"+spaces+"다👩‍💻"
+            let result = try render(translation:text,widths:[1.1*glyph,200])
+            let hidden = spaces.first == " " ? [2] : []
+            XCTAssertEqual(result.diagnostics.first?.hiddenWrapSpaceOffsets,hidden)
+            XCTAssertEqual(result.fragments.map(\.text).joined(),text)
+            XCTAssertEqual(result.items.first?.translatedText,text)
+            XCTAssertEqual(result.fragments.last?.characterOffset,(text as NSString).length-("👩‍💻" as NSString).length)
+            if !hidden.isEmpty {
+                let firstOnSecondLine = try XCTUnwrap(result.fragments.first { $0.characterOffset > 2 })
+                XCTAssertEqual(firstOnSecondLine.rect.minX,10,accuracy:0.001)
+            }
+        }
+        let firstLineSpace = try render(translation:" 가나다",heights:[18],widths:[200])
+        XCTAssertEqual(firstLineSpace.fragments.first?.text," ")
+        XCTAssertEqual(firstLineSpace.diagnostics.first?.hiddenWrapSpaceOffsets,[])
+    }
     func testNewlineAndInsufficientHeightKeepOriginal() throws {
         XCTAssertEqual(try render(source:"日本語\n日本語").diagnostics.first?.status,"source_newline_unsupported")
         XCTAssertEqual(try render(heights:[2,18]).diagnostics.first?.status,"insufficient_line_height")
