@@ -11,7 +11,7 @@ package enum NativeParagraphLines {
 package struct Leaf {let id:Int;let node:AXUIElement;let text:String;let base:Int;var length:Int{(text as NSString).length}}
 package struct Unit {let id:Int;let node:AXUIElement;let role:String;let text:String;let leaves:[Leaf]}
 package struct Line {let start:Int;let length:Int;let text:String;let box:CGRect}
-package struct Output {var lines:[Line]=[];var status="complete"}
+package struct Output {var lines:[Line]=[];var status="complete"; var observedSource:String?}
 package final class Queries {
  var wholeCache:[AXUIElement:AXTextMarkerRange]=[:]
  let investigator:RangeInvestigator
@@ -42,7 +42,10 @@ static func native(_ u:Unit,_ q:Queries)->Output {
  guard let first=u.leaves.first,let last=u.leaves.last,
        let firstRange=q.whole(first.node),let lastRange=q.whole(last.node) else{out.status="leaf_span_unavailable";return out}
  let whole=AXTextMarkerRangeCreate(nil,AXTextMarkerRangeCopyStartMarker(firstRange),AXTextMarkerRangeCopyEndMarker(lastRange))
- guard let source=q.string(u.node,whole),source.utf16.elementsEqual(u.leaves.map({$0.text}).joined().utf16),!source.isEmpty else{out.status="native_leaf_text_mismatch";return out}
+ guard let source=q.string(u.node,whole) else{out.status="native_source_read_failed";return out}
+ out.observedSource=source
+ guard !source.isEmpty else{out.status="native_source_empty";return out}
+ guard source.utf16.elementsEqual(u.leaves.map({$0.text}).joined().utf16) else{out.status="native_leaf_text_mismatch";return out}
  var nodeRanges:[Int:AXTextMarkerRange]=[:],internals:[Int:[Int:AXTextMarker]]=[:]
  func nodeRange(_ leaf:Leaf)->AXTextMarkerRange? {
  if let cached=nodeRanges[leaf.id]{return cached};let range=q.whole(leaf.node);nodeRanges[leaf.id]=range;return range
@@ -114,6 +117,7 @@ extension RangeInvestigator {
         return ["lineMethod":"native-paragraph-markers-reverse","rangeAnchor":"first-to-last-text-leaf","lineSourceText":source,
                 "lineRangeStatus":limitReached ? "query_limit_reached" : output.status=="complete" ? "complete_unverified":output.status,
                 "coveredUTF16Length":output.lines.reduce(0){$0+$1.length},"totalUTF16Length":(source as NSString).length,
+                "sourceComparison": output.status == "native_leaf_text_mismatch" ? ["expected":source,"observed":output.observedSource ?? ""] : [:],
                 "lineRanges":output.lines.map{line -> [String:Any] in
                     ["rangeStart":line.start,"rangeLength":line.length,"text":line.text,"box":rect(line.box),
                      "boxKind":"native_paragraph_reverse_line","visibility":TextRangeSafety.visibility(line.box,in:viewport)]

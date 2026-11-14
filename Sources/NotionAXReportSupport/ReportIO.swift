@@ -32,7 +32,7 @@ public struct AXReportInput {
         guard matches.count == 1, let id = matches[0][kCGWindowNumber as String] as? NSNumber else { throw AXExtractionError.windowMappingFailed }
         let geometry = result["observedGeometry"] as? [String:Any] ?? [:]
         request = AXExtractionRequest(processID:process.processIdentifier, windowID:id.uint32Value, windowFrame:frame,
-            selectionRegion:geometry["captureRegion"].map(rect) ?? screenshot["viewport"].map(rect) ?? frame)
+            selectionRegion:geometry["captureRegion"].map(rect) ?? screenshot["viewport"].map(rect) ?? frame, collectParentTextDiagnostics:CommandLine.arguments.contains("--ax-collect-parent-values"))
     }
     public func write(_ snapshot: AXExtractionSnapshot, collector: String, frameID: UInt64? = nil, sessionCollections: [[String:Any]] = []) throws -> URL {
         let output = root.appendingPathComponent("evaluations/\(runID)/\(UUID().uuidString)")

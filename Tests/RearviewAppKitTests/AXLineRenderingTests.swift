@@ -6,22 +6,41 @@ import CoreText
 @testable import NotionAXCore
 
 final class AXLineRenderingTests: XCTestCase {
-    private func render(source: String = "日本語", translation: String = "한국어 👩‍💻 가나다라", heights: [Double] = [18,18], widths: [Double] = [60,60], clip: Bool = false, math: Bool = false, lineStatus: String? = nil, hidden: Bool = false, axRed: Bool = false, pixelScale: Double = 1) throws -> AXRenderArtwork {
+    private func render(source: String = "日本語", translation: String = "한국어 👩‍💻 가나다라", heights: [Double] = [18,18], widths: [Double] = [60,60], clip: Bool = false, math: Bool = false, lineStatus: String? = nil, hidden: Bool = false, axRed: Bool = false, pixelScale: Double = 1, logical: Bool = false) throws -> AXRenderArtwork {
         let canvasHeight = max(200,heights.count*25+40)
         let ctx = CGContext(data:nil,width:300,height:canvasHeight,bitsPerComponent:8,bytesPerRow:0,space:CGColorSpaceCreateDeviceRGB(),bitmapInfo:CGImageAlphaInfo.premultipliedLast.rawValue)!
         ctx.setFillColor(NSColor.white.cgColor);ctx.fill(CGRect(x:0,y:0,width:300,height:canvasHeight))
         let box: [String:Double] = ["x":10,"y":10,"width":200,"height":Double(heights.count*25+30)]
-        var paragraph: [String:Any] = ["node":1,"text":source,"box":box,"members":[1],"isCodeBlock":false,"protectNonSourceText":false,
+        var paragraph: [String:Any] = ["node":1,"text":source,"lineSourceText":source,"lineRangeStatus":"complete_unverified","box":box,"members":[1],"isCodeBlock":false,"protectNonSourceText":false,
             "lineRanges":heights.enumerated().map { i,h in ["text":"日本語","rangeStart":i*3,"rangeLength":3,"box":["x":10.0,"y":10.0+Double(i)*25,"width":widths[i],"height":h]] as [String:Any] }]
+        var logicalEntries: [[String:Any]] = []
+        if logical {
+            let sourcePieces = AXLogicalLines.pieces(source)
+            let translatedPieces = AXLogicalLines.pieces(translation)
+            var nativeLines: [[String:Any]] = []
+            for (i,piece) in sourcePieces.enumerated() {
+                let raw = (source as NSString).substring(with:piece.0)
+                if !raw.isEmpty {
+                    nativeLines.append(["text":raw+piece.1,"rangeStart":piece.0.location,"rangeLength":piece.0.length+piece.1.utf16.count,
+                        "box":["x":10.0,"y":10.0+Double(i)*25,"width":200.0,"height":18.0]])
+                }
+                logicalEntries.append(["id":i*2,"logicalIndex":i,"rangeStart":piece.0.location,"rangeLength":piece.0.length,
+                    "source":raw,"delimiter":piece.1,"status":raw.isEmpty ? "nonrendering_text" : "translated",
+                    "translation":(translation as NSString).substring(with:translatedPieces[i].0),"generatedBreaksFlattened":false])
+            }
+            if math { for i in logicalEntries.indices { logicalEntries[i]["sourcePart"] = 0 } }
+            paragraph["lineRanges"] = nativeLines
+        }
         if clip { paragraph["visibleBoxes"] = [["x":10,"y":10,"width":20,"height":80]] }
         if hidden { paragraph["visibleBoxes"] = [] as [[String:Double]] }
         if let lineStatus { paragraph["lineRangeStatus"] = lineStatus }
         if math {
-            paragraph["inlineContent"] = [["kind":"text","id":0,"text":"日本語","sourceNodes":[1],"lineRanges":paragraph["lineRanges"]!], ["kind":"math","id":1,"node":2]]
+            paragraph["inlineContent"] = [["kind":"text","id":0,"text":logical ? source : "日本語","sourceNodes":[1],"lineRangeStatus":"complete_unverified","lineRanges":paragraph["lineRanges"]!], ["kind":"math","id":1,"node":2]]
         }
         let nodes: [[String:Any]] = axRed ? [["id":1,"role":"AXStaticText","value":"日本語","title":"","foregroundColorStatus":"uniform","foregroundColor":["red":0.7,"green":0,"blue":0,"alpha":1]]] : []
         let snapshot = try AXExtractionSnapshot(nodes:nodes,selected:[],paragraphs:[paragraph],metadata:["status":"complete","selectionRegion":["x":0,"y":0,"width":300/pixelScale,"height":Double(canvasHeight)/pixelScale]])
         var payload: [String:Any] = ["provider":"test","node":1,"source":source,"sourceLanguage":"ja","targetLanguage":"ko","protectNonSourceText":false,"sourceLanguageEligible":true,"status":"translated","translation":translation]
+        if logical { payload["logicalSegments"] = logicalEntries }
         if math { payload["segments"] = [["id":0,"source":"日本語","status":"translated","translation":translation]] }
         let entry = try JSONDecoder().decode(AXParagraphTranslation.self,from:JSONSerialization.data(withJSONObject:payload))
         let restored = try AXExtractionSnapshot(nodes:snapshot.nodes,selected:snapshot.selected,paragraphs:snapshot.paragraphs,metadata:snapshot.metadata)
@@ -58,7 +77,7 @@ final class AXLineRenderingTests: XCTestCase {
         XCTAssertEqual(firstLineSpace.diagnostics.first?.hiddenWrapSpaceOffsets,[])
     }
     func testNewlineAndInsufficientHeightKeepOriginal() throws {
-        XCTAssertEqual(try render(source:"日本語\n日本語").diagnostics.first?.status,"source_newline_unsupported")
+        XCTAssertEqual(try render(source:"日本語\n日本語").diagnostics.first?.status,"logical_translation_unavailable")
         XCTAssertEqual(try render(heights:[2,18]).diagnostics.first?.status,"insufficient_line_height")
         XCTAssertTrue(try render(source:"日本語\n").fragments.isEmpty)
     }
@@ -119,6 +138,19 @@ final class AXLineRenderingTests: XCTestCase {
             }
             print("AX layout benchmark lines=\(count) milliseconds=\(samples)")
         }
+    }
+    func testLogicalLinesKeepBlankLineGeometryAndCopyNewlines() throws {
+        let value = try render(source:"最初\n\n次\n",translation:"첫째\n\n 둘째\n",heights:[18,18,18,18],widths:[200,200,200,200],logical:true)
+        XCTAssertEqual(value.diagnostics.filter { $0.status == "rendered" }.count,2)
+        XCTAssertEqual(value.fragments.map(\.text).joined(),"첫째\n\n 둘째\n")
+        XCTAssertEqual(value.items.count,1)
+        XCTAssertEqual(value.diagnostics.filter { $0.status == "rendered" }.map(\.logicalIndex),[0,2])
+        XCTAssertTrue(value.diagnostics.allSatisfy { $0.hiddenWrapSpaceOffsets.isEmpty })
+    }
+    func testMathTextSegmentAlsoUsesHardBreakLineGroups() throws {
+        let value = try render(source:"最初\n次",translation:"처음\n다음",math:true,logical:true)
+        XCTAssertEqual(value.fragments.map(\.text).joined(),"처음\n다음")
+        XCTAssertEqual(value.diagnostics.filter { $0.status == "rendered" }.map(\.segment),[0,0])
     }
     func testTranslatedNewlineExcluded() throws {
         XCTAssertEqual(try render(translation:"한국어\n한국어").diagnostics.first?.status,"translation_newline_unsupported")

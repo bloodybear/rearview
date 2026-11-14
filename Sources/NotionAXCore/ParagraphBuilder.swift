@@ -28,8 +28,10 @@ public enum AXParagraphBuilder {
                     let area = byID[parent]!, role = area["role"] as? String ?? "", f = box(area["frame"])
                     let usable = f.width > 1 && f.height > 1
                     if role == "AXTextArea" {
-                        if !containers.contains(parent), let value = area["value"] as? String, !value.isEmpty, usable {
-                            owner=parent; text=value; frame=f; type="native_textarea"; source="AXTextArea.AXValue"
+                        let omitted = area["valueCollection"] as? String == "omitted_parent_value"
+                        let value = area["value"] as? String ?? ""
+                        if !containers.contains(parent), (omitted || !value.isEmpty), usable {
+                            owner=parent; text=omitted ? "" : value; frame=f; type="native_textarea"; source="AXTextArea.AXValue"
                         }
                         break
                     }
@@ -74,10 +76,17 @@ public enum AXParagraphBuilder {
                 for key in ["lineRangeStatus","lineMethod"] { unit[key] = probe[key] }
                 unit["lineSourceText"] = probe["lineSourceText"] ?? unit["text"]
                 unit["lineSourceNodes"] = probe["sourceNodes"] ?? []
+                if byID[id]?["valueCollection"] as? String == "omitted_parent_value" {
+                    unit["text"] = probe["lineSourceText"] ?? ""
+                    unit["textOrigin"] = "text_leaves_parent_value_omitted"
+                }
                 if let content = probe["inlineContent"] as? [[String:Any]], !content.isEmpty {
                     unit["inlineContent"] = content; unit["mathPolicy"] = probe["mathPolicy"]
                 }
             } else { unit["lineRanges"] = [] }
+            if unit["lineRangeStatus"] as? String == "complete_unverified" {
+                unit["translationSourceText"] = (unit["inlineContent"] as? [[String:Any]]).map { $0.filter { $0["kind"] as? String == "text" }.map { $0["text"] as? String ?? "" }.joined() } ?? unit["lineSourceText"]
+            }
             var fragments = [box(unit["box"])]
             if let occlusions = unit["previewOcclusions"] as? [[String:Any]], !occlusions.isEmpty {
                 for occlusion in occlusions { fragments = fragments.flatMap { PreviewOcclusion.visibleBoxes($0, behind:box(occlusion["panelFrame"])) } }

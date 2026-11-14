@@ -41,6 +41,29 @@ struct LanguageProtectorTests {
         #expect(!translatedInput.contains("2"))
     }
 
+    @Test func protectionNeverDropsLeadingSymbolsOrWhitespace() {
+        for source in ["!!!ABC日本語", "  let message = \"保存してください\"", "┌───┐⟦AXBOUNDARY_0⟧日本語", "\t\nABC", "!!!", "!!!日本語ABC"] {
+            let plan = LanguageProtector.makeTranslationPlan(for: source)
+            #expect(plan.segments.map(\.text).joined() == source)
+        }
+    }
+
+    @Test func codeProtectionPreservesSyntaxInBothDirections() {
+        for (source, direction, expected) in [
+            ("  let message = \"保存してください\";\r\n", TranslationDirection.japaneseToKorean, ["保存してください"]),
+            ("if (状態 == \"完了\") { // 確認", .japaneseToKorean, ["状態", "完了", "確認"]),
+            ("print(\"저장하세요\")\n", .koreanToJapanese, ["저장하세요"])
+        ] {
+            let plan = LanguageProtector.makeTranslationPlan(for: source, direction: direction,
+                protectNonSourceText: true, preserveCodeSyntax: true)
+            #expect(plan.segments.map(\.text).joined() == source)
+            #expect(plan.segments.filter { $0.kind == .translate }.map(\.text) == expected)
+        }
+        let plain = LanguageProtector.makeTranslationPlan(for: "  日本語!", direction: .japaneseToKorean,
+            protectNonSourceText: false, preserveCodeSyntax: true)
+        #expect(plain.segments == [.init(kind: .translate, text: "  日本語!")])
+    }
+
     @Test func unprotectedMixedLanguageTranslationPlanUsesOneRequest() {
         let source = "Start ボタン을 2回押す"
         let plan = LanguageProtector.makeTranslationPlan(

@@ -235,7 +235,8 @@ final class SessionCoordinator {
             throw AXExtractionError.windowMappingFailed
         }
         return AXExtractionRequest(processID:app.processID,windowID:windowID,windowFrame:windowFrame,
-            selectionRegion:screenCaptureRect(for:selection,screenFrame:screen.frame,displayBounds:CGDisplayBounds(displayID)))
+            selectionRegion:screenCaptureRect(for:selection,screenFrame:screen.frame,displayBounds:CGDisplayBounds(displayID)),
+            collectParentTextDiagnostics:CommandLine.arguments.contains("--ax-collect-parent-values"))
     }
 
     private func scheduleAX(_ frame: FrameEnvelope, origin: MirrorStatusOrigin) {

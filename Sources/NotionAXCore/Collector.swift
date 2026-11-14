@@ -54,9 +54,10 @@ static func collect(_ request: AXExtractionRequest, window: AXUIElement, cancell
         if seen.contains(where:{CFEqual($0,node)}) { continue }; seen.append(node)
         let n = rows.count
         let role = get(node,"AXRole") as? String ?? ""
-        let value = get(node,"AXValue") as? String ?? "", title = get(node,"AXTitle") as? String ?? ""
+        let value = role == "AXTextArea" && !request.collectParentTextDiagnostics ? "" : get(node,"AXValue") as? String ?? "", title = get(node,"AXTitle") as? String ?? ""
         try cancellation.check()
         var row: [String:Any] = ["id":n,"role":role,"value":value,"title":title,"attributes":[String](),"parameterizedAttributes":[String]()]
+        if role == "AXTextArea" && !request.collectParentTextDiagnostics { row["valueCollection"] = "omitted_parent_value" }
         if let parent { row["parent"] = parent }
         // Semantic layout classes are needed only on container groups. Preserve
         // them for auditing the timeline-only rule; never infer z-order generally.
@@ -604,6 +605,7 @@ static func collect(_ request: AXExtractionRequest, window: AXUIElement, cancell
     let partial = truncated || paragraphs.contains { ($0["lineRangeStatus"] as? String ?? "unavailable") != "complete_unverified" }
     let metadata: [String: Any] = ["status": valid ? (partial ? "partial" : "complete") : "failed",
         "targetAndFrameMatch":valid,"coordinateSystem":"screen-top-left-points", "elapsed":Date().timeIntervalSince(started), "colorQueries":colorCalls, "colorQuerySeconds":Date().timeIntervalSince(colorStarted),
+        "parentValueQueries":request.collectParentTextDiagnostics ? rows.filter { $0["role"] as? String == "AXTextArea" }.count : 0,
         "totalAXCalls":Thread.current.threadDictionary["rearview.ax.queryCount"] as? Int ?? 0,"rangeCalls":investigator.calls,"rangeElapsed":investigator.elapsed,"rangeLimitReached":investigator.limitReached,
         "truncated":truncated,"coverageLimitations":coverageLimitations,"visibleSearches":visibleSearches,
         "visibleSearchElapsed":visibleSearchElapsed,"controlTextResolution":controlTextResolution,

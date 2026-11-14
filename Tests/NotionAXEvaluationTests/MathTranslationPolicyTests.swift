@@ -68,7 +68,7 @@ final class MathTranslationPolicyTests: XCTestCase {
             XCTAssertEqual(calls, 1)
         }
     }
-    @MainActor func testFallbackCancellationStopsRemainingSegments() async throws {
+    @MainActor func testFallbackCancellationPropagatesAcrossSubmittedSegments() async throws {
         var calls = 0
         do {
             _ = try await MathTranslationPolicy.translate(parts, eligible: { _ in true }) { _ in
@@ -78,8 +78,31 @@ final class MathTranslationPolicyTests: XCTestCase {
             }
             XCTFail("Cancellation must propagate")
         } catch is CancellationError {
-            XCTAssertEqual(calls, 2)
+            XCTAssertTrue((2...3).contains(calls))
         }
+    }
+    @MainActor func testHardBreakMarkersContainNoNewlinesAndCoexistWithMath() async throws {
+        let values: [MathContentPart] = [.init(kind:.text,text:"日本語"),.init(kind:.hardBreak,text:"\n"),
+            .init(kind:.text,text:""),.init(kind:.hardBreak,text:"\n"),.init(kind:.math,text:nil),.init(kind:.text,text:"次")]
+        let plan = MathTranslationPolicy.plan(values)!
+        XCTAssertFalse(plan.source.contains("\n"))
+        let result = try await MathTranslationPolicy.translate(values,eligible:{ _ in true }) { _ in
+            "일본어⟦ AXBOUNDARY_0⟧⟦AXBOUNDARY_1 ⟧⟦AXBOUNDARY_2⟧다음"
+        }
+        XCTAssertEqual(result.markerValidation,"valid")
+        XCTAssertEqual(result.segments.map(\.id),[0,2,5])
+    }
+    @MainActor func testFallbackRequestsStartBeforeEitherCompletes() async throws {
+        var started = 0
+        let outcome = try await MathTranslationPolicy.translate(parts,eligible:{ _ in true },forceIndependent:true) { source in
+            started += 1
+            let deadline = Date().addingTimeInterval(2)
+            while started < 2 && Date() < deadline { try await Task.sleep(for:.milliseconds(5)) }
+            XCTAssertEqual(started,2)
+            return source
+        }
+        XCTAssertEqual(outcome.segments.map(\.id),[0,2])
+        XCTAssertEqual(outcome.markerValidation,"forced_independent")
     }
     func testNativeOwnershipSplitsLeavesWithoutGeometry() {
         let rows: [[String: Any]] = [["role": "AXTextArea"], ["role": "AXStaticText", "value": "before"],

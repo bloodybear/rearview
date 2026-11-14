@@ -11,10 +11,13 @@ import Foundation
         do {
             let input = URL(fileURLWithPath: CommandLine.arguments[flag + 1])
             let output = URL(fileURLWithPath: CommandLine.arguments[flag + 2])
-            let sources = try JSONDecoder().decode([String].self, from: Data(contentsOf: input))
+            let inputData = try Data(contentsOf:input)
+            let typedSources = try? JSONDecoder().decode([AXTranslationRequest].self,from:inputData)
+            let sources = typedSources == nil ? try JSONDecoder().decode([String].self,from:inputData) : []
             // Explicit reproducible production settings, not per-source detection.
             let direction = TranslationDirection.japaneseToKorean
             let protects = false
+            let initializationStart = Date()
             let broker = TranslationBroker(direction: direction, protectsNonSourceText: protects)
             let availability: LanguageAvailability
             let session: TranslationSession
@@ -40,6 +43,24 @@ import Foundation
                 try await Task.sleep(for: .milliseconds(10))
             }
             guard broker.isReadyForTranslation else { throw NSError(domain: "Production broker not ready", code: 1) }
+            if let typedSources {
+                var entries: [AXParagraphTranslation] = []
+                let repeats = CommandLine.arguments.firstIndex(of:"--ax-translation-repeats").flatMap {
+                    $0+1 < CommandLine.arguments.count ? Int(CommandLine.arguments[$0+1]) : nil
+                } ?? 1
+                let initializationSeconds = Date().timeIntervalSince(initializationStart)
+                let translator = AXParagraphTranslator(broker:broker,direction:direction)
+                for _ in 0..<max(1,min(5,repeats)) {
+                    for (index,var request) in typedSources.enumerated() {
+                        if repeats > 1 { request.cacheScope = UUID().uuidString }
+                        entries.append(try await translator.translate(request,node:index))
+                        struct Export: Encodable { let entries: [AXParagraphTranslation]; let initializationSeconds: Double }
+                        let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted,.sortedKeys]
+                        try encoder.encode(Export(entries:entries,initializationSeconds:initializationSeconds)).write(to:output,options:.atomic)
+                    }
+                }
+                return entries.contains { $0.status == "failed" } ? 2 : 0
+            }
             var entries: [[String: String]] = []
             for (index, source) in sources.enumerated() {
                 let plan = LanguageProtector.makeTranslationPlan(for: source.trimmingCharacters(in: .whitespacesAndNewlines),

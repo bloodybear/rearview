@@ -11,13 +11,13 @@ from pathlib import Path
 
 def translation_sources(root):
     # Compile these production sources read-only into a separate research CLI.
-    return [root/'tools/ax_report_translation.swift', root.parent/'Sources/NotionAXCore/MathTranslationPolicy.swift', root.parent/'Sources/Rearview/AXParagraphTranslator.swift'] + [root.parent/'Sources/Rearview'/name for name in (
+    return [root/'tools/ax_report_translation.swift', root.parent/'Sources/NotionAXCore/MathTranslationPolicy.swift', root.parent/'Sources/NotionAXCore/LogicalLines.swift', root.parent/'Sources/Rearview/AXParagraphTranslator.swift'] + [root.parent/'Sources/Rearview'/name for name in (
         'TranslationBroker.swift', 'LanguageProtector.swift', 'Models.swift',
         'Localization.swift', 'PerformanceProfiler.swift')]
 
 
 def translation_policy_id(root):
-    return 'production-ja-ko-code-only-protected-math-context-v5-' + hashlib.sha256(
+    return 'production-ja-ko-code-only-protected-math-context-hardbreak-code-syntax-v8-' + hashlib.sha256(
         b''.join(p.read_bytes() for p in translation_sources(root))).hexdigest()
 
 
@@ -34,7 +34,7 @@ def entry_cache_key(entry):
 
 
 def translation_request(unit):
-    request = dict(source=unit['text'], protectNonSourceText=unit['protectNonSourceText'])
+    request = dict(source=unit.get('translationSourceText', unit['text']), protectNonSourceText=unit['protectNonSourceText'])
     if unit.get('inlineContent'):
         # Only typed boundaries and normal text cross the translation boundary.
         # AX IDs/frames are not cache keys. Original paragraph text remains the
@@ -197,7 +197,7 @@ def render(folder):
     for unit in paragraphs:
         if app_results:
             entry = native_entries.get(unit['node'])
-            unit['translationResult'] = entry if entry and entry['source'] == unit['text'] else {'status': 'not_translated'}
+            unit['translationResult'] = entry if entry and (entry['source'] == unit.get('translationSourceText', unit['text']) or entry['status'] == 'source_unavailable') else {'status': 'not_translated'}
         else:
             unit['translationResult'] = translations.get(entry_cache_key(translation_request(unit)), {'status': 'not_translated', 'targetLanguage': 'ko'})
     data = {'run': run_id, 'evaluation': folder.name, 'scenario': run['scenarioId'],

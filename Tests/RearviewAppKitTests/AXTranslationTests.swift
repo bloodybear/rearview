@@ -47,6 +47,61 @@ import XCTest
         XCTAssertEqual(broker.calls.count,1)
         XCTAssertEqual(broker.calls[0].0,"合計⟦MATH_0⟧です")
     }
+    func testHardBreakContextRetainsEmptyLinesAndFlattensGeneratedBreaks() async throws {
+        let broker = AXTestTranslator()
+        broker.action = { _ in "첫째\n문장⟦ AXBOUNDARY_0⟧⟦AXBOUNDARY_1 ⟧둘째" }
+        let value = try await AXParagraphTranslator(broker:broker,direction:.japaneseToKorean,newlineContext:true)
+            .translate(request("最初\n\n次"),node:1)
+        XCTAssertEqual(broker.calls.count,1)
+        XCTAssertFalse(broker.calls[0].0.contains("\n"))
+        XCTAssertEqual(value.translation,"첫째 문장\n\n둘째")
+        XCTAssertEqual(value.logicalSegments?.map(\.source),["最初","","次"])
+        XCTAssertTrue(value.logicalSegments?.first?.generatedBreaksFlattened == true)
+        XCTAssertEqual(value.logicalSegments?.first?.rawTranslation,"첫째\n문장")
+    }
+    func testHardBreakFallbackRetainsPartialFailureAndFiltersNonSource() async throws {
+        let broker = AXTestTranslator()
+        broker.action = { source in
+            if source.contains("⟦") { return "missing markers" }
+            if source == "次" { throw NSError(domain:"injected",code:1) }
+            return "첫째\n문장"
+        }
+        let value = try await AXParagraphTranslator(broker:broker,direction:.japaneseToKorean,newlineContext:true)
+            .translate(request("最初\nEnglish\n次"),node:1)
+        XCTAssertEqual(value.status,"failed")
+        XCTAssertEqual(value.logicalSegments?.map(\.status),["translated","skipped_non_source_language","failed"])
+        XCTAssertEqual(value.translation,"첫째 문장\nEnglish\n次")
+        XCTAssertEqual(broker.calls.count,3)
+    }
+    func testDefaultProseHardBreakPolicyUsesContext() async throws {
+        let broker = AXTestTranslator()
+        broker.action = { _ in "첫째⟦AXBOUNDARY_0⟧둘째" }
+        let result = try await AXParagraphTranslator(broker:broker,direction:.japaneseToKorean)
+            .translate(request("最初\n次"),node:1)
+        XCTAssertEqual(result.markerValidation,"valid")
+        XCTAssertEqual(broker.calls.count,1)
+        XCTAssertEqual(result.translation,"첫째\n둘째")
+    }
+
+    func testExplicitIndependentHardBreakPolicyDoesNotAttemptContext() async throws {
+        let broker = AXTestTranslator()
+        _ = try await AXParagraphTranslator(broker:broker,direction:.japaneseToKorean,newlineContext:false)
+            .translate(request("最初\n次"),node:1)
+        XCTAssertEqual(Set(broker.calls.map { $0.0 }),Set(["最初","次"]))
+    }
+    func testMathAndHardBreaksShareOneContextAndOriginalPartIDs() async throws {
+        let broker = AXTestTranslator()
+        let parts: [MathContentPart] = [.init(kind:.text,text:"申請\n合計"),.init(kind:.math,text:nil),.init(kind:.text,text:"です\n公開")]
+        let value = try await AXParagraphTranslator(broker:broker,direction:.japaneseToKorean,newlineContext:true)
+            .translate(request("申請\n合計 SECRET です\n公開",parts:parts),node:1)
+        XCTAssertEqual(broker.calls.count,1)
+        XCTAssertFalse(broker.calls[0].0.contains("\n"))
+        XCTAssertFalse(broker.calls[0].0.contains("SECRET"))
+        XCTAssertEqual(value.markerValidation,"valid")
+        XCTAssertEqual(value.logicalSegments?.map(\.sourcePart),[0,0,2,2])
+        XCTAssertEqual(value.segments?.map(\.id),[0,2])
+        XCTAssertEqual(value.segments?.first?.translation,"申請\n合計")
+    }
     func testMathOnlyJapaneseDoesNotTriggerTranslation() async throws {
         let broker = AXTestTranslator()
         let parts: [MathContentPart] = [.init(kind:.text,text:"English"),.init(kind:.math,text:nil)]
@@ -95,6 +150,26 @@ import XCTest
         }
         XCTFail("Broker did not become ready")
     }
+    func testCodeSyntaxBypassesMarkersAndNeverReachesModel() async throws {
+        let broker = TranslationBroker(direction:.japaneseToKorean,protectsNonSourceText:false)
+        var inputs: [String] = []
+        let worker = Task { await broker.run(prepare:{},model:{ values in
+            inputs += values
+            return values.map { _ in "번역" }
+        }) }
+        defer { worker.cancel() }
+        try await ready(broker)
+        let source = "  let message = \"保存してください\";\n\nprint(\"設定\")\n"
+        let result = try await AXParagraphTranslator(broker:broker,direction:.japaneseToKorean,newlineContext:true)
+            .translate(request(source,protect:true),node:1)
+        XCTAssertEqual(result.translation,"  let message = \"번역\";\n\nprint(\"번역\")\n")
+        XCTAssertEqual(Set(inputs),Set(["保存してください","設定"]))
+        XCTAssertFalse(inputs.contains { $0.contains("AXBOUNDARY") })
+        let options = TranslationRequestOptions(protectsNonSourceText:true,context:"same",preservesCodeSyntax:true)
+        let legacy = TranslationRequestOptions(protectsNonSourceText:true,context:"same")
+        XCTAssertNotEqual(options,legacy)
+    }
+
     func testBrokerCachesAndInflightRequestsArePolicyScoped() async throws {
         let broker = TranslationBroker(direction:.japaneseToKorean,protectsNonSourceText:false)
         var sources: [String] = []

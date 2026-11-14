@@ -46,7 +46,7 @@ function show(c){current=c;const parent=parentOf(c),members=c.kind==='paragraph'
  const segmentResults=result?.segments;
  const excluded='번역 대상 아님 ('+(result?.sourceLanguage==='ko'?'한국어':'일본어')+' 미포함)';
  let text=result?.status==='skipped_non_source_language'?excluded:result?.status==='failed'&&!result?.segments?'번역 실패':result?.translation??'번역 결과 없음';
- if(segmentResults){
+ if(segmentResults && unit.inlineContent){
   const format=s=>s.status==='skipped_non_source_language'?excluded:s.status==='failed'?'번역 실패':s.translation??'';
   if(segmentID!==undefined){const s=segmentResults.find(s=>s.id===segmentID);text=s?format(s):'번역 결과 없음';}
   else text=(unit.inlineContent||[]).map(s=>s.kind==='math'?'[수식]':format(segmentResults.find(r=>r.id===s.id)||{})).filter(Boolean).join('\n');

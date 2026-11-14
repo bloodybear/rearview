@@ -6,6 +6,13 @@ import SwiftUI
 struct TranslationRequestOptions: Hashable, Sendable {
     let protectsNonSourceText: Bool
     let context: String
+    let preservesCodeSyntax: Bool
+
+    init(protectsNonSourceText: Bool, context: String, preservesCodeSyntax: Bool = false) {
+        self.protectsNonSourceText = protectsNonSourceText
+        self.context = context
+        self.preservesCodeSyntax = preservesCodeSyntax
+    }
 }
 
 @MainActor
@@ -93,7 +100,8 @@ final class TranslationBroker: ObservableObject {
                     requests[key] = requestID
                     queue.append(Pending(id: requestID, key: key,
                         plan: LanguageProtector.makeTranslationPlan(for: text, direction: direction,
-                            protectNonSourceText: options.protectsNonSourceText),
+                            protectNonSourceText: options.protectsNonSourceText,
+                            preserveCodeSyntax: options.preservesCodeSyntax),
                         enqueuedAt: DispatchTime.now().uptimeNanoseconds))
                 }
                 waiters[requestID, default: []].append(Waiter(id: waiterID, continuation: continuation))

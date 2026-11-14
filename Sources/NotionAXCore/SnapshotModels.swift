@@ -32,6 +32,19 @@ public struct AXParagraph: Codable, Sendable {
     public let inlineContent: [AXInlineContent]?
     public let isCodeBlock, protectNonSourceText: Bool
 }
+extension AXParagraph {
+    /// Only source backed by the native line collection may cross the translation boundary.
+    public var translationSourceText: String? {
+        guard lineRangeStatus == "complete_unverified" else { return nil }
+        if let inlineContent {
+            guard inlineContent.filter({ $0.kind == "text" }).allSatisfy({
+                $0.lineRangeStatus == "complete_unverified" || $0.lineRangeStatus == "nonrendering_text"
+            }) else { return nil }
+            return inlineContent.filter { $0.kind == "text" }.map { $0.text ?? "" }.joined()
+        }
+        return lineSourceText
+    }
+}
 public struct AXTextColor: Codable, Sendable, Equatable {
     public let red, green, blue, alpha: Double
 }

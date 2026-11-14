@@ -8,6 +8,12 @@ report = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(report)
 
 class ReportTranslationPolicyTests(unittest.TestCase):
+    def test_native_source_overrides_parent_and_legacy_reports_remain_readable(self):
+        unit = dict(text='\nparent', translationSourceText='real\ntext', protectNonSourceText=False)
+        self.assertEqual(report.translation_request(unit)['source'], 'real\ntext')
+        del unit['translationSourceText']
+        self.assertEqual(report.translation_request(unit)['source'], '\nparent')
+
     def test_same_source_in_code_and_prose_keeps_distinct_policy(self):
         frame = dict(x=10,y=10,width=100,height=20)
         nodes = [dict(id=0,role='AXGroup',domClasses=['notion-code-block']),

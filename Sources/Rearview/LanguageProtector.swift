@@ -63,7 +63,7 @@ enum LanguageProtector {
 
     static func makeTranslationPlan(
         for source: String, direction: TranslationDirection,
-        protectNonSourceText: Bool = true
+        protectNonSourceText: Bool = true, preserveCodeSyntax: Bool = false
     ) -> TranslationPlan {
         guard protectNonSourceText else {
             return source.isEmpty
@@ -72,6 +72,24 @@ enum LanguageProtector {
                     source: source,
                     segments: [TextSegment(kind: .translate, text: source)]
                 )
+        }
+        if preserveCodeSyntax {
+            // Code structure never enters the model: translate only source-script runs.
+            var segments: [TextSegment] = []
+            var buffer = ""
+            var current: TextSegmentKind?
+            for scalar in source.unicodeScalars {
+                let sourceScript = direction == .japaneseToKorean
+                    ? isKana(scalar) || isHan(scalar) : isHangul(scalar)
+                let combining = CharacterSet.nonBaseCharacters.contains(scalar) && current == .translate
+                let kind: TextSegmentKind = sourceScript || combining ? .translate : .preserve
+                if let current, current != kind {
+                    segments.append(.init(kind: current, text: buffer)); buffer = ""
+                }
+                current = kind; buffer.unicodeScalars.append(scalar)
+            }
+            if let current, !buffer.isEmpty { segments.append(.init(kind: current, text: buffer)) }
+            return TranslationPlan(source: source, segments: segments)
         }
         guard direction == .koreanToJapanese else { return makeTranslationPlan(for: source) }
         var raw: [(kind: TextSegmentKind, text: String)] = []
@@ -171,7 +189,8 @@ enum LanguageProtector {
         // A punctuation-only translate segment contains no Japanese meaning. Merge it
         // into an adjacent preserved segment instead of sending it to the model.
         var segments: [TextSegment] = []
-        for (index, item) in raw.enumerated() {
+        for index in raw.indices {
+            let item = raw[index]
             let hasJapanese = item.text.unicodeScalars.contains { isKana($0) || isHan($0) }
             if item.kind == .translate, !hasJapanese {
                 if !segments.isEmpty {

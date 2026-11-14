@@ -224,7 +224,7 @@ final class SessionCoordinatorIntegrationTests: XCTestCase {
     private func translatedAXFixture() throws -> AXExtractionSnapshot {
         try AXExtractionSnapshot(nodes:[],selected:[],paragraphs:[
             ["node":10,"text":"日本語 English 👩‍💻","box":["x":0,"y":0,"width":100,"height":20],
-             "members":[11],"lineRanges":[],"isCodeBlock":false,"protectNonSourceText":false]],
+             "lineSourceText":"日本語 English 👩‍💻","lineRangeStatus":"complete_unverified","members":[11],"lineRanges":[],"isCodeBlock":false,"protectNonSourceText":false]],
             metadata:["status":"partial","reason":"injected_line_failure"])
     }
 

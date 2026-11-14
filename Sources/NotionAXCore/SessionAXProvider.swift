@@ -3,11 +3,13 @@ import ApplicationServices
 
 public enum TextExtractionMode: Sendable { case ocr, ax }
 public struct AXExtractionRequest: Sendable {
+    public let collectParentTextDiagnostics: Bool
     public let processID: pid_t
     public let windowID: CGWindowID
     public let windowFrame: CGRect
     public let selectionRegion: CGRect
-    public init(processID: pid_t, windowID: CGWindowID, windowFrame: CGRect, selectionRegion: CGRect) {
+    public init(processID: pid_t, windowID: CGWindowID, windowFrame: CGRect, selectionRegion: CGRect, collectParentTextDiagnostics: Bool = false) {
+        self.collectParentTextDiagnostics = collectParentTextDiagnostics
         self.processID = processID; self.windowID = windowID
         self.windowFrame = windowFrame; self.selectionRegion = selectionRegion
     }
