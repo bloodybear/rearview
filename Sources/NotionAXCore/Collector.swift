@@ -311,7 +311,10 @@ static func collect(_ request: AXExtractionRequest, window: AXUIElement, cancell
     let headerPortals = Set(rows.indices.filter { classes($0).contains("notion-table-view-header-row") }.compactMap { id in
         ancestorIDs(id).first { classes($0).contains("sticky-portal-target") }
     })
-    var stickyHeaders: [Int:(header:Int, kind:String)] = [:]
+    let calendarPortals = Set(rows.indices.filter { classes($0).contains("notion-shimmer-timeline-transition") }.compactMap { id in
+        ancestorIDs(id).first { classes($0).contains("sticky-portal-target") }
+    })
+    var stickyHeaders: [Int:(header:Int, kind:String, frame:CGRect)] = [:]
     for (timeline, choices) in panels where choices.count == 1 {
         guard let panelID = choices.first, let panel = rowFrame(panelID), let scroller = verticalScroller(timeline) else { continue }
         let matches = headerPortals.filter { portalID in
@@ -319,7 +322,28 @@ static func collect(_ request: AXExtractionRequest, window: AXUIElement, cancell
             return header.height > 1 && header.minY <= panel.minY && header.maxY > panel.minY &&
                 header.minX <= panel.minX && header.maxX >= panel.maxX
         }
-        if matches.count == 1 { stickyHeaders[timeline] = (matches.first!, "timeline") }
+        guard matches.count == 1, let headerID = matches.first, let listHeader = rowFrame(headerID),
+              let timelineFrame = rowFrame(timeline) else { continue }
+        // Keep the existing list-only clipping if the calendar cannot be
+        // associated; an uncertain extension must not disable proven clipping.
+        stickyHeaders[timeline] = (headerID, "timeline", listHeader)
+        rows[timeline]["timelineHeaderStatus"] = "list_header_only_calendar_association_ambiguous"
+        // Both halves share one opaque header band. Chromium collapses the
+        // calendar portal to 1pt when sticky; the list header retains its height.
+        // Require an explicit, uniquely associated calendar portal and timeline.
+        let calendarMatches = calendarPortals.filter { id in
+            guard verticalScroller(id) == scroller, let calendar = rowFrame(id) else { return false }
+            return StickyHeaderClipping.timelineHeader(listHeader:listHeader, timeline:timelineFrame, calendarPortal:calendar) != nil
+        }
+        let timelineMatches = panels.keys.filter { id in
+            guard verticalScroller(id) == scroller, let frame = rowFrame(id) else { return false }
+            return abs(frame.minY - listHeader.minY) <= 1
+        }
+        guard calendarMatches.count == 1, timelineMatches.count == 1,
+              let calendarID = calendarMatches.first, let calendar = rowFrame(calendarID),
+              let header = StickyHeaderClipping.timelineHeader(listHeader:listHeader, timeline:timelineFrame, calendarPortal:calendar) else { continue }
+        stickyHeaders[timeline] = (headerID, "timeline", header)
+        rows[timeline]["timelineHeaderStatus"] = "full_header_band_from_list_header"
     }
     // Ordinary database tables have the same portal-based sticky header. Its
     // full width must span the table and its top must cover the table viewport.
@@ -331,15 +355,20 @@ static func collect(_ request: AXExtractionRequest, window: AXUIElement, cancell
             return header.height > 1 && header.minY <= tableFrame.minY && header.maxY > tableFrame.minY &&
                 header.minX <= tableFrame.minX && header.maxX >= tableFrame.maxX
         }
-        if matches.count == 1 { stickyHeaders[table] = (matches.first!, "table") }
+        if matches.count == 1 { stickyHeaders[table] = (matches.first!, "table", rowFrame(matches.first!)!) }
     }
     for index in candidates.indices {
         guard candidates[index]["geometricVisibility"] as? String != "outside" else { continue }
         let id = candidates[index]["node"] as! Int
         let ancestors = [id] + ancestorIDs(id)
         guard let view = ancestors.first(where:{classes($0).contains("notion-timeline-view") || classes($0).contains("notion-table-view")}),
-              ancestors.prefix(while:{$0 != view}).contains(where:{classes($0).contains("notion-collection-item")}),
-              let association = stickyHeaders[view], let header = rowFrame(association.header) else { continue }
+              let association = stickyHeaders[view] else { continue }
+        let isBody = ancestors.prefix(while:{$0 != view}).contains { id in
+            classes(id).contains("notion-collection-item") ||
+                (association.kind == "timeline" && classes(id).contains("notion-timeline-item-row"))
+        }
+        guard isBody else { continue }
+        let header = association.frame
         let metadataKey = association.kind == "timeline" ? "timelineHeaderOcclusion" : "tableHeaderOcclusion"
         let f = candidates[index]["box"] as! [String:Double]
         let original = CGRect(x:f["x"]!,y:f["y"]!,width:f["width"]!,height:f["height"]!)
