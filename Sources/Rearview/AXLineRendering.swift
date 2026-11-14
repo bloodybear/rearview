@@ -16,6 +16,7 @@ struct AXRenderDiagnostic: Codable, Sendable {
     var selectedFontHeight: Double?
     var fontHeightDecisions: [AXFontHeight.Decision]?
     var backgroundColor, foregroundColor: [Double]?
+    var backgroundSample: AXRenderColors.BackgroundSample?
     var foregroundSource: String?
     var foregroundContrast: Double?
 }
@@ -104,8 +105,11 @@ enum AXLineRendering {
             }
             // Color belongs to the whole paragraph, including all text segments
             // around math. Sampling/selection happen once; only drawing is clipped.
-            let sampleBox = clips.max { $0.width*$0.height < $1.width*$1.height }
-            let sampledBackground = sampleBox.map { ColorSampler.colors(in:image,normalizedRect:normalized($0)).background } ?? .lightBackground
+            guard let sample = AXRenderColors.backgroundSample(lines:parts.flatMap { $0.2 }.map { pixel($0.box.cgRect) },clips:clips),
+                  let sampledBackground = AXRenderColors.sampleBackground(in:image,pixelRect:sample.box,
+                    topEdge:sample.top,bottomEdge:sample.bottom) else {
+                excluded("background_sample_unavailable"); continue
+            }
             let sourceIDs = paragraph.inlineContent.map { $0.filter { $0.kind == "text" }.flatMap { $0.sourceNodes ?? [] } }
                 ?? paragraph.lineSourceNodes ?? paragraph.members
             let colors = AXRenderColors.select(background:sampledBackground,sourceIDs:sourceIDs,observations:observations)
@@ -201,7 +205,7 @@ enum AXLineRendering {
                 diagnostics.append(.init(node:paragraph.node,segment:segment,status:"rendered",box:pixel(paragraph.box.cgRect),fontSize:Double(fontSize),commonScale:Double(common),lineScales:scales,clipped:clipped,lineBoxes:rects,heightRatio:(lines.map { $0.box.height }.max() ?? minHeight)/minHeight,
                     selectedFontHeight:minHeight,fontHeightDecisions:heightDecisions,backgroundColor:[Double(colors.background.red),Double(colors.background.green),Double(colors.background.blue)],
                     foregroundColor:[Double(colors.foreground.red),Double(colors.foreground.green),Double(colors.foreground.blue)],
-                    foregroundSource:colors.foregroundSource,foregroundContrast:colors.contrast))
+                    backgroundSample:sample,foregroundSource:colors.foregroundSource,foregroundContrast:colors.contrast))
             }
         }
         for d in diagnostics {
