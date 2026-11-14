@@ -13,6 +13,8 @@ struct AXRenderDiagnostic: Codable, Sendable {
     var clipped = false
     var lineBoxes: [CGRect] = []
     var heightRatio: Double = 1
+    var selectedFontHeight: Double?
+    var fontHeightDecisions: [AXFontHeight.Decision]?
     var backgroundColor, foregroundColor: [Double]?
     var foregroundSource: String?
     var foregroundContrast: Double?
@@ -110,7 +112,10 @@ enum AXLineRendering {
             for (segment,text,lines) in parts {
                 if newline(text) { excluded("translation_newline_unsupported",segment:segment); continue }
                 guard !lines.isEmpty, !text.isEmpty else { excluded("line_unavailable",segment:segment); continue }
-                let minHeight = lines.map { $0.box.height }.min() ?? 0
+                let ids = paragraph.inlineContent?.first(where: { $0.id == segment })?.sourceNodes ?? paragraph.lineSourceNodes ?? paragraph.members
+                let nativeSource = paragraph.inlineContent?.first(where: { $0.id == segment })?.text ?? paragraph.lineSourceText ?? paragraph.text
+                var heightDecisions: [AXFontHeight.Decision] = []
+                let minHeight = AXFontHeight.select(lines:lines,source:nativeSource,ids:ids,nodes:observations,clips:(paragraph.visibleBoxes ?? [paragraph.box]).map(\.cgRect).map { $0.intersection(region) },record:{ heightDecisions.append($0) })
                 guard minHeight >= 8, lines.allSatisfy({ $0.box.width.isFinite && $0.box.width > 0 && $0.box.height.isFinite }) else { excluded("insufficient_line_height",segment:segment); continue }
                 let rects = lines.map { pixel($0.box.cgRect) }
                 let fontProbe = CTFontCreateUIFontForLanguage(.system,1,nil)!
@@ -194,7 +199,7 @@ enum AXLineRendering {
                 items.append(MirrorItem(id:itemID,translatedText:text,presentation:.translated,
                     normalizedRect:normalized(pixel(paragraph.box.cgRect)),background:colors.background,foreground:colors.foreground))
                 diagnostics.append(.init(node:paragraph.node,segment:segment,status:"rendered",box:pixel(paragraph.box.cgRect),fontSize:Double(fontSize),commonScale:Double(common),lineScales:scales,clipped:clipped,lineBoxes:rects,heightRatio:(lines.map { $0.box.height }.max() ?? minHeight)/minHeight,
-                    backgroundColor:[Double(colors.background.red),Double(colors.background.green),Double(colors.background.blue)],
+                    selectedFontHeight:minHeight,fontHeightDecisions:heightDecisions,backgroundColor:[Double(colors.background.red),Double(colors.background.green),Double(colors.background.blue)],
                     foregroundColor:[Double(colors.foreground.red),Double(colors.foreground.green),Double(colors.foreground.blue)],
                     foregroundSource:colors.foregroundSource,foregroundContrast:colors.contrast))
             }

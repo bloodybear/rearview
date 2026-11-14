@@ -39,6 +39,7 @@ public struct AXNode: Codable, Sendable {
     public let id: Int
     public let parent, controlTextOwner, mathOwner: Int?
     public let role, value, title: String
+    public let recoveredText: String?
     public let frame: AXBox?
     public let decision, decisionReason: String?
     public let foregroundColor, backgroundColor: AXTextColor?
