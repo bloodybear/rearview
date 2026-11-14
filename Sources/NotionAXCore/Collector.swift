@@ -510,17 +510,15 @@ static func collect(_ request: AXExtractionRequest, window: AXUIElement, cancell
         }
         probe["sourceNodes"]=leafIDs
         let lines=probe["lineRanges"] as? [[String:Any]] ?? []
-        // Keep raw AX coordinates even under header/preview clipping. Fully
-        // outside lines can be omitted, but their rectangles are never cut.
-        probe["lineRanges"]=lines.enumerated().compactMap{number,line -> [String:Any]? in
+        // A selected paragraph needs its entire native line capacity, including
+        // lines outside the viewport. Visibility only controls rendering clips;
+        // dropping lines here compresses the full translation into a partial span.
+        probe["lineRanges"]=lines.enumerated().map{number,line -> [String:Any] in
             var line=line;line["line"]=number
-            guard let b=line["box"] as? [String:Double] else{return nil}
-            let box=CGRect(x:b["x"]!,y:b["y"]!,width:b["width"]!,height:b["height"]!)
-            guard TextRangeSafety.visibility(box,in:viewport) != "outside" else{return nil}
             return line
         }
         rows[unit]["paragraphLineInvestigation"]=probe
-        // Preserve raw query output separately from visibility selection.
+        // Preserve the original query output without report line numbering.
         var rawProbe=probe;rawProbe["lineRanges"]=lines
         rows[unit]["rangeInvestigations"]=[rawProbe]
     }
