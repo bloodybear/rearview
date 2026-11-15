@@ -130,6 +130,32 @@ public enum AXParagraphBuilder {
                 unit.removeValue(forKey:"layoutExpansionRight")
             }
             unit["codeSegments"] = byID[id]?["codeSegments"]
+            // Infer symmetric inset only for existing expansion targets.
+            if unit["layoutExpansionRight"] != nil, unit["cellExpansionRight"] == nil {
+                let area = box(unit["originalBox"] ?? unit["box"])
+                let ids = unit["members"] as? [Int] ?? []
+                let frames = ids.compactMap { id -> CGRect? in
+                    guard byID[id]?["role"] as? String == "AXStaticText" else { return nil }
+                    let f = box(byID[id]?["frame"])
+                    return f.width > 0 && f.height > 0 && !f.isInfinite && !f.isNull ? f : nil
+                }
+                var reason = "missing_node_geometry"
+                if !frames.isEmpty, frames.count == ids.count {
+                    let inset = frames.map(\.minX).min()! - area.minX
+                    let right = area.maxX - inset
+                    unit["inferredHorizontalInset"] = Double(inset)
+                    unit["paddingCandidateRight"] = Double(right)
+                    let clips = selected.filter { ids.contains($0["node"] as? Int ?? -1) }.compactMap { $0["effectiveClipRegion"] }.map(box)
+                    let horizontalClip = clips.contains { area.minX <= $0.minX + 0.5 || area.maxX >= $0.maxX - 0.5 }
+                        || abs(box(unit["box"]).minX-area.minX) > 0.5 || abs(box(unit["box"]).maxX-area.maxX) > 0.5
+                        || unit["previewOcclusions"] != nil
+                    if horizontalClip { reason = "horizontal_clipping_uncertain" }
+                    else if inset <= 0.5 || right <= frames.map(\.minX).min()! { reason = "no_valid_inset" }
+                    else if frames.contains(where: { $0.maxX > right + 0.5 }) { reason = "node_exceeds_candidate" }
+                    else { unit["layoutExpansionRight"] = Double(right); reason = "applied" }
+                }
+                unit["symmetricPaddingStatus"] = reason
+            }
             var fragments = [box(unit["box"])]
             if let occlusions = unit["previewOcclusions"] as? [[String:Any]], !occlusions.isEmpty {
                 for occlusion in occlusions { fragments = fragments.flatMap { PreviewOcclusion.visibleBoxes($0, behind:box(occlusion["panelFrame"])) } }

@@ -80,6 +80,18 @@ final class ParagraphBuilderTests: XCTestCase {
         XCTAssertEqual(masks,[["x":18,"y":25,"width":187,"height":16]])
         XCTAssertEqual(unit["layoutExpansionRight"] as? Double,210)
     }
+    func testSymmetricInsetOnlyChangesExpansionLimit() {
+        for width in [30.0, 85.0] {
+            let area: [String:Double] = ["x":0,"y":0,"width":100,"height":30]
+            let leaf: [String:Double] = ["x":9,"y":5,"width":width,"height":17]
+            let nodes: [[String:Any]] = [
+                ["id":0,"role":"AXTextArea","value":"日本語","frame":area],
+                ["id":1,"parent":0,"role":"AXStaticText","frame":leaf]]
+            let u = AXParagraphBuilder.build(nodes:nodes,selected:[["node":1,"text":"日本語","textSource":"AXValue","box":leaf]])[0]
+            XCTAssertEqual(u["layoutExpansionRight"] as? Double,width == 30 ? 91 : 100)
+            XCTAssertEqual(u["box"] as? [String:Double],area)
+        }
+    }
     func testCancellationBeforeQueueWork() async {
         let provider = NativeSessionAXProvider()
         let task = Task {
