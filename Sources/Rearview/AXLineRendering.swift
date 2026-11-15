@@ -272,7 +272,9 @@ enum AXLineRendering {
                 let capacity = rects.reduce(CGFloat(0)) { $0+$1.width }
                 guard total.isFinite, total > 0, capacity > 0 else { excluded("measurement_failed",segment:segment); continue }
                 let common = min(1,capacity/total)
-                var credit: CGFloat = 0, location = 0, scales: [Double] = []
+                // Seed the same budget with unused capacity before any line compresses.
+                // Later line-end gaps spend it; local compression replenishes it.
+                var credit: CGFloat = max(0,capacity-total*common), location = 0, scales: [Double] = []
                 var hiddenWrapSpaceOffsets: [Int] = []
                 let itemID = part.itemID
                 var clipped = false

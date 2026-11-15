@@ -174,7 +174,7 @@ final class AXLineRenderingTests: XCTestCase {
         let glyph = CTLineGetTypographicBounds(line,nil,nil,nil)
         for spaces in [" ","   ","\t","\u{00a0}"] {
             let text = "가나"+spaces+"다👩‍💻"
-            let result = try render(translation:text,widths:[1.1*glyph,200])
+            let result = try render(translation:text,widths:[2*glyph,200])
             let hidden = spaces.first == " " ? [2] : []
             XCTAssertEqual(result.diagnostics.first?.hiddenWrapSpaceOffsets,hidden)
             XCTAssertEqual(result.fragments.map(\.text).joined(),text)
@@ -200,16 +200,32 @@ final class AXLineRenderingTests: XCTestCase {
         XCTAssertTrue(clipped.diagnostics[0].clipped)
         XCTAssertLessThan(clipped.fragments.count,full.fragments.count)
     }
-    func testSavedCreditAvoidsUnnecessaryCompression() throws {
+    func testInitialSpareCapacityAvoidsUnnecessaryCompression() throws {
         let probe = CTFontCreateUIFontForLanguage(.system,1,nil)!
         let h = CTFontGetAscent(probe)+CTFontGetDescent(probe)+max(0,CTFontGetLeading(probe))
         let font = CTFontCreateCopyWithAttributes(probe,18*0.98/h,nil,nil)
         let line = CTLineCreateWithAttributedString(NSAttributedString(string:"가",attributes:[NSAttributedString.Key(kCTFontAttributeName as String):font]))
         let glyph = CTLineGetTypographicBounds(line,nil,nil,nil)
         let result = try render(translation:String(repeating:"가",count:12),heights:[18,18,18],widths:[3.2*glyph,3.5*glyph,10*glyph])
-        XCTAssertEqual(result.diagnostics[0].lineScales[0],0.8,accuracy:0.001)
+        XCTAssertEqual(result.diagnostics[0].commonScale,1,accuracy:0.001)
+        XCTAssertEqual(result.diagnostics[0].lineScales[0],1,accuracy:0.001)
         XCTAssertEqual(result.diagnostics[0].lineScales[1],1,accuracy:0.001)
         XCTAssertEqual(result.fragments.map(\.text).joined(),String(repeating:"가",count:12))
+    }
+    func testTightCapacityStillEarnsAndSpendsCompressionCredit() throws {
+        let probe = CTFontCreateUIFontForLanguage(.system,1,nil)!
+        let h = CTFontGetAscent(probe)+CTFontGetDescent(probe)+max(0,CTFontGetLeading(probe))
+        let font = CTFontCreateCopyWithAttributes(probe,18*0.98/h,nil,nil)
+        let line = CTLineCreateWithAttributedString(NSAttributedString(string:"가",attributes:[NSAttributedString.Key(kCTFontAttributeName as String):font]))
+        let glyph = CTLineGetTypographicBounds(line,nil,nil,nil)
+        for lastWidth in [5.3,2.0] {
+            let text = String(repeating:"가",count:12)
+            let result = try render(translation:text,heights:[18,18,18],widths:[3.2*glyph,3.5*glyph,lastWidth*glyph])
+            XCTAssertLessThan(result.diagnostics[0].lineScales[0],1)
+            if lastWidth == 5.3 { XCTAssertEqual(result.diagnostics[0].lineScales[1],1,accuracy:0.001) }
+            else { XCTAssertLessThan(result.diagnostics[0].commonScale,1) }
+            XCTAssertEqual(result.fragments.map(\.text).joined(),text)
+        }
     }
     func testFormulaSerializationNewlineDoesNotExcludeText() throws {
         let result = try render(source:"日本語\nFORMULA\n",math:true)
