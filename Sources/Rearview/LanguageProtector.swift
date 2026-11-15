@@ -1,5 +1,6 @@
 import Foundation
 import NaturalLanguage
+import NotionAXCore
 
 enum JapaneseDetectionReason: String, Codable, Sendable, Equatable {
     case kanaDetected
@@ -74,22 +75,9 @@ enum LanguageProtector {
                 )
         }
         if preserveCodeSyntax {
-            // Code structure never enters the model: translate only source-script runs.
-            var segments: [TextSegment] = []
-            var buffer = ""
-            var current: TextSegmentKind?
-            for scalar in source.unicodeScalars {
-                let sourceScript = direction == .japaneseToKorean
-                    ? isKana(scalar) || isHan(scalar) : isHangul(scalar)
-                let combining = CharacterSet.nonBaseCharacters.contains(scalar) && current == .translate
-                let kind: TextSegmentKind = sourceScript || combining ? .translate : .preserve
-                if let current, current != kind {
-                    segments.append(.init(kind: current, text: buffer)); buffer = ""
-                }
-                current = kind; buffer.unicodeScalars.append(scalar)
-            }
-            if let current, !buffer.isEmpty { segments.append(.init(kind: current, text: buffer)) }
-            return TranslationPlan(source: source, segments: segments)
+            return TranslationPlan(source:source,segments:AXCodeTextSegments.split(source,korean:direction == .koreanToJapanese).map {
+                TextSegment(kind:$0.translates ? .translate : .preserve,text:$0.text)
+            })
         }
         guard direction == .koreanToJapanese else { return makeTranslationPlan(for: source) }
         var raw: [(kind: TextSegmentKind, text: String)] = []

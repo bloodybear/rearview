@@ -6,7 +6,7 @@ body{font:14px system-ui;margin:20px;line-height:1.6}button{cursor:pointer}nav{d
 <details id="collectionDetails" hidden><summary>실제 수집·스크린샷 시점</summary><pre id="collectionMetadata"></pre></details>
 <p id="coverageNote" role="status" hidden></p>
 <p>문단보기는 번역 단위 후보를 표시합니다: 본문 AXTextArea, 탭·DB 셀의 native 컨트롤 라벨, 그 외 선택 텍스트. 원문을 조합하지 않으며 의미상 문단을 보증하지 않습니다. 노드·라인은 현재 선택 결과이며 픽셀 가시성은 미검증입니다. 번호 클릭: 참조 복사 / 박스 클릭: 원문·소속 관계. 번호가 박스보다 클릭 우선입니다.</p>
-<nav aria-label="박스 보기"><button data-mode="paragraph" aria-pressed="true">문단보기</button><button data-mode="node" aria-pressed="false">노드보기</button><button data-mode="line" aria-pressed="false">라인보기</button><button data-mode="none" aria-pressed="false">원본보기 (박스 없음)</button><button id="clear">소속 강조 해제</button><span id="count"></span></nav>
+<nav aria-label="박스 보기"><button data-mode="paragraph" aria-pressed="true">문단보기</button><button data-mode="node" aria-pressed="false">노드보기</button><button data-mode="line" aria-pressed="false">라인보기</button><button data-mode="code" aria-pressed="false">코드 구간보기</button><button data-mode="none" aria-pressed="false">원본보기 (박스 없음)</button><button id="clear">소속 강조 해제</button><span id="count"></span></nav>
 <p id="modeNote"></p><div id="screen" class="screen"><img src="screen.png" alt="수집 시점 Notion 화면"></div>
 <dialog id="detail"><button id="close">닫기</button> <button id="copyDetail">참조 복사</button><h2 id="heading"></h2><h3>원문</h3><pre id="text"></pre><section id="translationSection"><h3 id="translationHeading">번역문</h3><pre id="translation"></pre></section><div id="members"></div><details id="axDetails"><summary>AX 정보·선택 근거</summary><pre id="info"></pre></details><textarea id="reference" readonly aria-label="참조 정보" style="width:100%;height:60px"></textarea></dialog><div id="notice" role="status" hidden></div>
 <details><summary id="unresolvedTitle"></summary><p>문단보기에서는 아래 항목을 문단 박스로 그리지 않습니다. 노드 번호를 누르면 노드보기에서 상세를 확인합니다.</p><ul id="unresolved"></ul></details>
@@ -26,6 +26,7 @@ let mode='paragraph',current,focusMembers=[];
 Object.assign(screen.style,{width:data.frame.width+'px',height:data.frame.height+'px'});
 if(data.selectionRegion){const r=data.selectionRegion,b=document.createElement('div');b.dataset.selectionOverlay='true';Object.assign(b.style,{position:'absolute',pointerEvents:'none',border:'2px dashed purple',boxSizing:'border-box',left:(r.x-data.frame.x)+'px',top:(r.y-data.frame.y)+'px',width:r.width+'px',height:r.height+'px'});screen.append(b);}
 const paragraphLines=data.paragraphs.flatMap(p=>(p.lineRanges||[]).map(l=>({...p,...l,kind:'line',paragraphNode:p.node})));
+const codeRanges=data.paragraphs.flatMap(p=>(p.codeSegments||[]).flatMap(run=>(run.pieces||[]).filter(piece=>piece.box).map(piece=>({...p,...piece,kind:'code',paragraphNode:p.node,codeRun:run.id,codeSegment:run}))));
 const lines=paragraphLines.length||data.nodes.some(n=>n.paragraphLineInvestigation)?paragraphLines:data.selected.flatMap(n=>(n.lineRanges||[]).map(l=>({...n,...l,kind:'line'})));
 function reference(c){return 'notion-fixtures/evaluations/'+data.run+'/'+data.evaluation+'/index.html#'+(c.kind==='paragraph'||c.paragraphNode!==undefined?'paragraph=':'node=')+c.node+(c.kind==='line'?'&line='+c.line:'');}
 function notify(message){const n=document.getElementById('notice');n.textContent=message;n.hidden=false;clearTimeout(window.noticeTimer);window.noticeTimer=setTimeout(()=>n.hidden=true,2200);}
@@ -37,7 +38,7 @@ function choose(c,targetMode){focusMembers=related(c);if(dialog.open)dialog.clos
 function action(label,callback){const b=document.createElement('button');b.textContent=label;b.onclick=callback;return b;}
 function show(c){current=c;const parent=parentOf(c),members=c.kind==='paragraph'?c.members:[c.node];
  document.getElementById('heading').textContent=data.scenario+' / '+(c.kind==='paragraph'?'문단 P'+c.node:c.kind==='line'?(c.paragraphNode!==undefined?'문단 P':'노드 ')+c.node+' / 라인 '+c.line:'노드 '+c.node);
- document.getElementById('text').textContent=c.text;
+ document.getElementById('text').textContent=c.kind==='code'?c.codeSegment.text:c.text;
  document.getElementById('axDetails').open=false;
  const unit=c.kind==='paragraph'?c:parent,result=unit?.translationResult;
  document.getElementById('translationSection').hidden=!unit;
@@ -51,6 +52,7 @@ function show(c){current=c;const parent=parentOf(c),members=c.kind==='paragraph'
   if(segmentID!==undefined){const s=segmentResults.find(s=>s.id===segmentID);text=s?format(s):'번역 결과 없음';}
   else text=(unit.inlineContent||[]).map(s=>s.kind==='math'?'[수식]':format(segmentResults.find(r=>r.id===s.id)||{})).filter(Boolean).join('\n');
  }
+ if(c.kind==='code'){const r=result?.codeTranslations?.find(r=>r.id===c.codeRun);text=c.codeSegment.translates?(r?.translation??('원문 유지 · '+(r?.status??c.codeSegment.status))):'원문 유지 · 선택/복사만';}
  document.getElementById('translation').textContent=text;
  document.getElementById('reference').value=reference(c);
  const area=document.getElementById('members');area.replaceChildren();
@@ -65,11 +67,11 @@ function show(c){current=c;const parent=parentOf(c),members=c.kind==='paragraph'
  if(!dialog.open)dialog.showModal();
 }
 function draw(c){
- const fragments=c.kind==='line'?[c.box]:(c.visibleBoxes||[c.box]);
+ const fragments=(c.kind==='line'||c.kind==='code')?[c.box]:(c.visibleBoxes||[c.box]);
  for(const f of fragments){drawBox(c,f);}
 }
 function drawBox(c,f){if(!f||f.width<=0||f.height<=0)return;
- const kind=c.kind||'node',box=document.createElement('button');box.className='box '+(kind==='paragraph'?'paragraph':kind==='line'?'line':c.textSource==='AXTitle'?'title-source':'');box.dataset.kind=kind;box.dataset.node=c.node;
+ const kind=c.kind||'node',box=document.createElement('button');box.className='box '+(kind==='paragraph'?'paragraph':kind==='line'?'line':c.textSource==='AXTitle'?'title-source':'');box.dataset.kind=kind;box.dataset.node=c.node;if(kind==='code'){box.style.borderColor=c.codeSegment.translates?'#16803c':'#245bd4';box.style.borderStyle=c.codeSegment.translates?'solid':'dashed';}
  if(focusMembers.includes(c.node)||((kind==='paragraph'||c.paragraphNode!==undefined)&&c.members.some(id=>focusMembers.includes(id))))box.classList.add('related');
  Object.assign(box.style,{left:(f.x-data.frame.x)+'px',top:(f.y-data.frame.y)+'px',width:f.width+'px',height:f.height+'px'});
  box.setAttribute('aria-label',(kind==='paragraph'?'문단 ':kind==='line'?'라인 ':'노드 ')+c.node+(kind==='line'?'.'+c.line:'')+' 상세');box.onclick=()=>show(c);screen.append(box);
@@ -77,10 +79,10 @@ function drawBox(c,f){if(!f||f.width<=0||f.height<=0)return;
 }
 function setMode(value){mode=value;screen.querySelectorAll('button').forEach(b=>b.remove());document.querySelectorAll('[data-mode]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.mode===mode)));
  screen.querySelectorAll('[data-selection-overlay]').forEach(b=>b.hidden=mode==='none');
- const items=mode==='none'?[]:mode==='paragraph'?data.paragraphs:mode==='line'?lines:data.selected.map(c=>({...c,kind:'node'}));items.forEach(draw);
- document.getElementById('count').textContent=mode==='none'?'':(mode==='paragraph'?'문단 후보 ':mode==='line'?'라인 ':'선택 노드 ')+items.length+'개';
+ const items=mode==='none'?[]:mode==='paragraph'?data.paragraphs:mode==='line'?lines:mode==='code'?codeRanges:data.selected.map(c=>({...c,kind:'node'}));items.forEach(draw);
+ document.getElementById('count').textContent=mode==='none'?'':(mode==='paragraph'?'문단 후보 ':mode==='line'?'라인 ':mode==='code'?'코드 구간 조각 ':'선택 노드 ')+items.length+'개';
  const missing=data.paragraphs.filter(c=>!(c.lineRanges||[]).length).length;
- document.getElementById('modeNote').textContent=mode==='none'?'박스·번호·선택 영역 표시 없이 수집 시점의 원본 화면만 표시합니다.':mode==='paragraph'?'초록: 번역 단위 후보의 native 박스(본문·탭·DB·독립 텍스트). 문단 미분류 '+data.unresolved.length+'개는 아래 목록에서 확인합니다. 화면 밖 박스는 화면 경계에서 잘라 표시하며 원문은 유지합니다.':mode==='line'?'파랑: 문단에 속한 표시용 라인입니다. 라인이 없는 문단 '+missing+'개는 문단보기에서 확인하세요. 노드 박스를 라인으로 대체 표시하지 않습니다.':'빨강: 선택 노드 박스 / 주황 점선: AXTitle 컨트롤 박스. 라인·문단 후보와 별개입니다.';
+ document.getElementById('modeNote').textContent=mode==='code'?'초록 실선: 일본어 번역 구간 / 파랑 점선: 원문 유지·선택용 구간. 클릭하면 구간·서식·조회 상태를 확인합니다.':mode==='none'?'박스·번호·선택 영역 표시 없이 수집 시점의 원본 화면만 표시합니다.':mode==='paragraph'?'초록: 번역 단위 후보의 native 박스(본문·탭·DB·독립 텍스트). 문단 미분류 '+data.unresolved.length+'개는 아래 목록에서 확인합니다. 화면 밖 박스는 화면 경계에서 잘라 표시하며 원문은 유지합니다.':mode==='line'?'파랑: 문단에 속한 표시용 라인입니다. 라인이 없는 문단 '+missing+'개는 문단보기에서 확인하세요. 노드 박스를 라인으로 대체 표시하지 않습니다.':'빨강: 선택 노드 박스 / 주황 점선: AXTitle 컨트롤 박스. 라인·문단 후보와 별개입니다.';
 }
 document.querySelectorAll('[data-mode]').forEach(b=>b.onclick=()=>setMode(b.dataset.mode));document.getElementById('clear').onclick=()=>{focusMembers=[];setMode(mode);};
 document.getElementById('close').onclick=()=>dialog.close();document.getElementById('copyDetail').onclick=()=>copy(current);

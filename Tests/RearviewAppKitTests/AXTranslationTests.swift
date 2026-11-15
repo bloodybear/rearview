@@ -30,10 +30,43 @@ import XCTest
         XCTAssertEqual(first.status,"translated")
         XCTAssertFalse(broker.calls[0].1.protectsNonSourceText)
         _ = try await translator.translate(request("日本語 code",protect:true),node:30)
-        XCTAssertTrue(broker.calls.last!.1.protectsNonSourceText)
+        XCTAssertFalse(broker.calls.last!.1.protectsNonSourceText)
+        XCTAssertEqual(broker.calls.last!.0,"日本語")
         let skipped = try await translator.translate(request("English only"),node:40)
         XCTAssertEqual(skipped.status,"skipped_non_source_language")
         XCTAssertEqual(broker.calls.count,3)
+    }
+    func testCodeRunBoundariesPreserveOuterPunctuationAndInternalSpaces() async throws {
+        let broker = AXTestTranslator()
+        broker.action = { "번역:"+$0 }
+        let value = try await AXParagraphTranslator(broker:broker,direction:.japaneseToKorean)
+            .translate(request("  let x = \"「保存 して、確認。」\";\n状態 == 完了",protect:true),node:1)
+        XCTAssertEqual(Set(broker.calls.map { $0.0 }),Set(["保存 して、確認","状態","完了"]))
+        XCTAssertTrue(broker.calls.allSatisfy { !$0.1.protectsNonSourceText })
+        XCTAssertEqual(value.translation,"  let x = \"「번역:保存 して、確認。」\";\n번역:状態 == 번역:完了")
+        XCTAssertEqual(value.method,"code-source-runs-v1")
+    }
+    func testCodeMissingGeometryAndCancellationDoNotSilentlyTranslate() async throws {
+        let broker = AXTestTranslator()
+        var input = try request("x=\"保存\"",protect:true)
+        input.codeSegments=[]
+        let unavailable = try await AXParagraphTranslator(broker:broker,direction:.japaneseToKorean).translate(input,node:1)
+        XCTAssertTrue(broker.calls.isEmpty)
+        XCTAssertEqual(unavailable.translation,input.source)
+        XCTAssertEqual(unavailable.status,"partial")
+        broker.action = { _ in throw CancellationError() }
+        do {
+            _ = try await AXParagraphTranslator(broker:broker,direction:.japaneseToKorean).translate(request("保存",protect:true),node:1)
+            XCTFail("Cancellation must propagate")
+        } catch is CancellationError {}
+    }
+    func testCodeEmptyResponseKeepsSourceAndReportsFailure() async throws {
+        let broker = AXTestTranslator(); broker.action = { _ in " " }
+        let value = try await AXParagraphTranslator(broker:broker,direction:.japaneseToKorean)
+            .translate(request("\"保存\"",protect:true),node:1)
+        XCTAssertEqual(value.translation,"\"保存\"")
+        XCTAssertEqual(value.status,"partial")
+        XCTAssertEqual(value.codeTranslations?.first(where: { $0.source == "保存" })?.error,"empty_translation")
     }
     func testMathWhitespaceUsesContextAndNeverSendsFormula() async throws {
         let broker = AXTestTranslator()

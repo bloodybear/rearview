@@ -6,10 +6,12 @@ struct AXTranslationRequest: Codable, Sendable {
     let protectNonSourceText: Bool
     let parts: [MathContentPart]?
     var cacheScope: String? = nil
+    var codeSegments: [AXCodeSegment]? = nil
 
     init(paragraph: AXParagraph) {
         source = paragraph.translationSourceText ?? ""
         protectNonSourceText = paragraph.isCodeBlock
+        codeSegments = paragraph.codeSegments
         parts = paragraph.inlineContent.map { values in
             values.map { .init(kind: $0.kind == "math" ? .math : .text,
                                text: $0.kind == "math" ? nil : $0.text ?? "") }
@@ -17,6 +19,13 @@ struct AXTranslationRequest: Codable, Sendable {
     }
 }
 
+
+struct AXCodeTranslation: Codable, Sendable {
+    let id, rangeStart, rangeLength: Int
+    let source: String
+    var status: String
+    var translation, rawTranslation, error: String?
+}
 
 struct AXLogicalTranslation: Codable, Sendable {
     let id: Int
@@ -51,6 +60,7 @@ struct AXParagraphTranslation: Codable, Sendable {
     var rawContextTranslation: String?
     var contextError: String?
     var segments: [MathTranslationPolicy.SegmentResult]?
+    var codeTranslations: [AXCodeTranslation]?
     var logicalSegments: [AXLogicalTranslation]?
     var newlinePolicy: String?
     var elapsedSeconds: Double?
@@ -88,6 +98,9 @@ struct AXParagraphTranslator {
             mathPolicy: request.parts == nil ? nil : MathTranslationPolicy.version,
             sourceLanguageEligible: eligible, status: eligible ? "pending" : "skipped_non_source_language")
         guard !request.source.isEmpty else { result.status = "source_unavailable"; return result }
+        if request.protectNonSourceText, request.parts == nil, forward {
+            return try await translateCode(request,result:result)
+        }
         guard eligible else { return result }
         let started = Date()
         do {
@@ -178,4 +191,53 @@ struct AXParagraphTranslator {
         result.elapsedSeconds = Date().timeIntervalSince(started)
         return result
     }
+    private func translateCode(_ request: AXTranslationRequest, result initial: AXParagraphTranslation) async throws -> AXParagraphTranslation {
+        let started = Date()
+        let parts = AXCodeTextSegments.split(request.source)
+        var output = parts.enumerated().map { index,part in
+            AXCodeTranslation(id:index,rangeStart:part.range.location,rangeLength:part.range.length,
+                source:part.text,status:part.translates ? "pending" : "preserved_source")
+        }
+        // Snapshot geometry is optional only for translation-only research requests.
+        let geometry = request.codeSegments
+        let scope = request.cacheScope ?? "production"
+        let translate: @MainActor @Sendable (String) async throws -> String = { [broker] source in
+            try await broker.translate(source, options:.init(protectsNonSourceText:false,
+                context:"ax-code-runs-v1-"+scope))
+        }
+        try await withThrowingTaskGroup(of: AXCodeTranslation.self) { group in
+            for (index,part) in parts.enumerated() where part.translates {
+                guard geometry == nil || geometry?.contains(where: {
+                    $0.id == index && $0.rangeStart == part.range.location && $0.rangeLength == part.range.length
+                    && $0.text == part.text && $0.status == "complete"
+                }) == true else { output[index].status = "geometry_unavailable"; continue }
+                group.addTask {
+                    var value = AXCodeTranslation(id:index,rangeStart:part.range.location,rangeLength:part.range.length,
+                        source:part.text,status:"translated")
+                    do {
+                        try Task.checkCancellation()
+                        let raw = try await translate(part.text)
+                        try Task.checkCancellation()
+                        guard !raw.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty else {
+                            value.status="failed";value.error="empty_translation";return value
+                        }
+                        value.rawTranslation=raw;value.translation=AXLogicalLines.flattenGeneratedBreaks(raw)
+                    } catch {
+                        if error is CancellationError || Task.isCancelled { throw CancellationError() }
+                        value.status="failed";value.error=String(describing:error)
+                    }
+                    return value
+                }
+            }
+            for try await value in group { output[value.id]=value }
+        }
+        var result = initial
+        result.codeTranslations=output;result.method="code-source-runs-v1"
+        result.translation=output.map { $0.translation ?? $0.source }.joined()
+        result.status=output.contains(where: {$0.status == "failed" || $0.status == "geometry_unavailable"}) ? "partial" :
+            (output.contains(where: {$0.status == "translated"}) ? "translated" : "skipped_non_source_language")
+        result.elapsedSeconds=Date().timeIntervalSince(started)
+        return result
+    }
+
 }

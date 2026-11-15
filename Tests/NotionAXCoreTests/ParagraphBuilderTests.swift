@@ -16,6 +16,17 @@ final class ParagraphBuilderTests: XCTestCase {
         XCTAssertEqual(units[0]["members"] as? [Int],[2])
         XCTAssertEqual((units[0]["box"] as! [String:Double]),f)
     }
+    func testExpansionOnlyForPlainNativeTextArea() {
+        let f: [String:Double] = ["x":10,"y":20,"width":100,"height":30]
+        for kind in ["notion-text-block","notion-code-block","notion-table-block","notion-bulleted_list-block"] {
+            let nodes: [[String:Any]] = [
+                ["id":0,"role":"AXGroup","domClasses":["notion-selectable",kind]],
+                ["id":1,"parent":0,"role":"AXTextArea","value":"日本語","frame":f],
+                ["id":2,"parent":1,"role":"AXStaticText","value":"日本語","frame":f]]
+            let result = AXParagraphBuilder.build(nodes:nodes,selected:[["node":2,"text":"日本語","textSource":"AXValue","box":f]])
+            XCTAssertEqual(result[0]["layoutExpansionRight"] as? Double,kind == "notion-text-block" ? 110 : nil)
+        }
+    }
     func testCancellationBeforeQueueWork() async {
         let provider = NativeSessionAXProvider()
         let task = Task {

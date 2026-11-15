@@ -9,6 +9,10 @@ public struct AXLine: Codable, Sendable {
     public let rangeStart, rangeLength: Int
     public let box: AXBox
     public let line, segment, segmentRangeStart: Int?
+    public init(text:String, rangeStart:Int, rangeLength:Int, box:AXBox, line:Int? = nil, segment:Int? = nil, segmentRangeStart:Int? = nil) {
+        self.text=text;self.rangeStart=rangeStart;self.rangeLength=rangeLength;self.box=box
+        self.line=line;self.segment=segment;self.segmentRangeStart=segmentRangeStart
+    }
 }
 public struct AXInlineContent: Codable, Sendable {
     public let kind: String
@@ -30,6 +34,8 @@ public struct AXParagraph: Codable, Sendable {
     public let lineSourceNodes: [Int]?
     public let lineSourceText, lineRangeStatus, lineMethod: String?
     public let inlineContent: [AXInlineContent]?
+    public var layoutExpansionRight: Double? = nil
+    public var codeSegments: [AXCodeSegment]? = nil
     public let isCodeBlock, protectNonSourceText: Bool
 }
 extension AXParagraph {
@@ -59,3 +65,23 @@ public struct AXNode: Codable, Sendable {
     public let foregroundColorStatus: String?
 }
 public enum AXCollectionStatus: String, Codable, Sendable { case complete, partial, failed }
+
+public struct AXCodePiece: Codable, Sendable {
+    public let sourceNode, rangeStart, rangeLength: Int
+    public let text: String
+    public let box: AXBox?
+    public let status: String
+}
+public struct AXCodeStyle: Codable, Sendable {
+    public let foregroundColor: AXTextColor?
+    public let foregroundColorStatus: String
+    public let bold, italic, underline, strikethrough: Bool?
+}
+public struct AXCodeSegment: Codable, Sendable {
+    public let id, rangeStart, rangeLength: Int
+    public let text: String
+    public let translates: Bool
+    public let pieces: [AXCodePiece]
+    public let status: String
+    public let style: AXCodeStyle
+}

@@ -87,6 +87,20 @@ public enum AXParagraphBuilder {
             if unit["lineRangeStatus"] as? String == "complete_unverified" {
                 unit["translationSourceText"] = (unit["inlineContent"] as? [[String:Any]]).map { $0.filter { $0["kind"] as? String == "text" }.map { $0["text"] as? String ?? "" }.joined() } ?? unit["lineSourceText"]
             }
+            // Only a plain text block's native editable area is a layout container.
+            // Controls, table cells and text/math subranges must retain native capacity.
+            let chain = [id] + ancestors(id)
+            let block = chain.compactMap { byID[$0] }.first {
+                ($0["domClasses"] as? [String] ?? []).contains("notion-selectable")
+            }
+            if unit["unitType"] as? String == "native_textarea",
+               (block?["domClasses"] as? [String] ?? []).contains("notion-text-block"),
+               unit["isCodeBlock"] as? Bool != true,
+               unit["inlineContent"] == nil {
+                let right = box(byID[id]?["frame"]).maxX
+                if right.isFinite { unit["layoutExpansionRight"] = Double(right) }
+            }
+            unit["codeSegments"] = byID[id]?["codeSegments"]
             var fragments = [box(unit["box"])]
             if let occlusions = unit["previewOcclusions"] as? [[String:Any]], !occlusions.isEmpty {
                 for occlusion in occlusions { fragments = fragments.flatMap { PreviewOcclusion.visibleBoxes($0, behind:box(occlusion["panelFrame"])) } }

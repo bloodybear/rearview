@@ -562,9 +562,10 @@ static func collect(_ request: AXExtractionRequest, window: AXUIElement, cancell
 
 
     try cancellation.check()
-    let paragraphs = AXParagraphBuilder.build(nodes: rows, selected: candidates)
+    var paragraphs = AXParagraphBuilder.build(nodes: rows, selected: candidates)
     let colorStarted = Date()
     var colorCalls = 0
+    var attributedCache: [Int:NSAttributedString] = [:]
     let colorNodes = Set(paragraphs.flatMap { ($0["lineSourceNodes"] as? [Int]) ?? ($0["members"] as? [Int] ?? []) })
     for n in colorNodes.sorted() {
         if Date() > deadline { break }
@@ -595,16 +596,28 @@ static func collect(_ request: AXExtractionRequest, window: AXUIElement, cancell
                 rows[n]["colorSource"] = "native_integer_range"
             }
         }
+        attributedCache[n] = attributed
         rows[n]["foregroundColorStatus"] = "mixed_or_unavailable"
         if let attributed, let color = AXForegroundStyle.uniformColor(in:attributed,matching:value) {
             rows[n]["foregroundColor"] = ["red":color.red,"green":color.green,"blue":color.blue,"alpha":color.alpha]
             rows[n]["foregroundColorStatus"] = "uniform"
         }
     }
+    let codeStarted = Date(), codeCallsBefore = investigator.calls
+    for i in paragraphs.indices where paragraphs[i]["isCodeBlock"] as? Bool == true {
+        try cancellation.check()
+        let segments = AXCodeRangeCollection.collect(paragraph:paragraphs[i],rows:rows,elements:elements,
+            attributed:attributedCache,investigator:investigator)
+        paragraphs[i]["codeSegments"] = segments
+        rows[paragraphs[i]["node"] as! Int]["codeSegments"] = segments
+    }
+    let codeSeconds = Date().timeIntervalSince(codeStarted)
     let truncated = Date() > deadline || investigator.limitReached || !stack.isEmpty || rows.contains{$0["depthLimitReached"] as? Bool == true}
-    let partial = truncated || paragraphs.contains { ($0["lineRangeStatus"] as? String ?? "unavailable") != "complete_unverified" }
+    let codePartial = paragraphs.contains { ($0["codeSegments"] as? [[String:Any]])?.contains(where: { $0["status"] as? String == "partial" }) == true }
+    let partial = codePartial || truncated || paragraphs.contains { ($0["lineRangeStatus"] as? String ?? "unavailable") != "complete_unverified" }
     let metadata: [String: Any] = ["status": valid ? (partial ? "partial" : "complete") : "failed",
         "targetAndFrameMatch":valid,"coordinateSystem":"screen-top-left-points", "elapsed":Date().timeIntervalSince(started), "colorQueries":colorCalls, "colorQuerySeconds":Date().timeIntervalSince(colorStarted),
+        "codeRangeQueries":investigator.calls-codeCallsBefore,"codeRangeSeconds":codeSeconds,
         "parentValueQueries":request.collectParentTextDiagnostics ? rows.filter { $0["role"] as? String == "AXTextArea" }.count : 0,
         "totalAXCalls":Thread.current.threadDictionary["rearview.ax.queryCount"] as? Int ?? 0,"rangeCalls":investigator.calls,"rangeElapsed":investigator.elapsed,"rangeLimitReached":investigator.limitReached,
         "truncated":truncated,"coverageLimitations":coverageLimitations,"visibleSearches":visibleSearches,

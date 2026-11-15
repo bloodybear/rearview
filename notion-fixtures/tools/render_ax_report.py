@@ -11,13 +11,13 @@ from pathlib import Path
 
 def translation_sources(root):
     # Compile these production sources read-only into a separate research CLI.
-    return [root/'tools/ax_report_translation.swift', root.parent/'Sources/NotionAXCore/MathTranslationPolicy.swift', root.parent/'Sources/NotionAXCore/LogicalLines.swift', root.parent/'Sources/Rearview/AXParagraphTranslator.swift'] + [root.parent/'Sources/Rearview'/name for name in (
+    return [root/'tools/ax_report_translation.swift', root.parent/'Sources/NotionAXCore/MathTranslationPolicy.swift', root.parent/'Sources/NotionAXCore/LogicalLines.swift', root.parent/'Sources/NotionAXCore/CodeTextSegments.swift', root.parent/'Sources/Rearview/AXParagraphTranslator.swift'] + [root.parent/'Sources/Rearview'/name for name in (
         'TranslationBroker.swift', 'LanguageProtector.swift', 'Models.swift',
         'Localization.swift', 'PerformanceProfiler.swift')]
 
 
 def translation_policy_id(root):
-    return 'production-ja-ko-code-only-protected-math-context-hardbreak-code-syntax-v8-' + hashlib.sha256(
+    return 'production-ja-ko-code-only-protected-math-context-hardbreak-code-ranges-v9-' + hashlib.sha256(
         b''.join(p.read_bytes() for p in translation_sources(root))).hexdigest()
 
 
@@ -35,6 +35,8 @@ def entry_cache_key(entry):
 
 def translation_request(unit):
     request = dict(source=unit.get('translationSourceText', unit['text']), protectNonSourceText=unit['protectNonSourceText'])
+    if 'codeSegments' in unit:
+        request['codeSegments'] = unit['codeSegments']
     if unit.get('inlineContent'):
         # Only typed boundaries and normal text cross the translation boundary.
         # AX IDs/frames are not cache keys. Original paragraph text remains the
@@ -157,6 +159,8 @@ def build_paragraphs(nodes, selected):
         else:
             # Old artifacts retain their historical node-line display.
             unit['lineRanges'] = []
+        if 'codeSegments' in by_id[unit['node']]:
+            unit['codeSegments'] = by_id[unit['node']]['codeSegments']
         fragments = [unit['box']]
         for occlusion in unit.get('previewOcclusions', []):
             fragments = [piece for box in fragments for piece in subtract_preview(box, occlusion['panelFrame'])]
@@ -215,6 +219,7 @@ def render(folder):
         for label, name in [('원본','render-source.png'),('번역','render-translated.png')]:
             review += f"<button onclick=\"document.getElementById('axRenderImage').src='{name}'\">{label}</button> "
         review += "<button onclick=\"document.getElementById('axRenderDebug').hidden=!document.getElementById('axRenderDebug').hidden\">진단 경계</button>"
+        review += '<p>진단 경계: 분홍색은 원본 라인, 청록색은 번역 배치 영역, 주황색은 표시 clip입니다.</p>'
         review += '<div style="position:relative"><img id="axRenderImage" style="display:block;width:100%" src="render-translated.png"><img id="axRenderDebug" hidden style="position:absolute;inset:0;width:100%;pointer-events:none" src="render-debug.png"></div>'
         diagnostics = json.loads((folder/'render-layout.json').read_text())
         review += '<details><summary>문단별 배치·압축·clip 상세</summary><table><tr><th>문단/구간</th><th>상태</th><th>폰트</th><th>공통 압축</th><th>라인 추가 압축</th><th>clip</th><th>배경 RGB</th><th>전경 RGB</th><th>전경 선택</th><th>명암비</th></tr>'

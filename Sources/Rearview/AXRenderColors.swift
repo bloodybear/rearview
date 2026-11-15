@@ -70,10 +70,10 @@ struct AXRenderColors {
             green:CGFloat((winner >> 8)&255)/255,blue:CGFloat(winner&255)/255,alpha:1)
     }
 
-    static func select(background sampled: RGBAColor, sourceIDs: [Int], observations: [Int:AXNode]) -> Self {
+    static func select(background sampled: RGBAColor, sourceIDs: [Int], observations: [Int:AXNode], uniformOverride: AXTextColor? = nil) -> Self {
         let background = RGBAColor(red:sampled.red,green:sampled.green,blue:sampled.blue,alpha:1)
-        var uniform: AXTextColor?
-        var complete = !sourceIDs.isEmpty
+        var uniform: AXTextColor? = uniformOverride
+        var complete = uniformOverride != nil || !sourceIDs.isEmpty
         for id in Set(sourceIDs) {
             guard let node = observations[id], node.mathOwner == nil,
                   node.foregroundColorStatus == "uniform", let color = node.foregroundColor,

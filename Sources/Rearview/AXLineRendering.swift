@@ -16,6 +16,7 @@ struct AXRenderDiagnostic: Codable, Sendable {
     var hiddenWrapSpaceOffsets: [Int] = []
     var clipped = false
     var lineBoxes: [CGRect] = []
+    var originalLineBoxes: [CGRect]?
     var heightRatio: Double = 1
     var selectedFontHeight: Double?
     var fontHeightDecisions: [AXFontHeight.Decision]?
@@ -37,7 +38,8 @@ struct AXRenderArtwork: @unchecked Sendable {
     let elapsed: Double
 }
 
-// No AX handles or UI objects cross this queue. All layout uses original line capacity.
+// No AX handles or UI objects cross this queue. Native geometry stays immutable;
+// plain text blocks may provide a wider, separately recorded layout capacity.
 private final class AXLayoutCancellation: @unchecked Sendable {
     private let lock = NSLock()
     private var value = false
@@ -54,8 +56,14 @@ private struct AXLogicalRenderPart {
     let itemID: UUID
     let itemText: String
     let offset: Int
+    var code: AXCodeSegment? = nil
 }
 enum AXLineRendering {
+    static func layoutBox(_ box: CGRect, expansionRight: Double?) -> CGRect {
+        guard let right = expansionRight, right.isFinite else { return box }
+        return CGRect(x:box.minX,y:box.minY,width:max(box.width,CGFloat(right)-box.minX),height:box.height)
+    }
+
     private static let queue = DispatchQueue(label: "Rearview.ax.layout", qos: .userInitiated)
     static func render(_ value: SessionCoordinator.AXTranslatedFrame) async -> AXRenderArtwork {
         let cancellation = AXLayoutCancellation()
@@ -97,61 +105,141 @@ enum AXLineRendering {
             func excluded(_ reason: String, segment: Int? = nil) {
                 diagnostics.append(.init(node:paragraph.node,segment:segment,status:reason,box:pixel(paragraph.box.cgRect)))
             }
-            if newline(sourceText), entry?.logicalSegments == nil { excluded("logical_translation_unavailable"); continue }
-            guard let entry else { excluded("translation_pending"); continue }
-            if entry.status != "translated" && entry.segments?.contains(where: { $0.status == "translated" }) != true && entry.logicalSegments?.contains(where: { $0.status == "translated" }) != true { excluded(entry.status); continue }
             var parts: [AXLogicalRenderPart] = []
-            let sources: [(Int?,String,[AXLine],String?)] = paragraph.inlineContent.map { content in
-                content.filter { $0.kind == "text" }.map { ($0.id,$0.text ?? "",$0.lineRanges ?? [],$0.lineRangeStatus) }
-            } ?? [(nil,sourceText,paragraph.lineRanges,paragraph.lineRangeStatus)]
             var invalid = false
-            for (segment,source,lines,status) in sources {
-                if let status, status != "complete_unverified" && status != "nonrendering_text" { excluded("line_"+status,segment:segment); invalid = true; break }
-                let itemID = UUID()
-                if let logical = entry.logicalSegments {
-                    let values = logical.filter { $0.sourcePart == segment }
-                    do {
-                        let mapping = try AXLogicalLines.split(source,lines:lines)
-                        guard values.count == mapping.count else { throw AXLogicalLines.Failure.textMismatch }
-                        let itemText = values.map { ($0.translation ?? $0.source)+$0.delimiter }.joined()
-                        var offset = 0
-                        for (value,map) in zip(values,mapping) {
-                            guard value.source == map.text, value.rangeStart == map.range.location,
-                                  value.rangeLength == map.range.length, value.delimiter == map.delimiter else { throw AXLogicalLines.Failure.textMismatch }
-                            if value.status == "translated", let text = value.translation, !text.isEmpty {
-                                parts.append(.init(segment:segment,text:text,lines:map.lineIndices.map { lines[$0] },fontLines:lines,source:source,logical:value,itemID:itemID,itemText:itemText,offset:offset))
-                            } else { excluded(value.status,segment:segment) }
-                            offset += ((value.translation ?? value.source)+value.delimiter as NSString).length
+            var codeItemID: UUID?
+            var fontHeights: [Int:(Double,[AXFontHeight.Decision])] = [:]
+            var colorCache: [Int:(AXRenderColors.BackgroundSample,AXRenderColors)] = [:]
+            let codeMode = paragraph.isCodeBlock && entry?.sourceLanguage != "ko"
+            if codeMode {
+                guard let runs = paragraph.codeSegments, !runs.isEmpty else { excluded("code_geometry_unavailable"); continue }
+                let itemID = UUID(); codeItemID = itemID
+                var offset = 0
+                var heightDecisions: [AXFontHeight.Decision] = []
+                let height = AXFontHeight.select(lines:paragraph.lineRanges.filter { !MathTranslationPolicy.nonrendering($0.text) },
+                    source:sourceText,ids:paragraph.lineSourceNodes ?? paragraph.members,nodes:observations,
+                    clips:(paragraph.visibleBoxes ?? [paragraph.box]).map(\.cgRect).map { $0.intersection(region) },
+                    record:{ heightDecisions.append($0) })
+                fontHeights[-2]=(height,heightDecisions)
+                var paintable = Set<Int>(), paintFailures: [Int:String] = [:]
+                for run in runs where run.translates && run.status == "complete" {
+                    guard let translated = entry?.codeTranslations?.first(where: { $0.id == run.id && $0.source == run.text }),
+                          translated.status == "translated", let text = translated.translation, !text.isEmpty else { continue }
+                    guard height >= 8 else { paintFailures[run.id]="insufficient_line_height";continue }
+                    guard !newline(text), !run.pieces.isEmpty,
+                          run.pieces.allSatisfy({ ($0.status == "complete" && $0.box != nil) || $0.status == "nonrendering_text" }) else {
+                        paintFailures[run.id]="code_geometry_unavailable";continue
+                    }
+                    let boxes = run.pieces.compactMap { $0.box }.map { pixel($0.cgRect) }
+                    guard let sample = AXRenderColors.backgroundSample(lines:boxes,clips:clips),
+                          let sampled = AXRenderColors.sampleBackground(in:image,pixelRect:sample.box,topEdge:sample.top,bottomEdge:sample.bottom) else {
+                        paintFailures[run.id]="background_sample_unavailable";continue
+                    }
+                    colorCache[run.id]=(sample,AXRenderColors.select(background:sampled,sourceIDs:[],observations:[:],uniformOverride:run.style.foregroundColor))
+                    paintable.insert(run.id)
+                }
+                let outputs = runs.map { run -> String in
+                    let translated = entry?.codeTranslations?.first { $0.id == run.id && $0.source == run.text }
+                    return paintable.contains(run.id) ? translated?.translation ?? run.text : run.text
+                }
+                let itemText = outputs.joined()
+                items.append(MirrorItem(id:itemID,translatedText:itemText,presentation:.translated,
+                    normalizedRect:normalized(pixel(paragraph.box.cgRect)),background:.lightBackground,foreground:.darkText))
+                for (index,run) in runs.enumerated() {
+                    let translated = entry?.codeTranslations?.first { $0.id == run.id && $0.source == run.text }
+                    let paint = paintable.contains(run.id)
+                    let lines: [AXLine] = run.pieces.compactMap { piece -> AXLine? in
+                        guard let box = piece.box, piece.status == "complete" else { return nil }
+                        return AXLine(text:piece.text,rangeStart:piece.rangeStart-run.rangeStart,rangeLength:piece.rangeLength,
+                            box:box,line:nil,segment:nil,segmentRangeStart:nil)
+                    }
+                    if paint {
+                        parts.append(.init(segment:run.id,text:outputs[index],lines:lines,fontLines:paragraph.lineRanges,
+                            source:sourceText,logical:nil,itemID:itemID,itemText:itemText,offset:offset,code:run))
+                    } else {
+                        for piece in run.pieces {
+                            guard let raw = piece.box, piece.status == "complete" else { continue }
+                            let box = pixel(raw.cgRect), text = piece.text as NSString
+                            var local = 0
+                            while local < text.length {
+                                let range = text.rangeOfComposedCharacterSequence(at:local)
+                                let r = CGRect(x:box.minX+box.width*CGFloat(local)/CGFloat(text.length),y:box.minY,
+                                    width:box.width*CGFloat(range.length)/CGFloat(text.length),height:box.height)
+                                if clips.contains(where: { $0.intersects(r) }) {
+                                    fragments.append(.init(itemID:itemID,text:text.substring(with:range),rect:r,
+                                        characterOffset:offset+piece.rangeStart-run.rangeStart+local))
+                                }
+                                local = NSMaxRange(range)
+                            }
                         }
-                    } catch { excluded("logical_line_mapping_"+String(describing:error),segment:segment); invalid = true; break }
-                } else {
-                    let translated = segment.flatMap { id in entry.segments?.first { $0.id == id } }
-                    let text = segment == nil ? entry.translation : translated?.translation
-                    guard (segment == nil ? entry.status : translated?.status) == "translated", let text else { excluded(translated?.status ?? entry.status,segment:segment); continue }
-                    parts.append(.init(segment:segment,text:text,lines:lines,fontLines:lines,source:source,logical:nil,itemID:itemID,itemText:text,offset:0))
+                        diagnostics.append(.init(node:paragraph.node,segment:run.id,
+                            status:run.translates ? (paintFailures[run.id] ?? (run.status != "complete" ? "code_geometry_unavailable" : translated?.status ?? "translation_pending")) : "preserved_source",
+                            box:pixel(paragraph.box.cgRect),sourceRangeStart:run.rangeStart,sourceRangeLength:run.rangeLength,
+                            lineBoxes:lines.map { pixel($0.box.cgRect) }))
+                    }
+                    offset += (outputs[index] as NSString).length
+                }
+            } else {
+                if newline(sourceText), entry?.logicalSegments == nil { excluded("logical_translation_unavailable"); continue }
+                guard let entry else { excluded("translation_pending"); continue }
+                if entry.status != "translated" && entry.segments?.contains(where: { $0.status == "translated" }) != true && entry.logicalSegments?.contains(where: { $0.status == "translated" }) != true { excluded(entry.status); continue }
+                let sources: [(Int?,String,[AXLine],String?)] = paragraph.inlineContent.map { content in
+                    content.filter { $0.kind == "text" }.map { ($0.id,$0.text ?? "",$0.lineRanges ?? [],$0.lineRangeStatus) }
+                } ?? [(nil,sourceText,paragraph.lineRanges,paragraph.lineRangeStatus)]
+                for (segment,source,lines,status) in sources {
+                    if let status, status != "complete_unverified" && status != "nonrendering_text" { excluded("line_"+status,segment:segment); invalid = true; break }
+                    let itemID = UUID()
+                    if let logical = entry.logicalSegments {
+                        let values = logical.filter { $0.sourcePart == segment }
+                        do {
+                            let mapping = try AXLogicalLines.split(source,lines:lines)
+                            guard values.count == mapping.count else { throw AXLogicalLines.Failure.textMismatch }
+                            let itemText = values.map { ($0.translation ?? $0.source)+$0.delimiter }.joined()
+                            var offset = 0
+                            for (value,map) in zip(values,mapping) {
+                                guard value.source == map.text, value.rangeStart == map.range.location,
+                                      value.rangeLength == map.range.length, value.delimiter == map.delimiter else { throw AXLogicalLines.Failure.textMismatch }
+                                if value.status == "translated", let text = value.translation, !text.isEmpty {
+                                    parts.append(.init(segment:segment,text:text,lines:map.lineIndices.map { lines[$0] },fontLines:lines,source:source,logical:value,itemID:itemID,itemText:itemText,offset:offset))
+                                } else { excluded(value.status,segment:segment) }
+                                offset += ((value.translation ?? value.source)+value.delimiter as NSString).length
+                            }
+                        } catch { excluded("logical_line_mapping_"+String(describing:error),segment:segment); invalid = true; break }
+                    } else {
+                        let translated = segment.flatMap { id in entry.segments?.first { $0.id == id } }
+                        let text = segment == nil ? entry.translation : translated?.translation
+                        guard (segment == nil ? entry.status : translated?.status) == "translated", let text else { excluded(translated?.status ?? entry.status,segment:segment); continue }
+                        parts.append(.init(segment:segment,text:text,lines:lines,fontLines:lines,source:source,logical:nil,itemID:itemID,itemText:text,offset:0))
+                    }
                 }
             }
             if invalid { continue }
             // Color belongs to the whole paragraph, including all text segments
             // around math. Sampling/selection happen once; only drawing is clipped.
-            guard let sample = AXRenderColors.backgroundSample(lines:parts.flatMap { $0.lines }.map { pixel($0.box.cgRect) },clips:clips),
-                  let sampledBackground = AXRenderColors.sampleBackground(in:image,pixelRect:sample.box,
-                    topEdge:sample.top,bottomEdge:sample.bottom) else {
-                excluded("background_sample_unavailable"); continue
-            }
-            let sourceIDs = paragraph.inlineContent.map { $0.filter { $0.kind == "text" }.flatMap { $0.sourceNodes ?? [] } }
-                ?? paragraph.lineSourceNodes ?? paragraph.members
-            let colors = AXRenderColors.select(background:sampledBackground,sourceIDs:sourceIDs,observations:observations)
             var addedItems = Set<UUID>()
-            var fontHeights: [Int:(Double,[AXFontHeight.Decision])] = [:]
+            if let codeItemID { addedItems.insert(codeItemID) }
             for part in parts {
+                let colorKey = part.code?.id ?? -1
+                let sample: AXRenderColors.BackgroundSample, colors: AXRenderColors
+                if let cached = colorCache[colorKey] { (sample,colors)=cached }
+                else {
+                    let sampleLines = part.code == nil ? parts.flatMap { $0.lines } : part.lines
+                    guard let selectedSample = AXRenderColors.backgroundSample(lines:sampleLines.map { pixel($0.box.cgRect) },clips:clips),
+                          let sampledBackground = AXRenderColors.sampleBackground(in:image,pixelRect:selectedSample.box,
+                            topEdge:selectedSample.top,bottomEdge:selectedSample.bottom) else { excluded("background_sample_unavailable",segment:part.segment); continue }
+                    let sourceIDs = paragraph.inlineContent.map { $0.filter { $0.kind == "text" }.flatMap { $0.sourceNodes ?? [] } }
+                        ?? paragraph.lineSourceNodes ?? paragraph.members
+                    let selectedColors = part.code.map { AXRenderColors.select(background:sampledBackground,sourceIDs:[],observations:[:],
+                        uniformOverride:$0.style.foregroundColor) } ?? AXRenderColors.select(background:sampledBackground,sourceIDs:sourceIDs,observations:observations)
+                    sample=selectedSample;colors=selectedColors;colorCache[colorKey]=(sample,colors)
+                }
                 let segment = part.segment, text = part.text, lines = part.lines
                 if newline(text) { excluded("translation_newline_unsupported",segment:segment); continue }
                 guard !lines.isEmpty, !text.isEmpty else { excluded("line_unavailable",segment:segment); continue }
                 let ids = paragraph.inlineContent?.first(where: { $0.id == segment })?.sourceNodes ?? paragraph.lineSourceNodes ?? paragraph.members
                 let nativeSource = part.source
                 var heightDecisions: [AXFontHeight.Decision] = []
-                let fontKey = segment ?? -1
+                let fontKey = part.code == nil ? segment ?? -1 : -2
                 let minHeight: Double
                 if let cached = fontHeights[fontKey] { minHeight = cached.0; heightDecisions = cached.1 }
                 else {
@@ -161,13 +249,21 @@ enum AXLineRendering {
                     fontHeights[fontKey] = (minHeight,heightDecisions)
                 }
                 guard minHeight >= 8, lines.allSatisfy({ $0.box.width.isFinite && $0.box.width > 0 && $0.box.height.isFinite }) else { excluded("insufficient_line_height",segment:segment); continue }
-                let rects = lines.map { pixel($0.box.cgRect) }
+                let originalRects = lines.map { pixel($0.box.cgRect) }
+                let rects = lines.map { line in
+                    pixel(Self.layoutBox(line.box.cgRect, expansionRight:part.code == nil && part.segment == nil ? paragraph.layoutExpansionRight : nil))
+                }
                 let fontProbe = CTFontCreateUIFontForLanguage(.system,1,nil)!
                 let fontHeight = CTFontGetAscent(fontProbe)+CTFontGetDescent(fontProbe)+max(0,CTFontGetLeading(fontProbe))
                 let fontSize = CGFloat(minHeight)*sy*0.98/fontHeight
-                let font = CTFontCreateCopyWithAttributes(fontProbe,fontSize,nil,nil)
-                let attr = NSAttributedString(string:text,attributes:[NSAttributedString.Key(kCTFontAttributeName as String):font,
-                    NSAttributedString.Key(kCTForegroundColorFromContextAttributeName as String):true])
+                var font = CTFontCreateCopyWithAttributes(fontProbe,fontSize,nil,nil)
+                var traits: CTFontSymbolicTraits = []
+                if part.code?.style.bold == true { traits.insert(.traitBold) }
+                if part.code?.style.italic == true { traits.insert(.traitItalic) }
+                if !traits.isEmpty, let styled = CTFontCreateCopyWithSymbolicTraits(font,fontSize,nil,traits,traits) { font=styled }
+                let attributes: [NSAttributedString.Key:Any] = [NSAttributedString.Key(kCTFontAttributeName as String):font,
+                    NSAttributedString.Key(kCTForegroundColorFromContextAttributeName as String):true]
+                let attr = NSAttributedString(string:text,attributes:attributes)
                 let typesetter = CTTypesetterCreateWithAttributedString(attr)
                 let string = text as NSString
                 func line(_ range: NSRange) -> CTLine { CTTypesetterCreateLine(typesetter,CFRange(location:range.location,length:range.length)) }
@@ -186,11 +282,15 @@ enum AXLineRendering {
                     clipRects += allowed
                     let area = allowed.reduce(CGFloat(0)) { $0+$1.width*$1.height }
                     clipped = clipped || area+0.01 < rect.width*rect.height
-                    for clip in allowed { bg?.setFillColor(colors.background.nsColor.cgColor); bg?.fill(clip) }
+                    for clip in allowed {
+                        bg?.setFillColor(colors.background.nsColor.cgColor)
+                        let sourceMask = clip.intersection(originalRects[index])
+                        if !sourceMask.isNull && !sourceMask.isEmpty { bg?.fill(sourceMask) }
+                    }
                     // Consume exactly one ordinary space at a soft-wrapped line start.
                     // Keep the original string/UTF-16 offsets; additional spaces, tabs and
                     // nonbreaking spaces retain their normal layout and selection geometry.
-                    if index > 0, location < string.length, string.character(at:location) == 0x20 {
+                    if part.code == nil, index > 0, location < string.length, string.character(at:location) == 0x20 {
                         hiddenWrapSpaceOffsets.append(location)
                         // A minimal selection anchor preserves copy/search continuity
                         // without drawing the space or advancing the text position.
@@ -229,6 +329,11 @@ enum AXLineRendering {
                     let ctLine = line(range)
                     let natural = CGFloat(CTLineGetTypographicBounds(ctLine,nil,nil,nil))
                     let scale = min(common,rect.width/max(0.0001,natural))
+                    let painted = CGRect(x:rect.minX,y:rect.minY,width:min(rect.width,natural*scale),height:rect.height)
+                    for clip in allowed {
+                        let translatedMask = clip.intersection(painted)
+                        if !translatedMask.isNull && !translatedMask.isEmpty { bg?.fill(translatedMask) }
+                    }
                     scales.append(Double(scale/common))
                     var ascent: CGFloat = 0, descent: CGFloat = 0
                     _ = CTLineGetTypographicBounds(ctLine,&ascent,&descent,nil)
@@ -239,6 +344,19 @@ enum AXLineRendering {
                         fg.translateBy(x:rect.minX,y:baseline); fg.scaleBy(x:scale,y:1)
                         fg.setFillColor(colors.foreground.nsColor.cgColor)
                         fg.textPosition = .zero; CTLineDraw(ctLine,fg)
+                        if part.code?.style.underline == true || part.code?.style.strikethrough == true {
+                            fg.setStrokeColor(colors.foreground.nsColor.cgColor)
+                            fg.setLineWidth(max(0.5,CTFontGetUnderlineThickness(font)))
+                            if part.code?.style.underline == true {
+                                let y = CTFontGetUnderlinePosition(font)
+                                fg.move(to:CGPoint(x:0,y:y));fg.addLine(to:CGPoint(x:natural,y:y))
+                            }
+                            if part.code?.style.strikethrough == true {
+                                let y = CTFontGetXHeight(font)*0.5
+                                fg.move(to:CGPoint(x:0,y:y));fg.addLine(to:CGPoint(x:natural,y:y))
+                            }
+                            fg.strokePath()
+                        }
                     }
                     fg?.restoreGState()
                     var offset = location
@@ -258,14 +376,17 @@ enum AXLineRendering {
                     items.append(MirrorItem(id:itemID,translatedText:part.itemText,presentation:.translated,
                         normalizedRect:normalized(pixel(paragraph.box.cgRect)),background:colors.background,foreground:colors.foreground))
                 }
-                diagnostics.append(.init(node:paragraph.node,segment:segment,status:"rendered",box:pixel(paragraph.box.cgRect),logicalIndex:part.logical?.logicalIndex,sourceRangeStart:part.logical?.rangeStart,sourceRangeLength:part.logical?.rangeLength,fontSize:Double(fontSize),commonScale:Double(common),lineScales:scales,hiddenWrapSpaceOffsets:hiddenWrapSpaceOffsets,clipped:clipped,lineBoxes:rects,heightRatio:(lines.map { $0.box.height }.max() ?? minHeight)/minHeight,
+                diagnostics.append(.init(node:paragraph.node,segment:segment,status:"rendered",box:pixel(paragraph.box.cgRect),logicalIndex:part.logical?.logicalIndex,sourceRangeStart:part.code?.rangeStart ?? part.logical?.rangeStart,sourceRangeLength:part.code?.rangeLength ?? part.logical?.rangeLength,fontSize:Double(fontSize),commonScale:Double(common),lineScales:scales,hiddenWrapSpaceOffsets:hiddenWrapSpaceOffsets,clipped:clipped,lineBoxes:rects,originalLineBoxes:originalRects,heightRatio:(lines.map { $0.box.height }.max() ?? minHeight)/minHeight,
                     selectedFontHeight:minHeight,fontHeightDecisions:heightDecisions,backgroundColor:[Double(colors.background.red),Double(colors.background.green),Double(colors.background.blue)],
                     foregroundColor:[Double(colors.foreground.red),Double(colors.foreground.green),Double(colors.foreground.blue)],
                     backgroundSample:sample,foregroundSource:colors.foregroundSource,foregroundContrast:colors.contrast))
             }
-            if entry.logicalSegments != nil {
+            if entry?.logicalSegments != nil || codeMode {
+                let order = Dictionary(uniqueKeysWithValues:items.enumerated().map { ($0.element.id,$0.offset) })
+                fragments.sort { $0.itemID == $1.itemID ? $0.characterOffset < $1.characterOffset : (order[$0.itemID] ?? 0) < (order[$1.itemID] ?? 0) }
                 // Attach real hard breaks to adjacent visible characters. They use
                 // no new hit boxes and preserve exact copy/search UTF-16 offsets.
+                let attachable = codeMode ? CharacterSet.whitespacesAndNewlines : CharacterSet.newlines
                 for item in items where addedItems.contains(item.id) {
                     let string = item.translatedText as NSString
                     let indices = fragments.indices.filter { fragments[$0].itemID == item.id }
@@ -278,9 +399,9 @@ enum AXLineRendering {
                         var prefix = ""
                         if position == 0, fragment.characterOffset > 0 {
                             let candidate = string.substring(to:fragment.characterOffset)
-                            if candidate.unicodeScalars.allSatisfy({ CharacterSet.newlines.contains($0) }) { prefix = candidate }
+                            if candidate.unicodeScalars.allSatisfy({ attachable.contains($0) }) { prefix = candidate }
                         }
-                        let suffix = gap.unicodeScalars.allSatisfy({ CharacterSet.newlines.contains($0) }) ? gap : ""
+                        let suffix = gap.unicodeScalars.allSatisfy({ attachable.contains($0) }) ? gap : ""
                         fragments[index] = .init(itemID:item.id,text:prefix+fragment.text+suffix,rect:fragment.rect,
                             characterOffset:fragment.characterOffset-(prefix as NSString).length)
                     }
@@ -293,13 +414,18 @@ enum AXLineRendering {
             case "rendered": color = d.clipped ? .orange : .systemGreen
             case "source_newline_unsupported", "translation_newline_unsupported": color = .systemPurple
             case "translation_pending": color = .systemGray
-            case "skipped_non_source_language", "preserved_by_policy", "nonrendering_text": color = .systemBlue
+            case "skipped_non_source_language", "preserved_by_policy", "nonrendering_text", "preserved_source": color = .systemBlue
             case "insufficient_line_height": color = .systemYellow
             default: color = .systemRed
             }
             debug?.setStrokeColor(color.cgColor); debug?.setLineWidth(2); debug?.stroke(d.box)
+            debug?.setStrokeColor(NSColor.systemPink.cgColor); debug?.setLineWidth(1)
+            for box in d.originalLineBoxes ?? [] { debug?.stroke(box) }
             debug?.setStrokeColor(NSColor.cyan.cgColor); debug?.setLineWidth(1)
-            for box in d.lineBoxes { debug?.stroke(box) }
+            for box in d.lineBoxes {
+                if d.status == "preserved_source" { debug?.setStrokeColor(NSColor.systemBlue.cgColor) }
+                debug?.stroke(box)
+            }
         }
         debug?.setStrokeColor(NSColor.orange.cgColor)
         for box in clipRects { debug?.stroke(box) }

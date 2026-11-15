@@ -6,13 +6,32 @@ import CoreText
 @testable import NotionAXCore
 
 final class AXLineRenderingTests: XCTestCase {
-    private func render(source: String = "日本語", translation: String = "한국어 👩‍💻 가나다라", heights: [Double] = [18,18], widths: [Double] = [60,60], clip: Bool = false, math: Bool = false, lineStatus: String? = nil, hidden: Bool = false, axRed: Bool = false, pixelScale: Double = 1, logical: Bool = false) throws -> AXRenderArtwork {
+    func testLayoutExpansionNeverShrinksOrMovesNativeLine() {
+        let box = CGRect(x:20,y:30,width:80,height:18)
+        XCTAssertEqual(AXLineRendering.layoutBox(box,expansionRight:150),CGRect(x:20,y:30,width:130,height:18))
+        XCTAssertEqual(AXLineRendering.layoutBox(box,expansionRight:50),box)
+        XCTAssertEqual(AXLineRendering.layoutBox(box,expansionRight:nil),box)
+    }
+    func testExpandedRenderingUsesCapacityAndPreservesOriginalGeometry() throws {
+        let artwork = try render(expansionRight:210)
+        let d = try XCTUnwrap(artwork.diagnostics.first { $0.status == "rendered" })
+        XCTAssertEqual(d.lineBoxes.map(\.width),[200,200])
+        XCTAssertEqual(d.originalLineBoxes?.map(\.width),[60,60])
+        let background = try XCTUnwrap(artwork.background)
+        let bytes = [UInt8](background.dataProvider!.data! as Data)
+        // The unused right edge of the expanded capacity must stay transparent.
+        XCTAssertEqual(bytes[20*background.bytesPerRow+205*4+3],0)
+        let math = try render(math:true,expansionRight:210)
+        XCTAssertEqual(math.diagnostics.first { $0.status == "rendered" }?.lineBoxes.map(\.width),[60,60])
+    }
+    private func render(source: String = "日本語", translation: String = "한국어 👩‍💻 가나다라", heights: [Double] = [18,18], widths: [Double] = [60,60], clip: Bool = false, math: Bool = false, lineStatus: String? = nil, hidden: Bool = false, axRed: Bool = false, pixelScale: Double = 1, logical: Bool = false, expansionRight: Double? = nil) throws -> AXRenderArtwork {
         let canvasHeight = max(200,heights.count*25+40)
         let ctx = CGContext(data:nil,width:300,height:canvasHeight,bitsPerComponent:8,bytesPerRow:0,space:CGColorSpaceCreateDeviceRGB(),bitmapInfo:CGImageAlphaInfo.premultipliedLast.rawValue)!
         ctx.setFillColor(NSColor.white.cgColor);ctx.fill(CGRect(x:0,y:0,width:300,height:canvasHeight))
         let box: [String:Double] = ["x":10,"y":10,"width":200,"height":Double(heights.count*25+30)]
         var paragraph: [String:Any] = ["node":1,"text":source,"lineSourceText":source,"lineRangeStatus":"complete_unverified","box":box,"members":[1],"isCodeBlock":false,"protectNonSourceText":false,
             "lineRanges":heights.enumerated().map { i,h in ["text":"日本語","rangeStart":i*3,"rangeLength":3,"box":["x":10.0,"y":10.0+Double(i)*25,"width":widths[i],"height":h]] as [String:Any] }]
+        paragraph["layoutExpansionRight"] = expansionRight
         var logicalEntries: [[String:Any]] = []
         if logical {
             let sourcePieces = AXLogicalLines.pieces(source)
@@ -45,6 +64,100 @@ final class AXLineRenderingTests: XCTestCase {
         let entry = try JSONDecoder().decode(AXParagraphTranslation.self,from:JSONSerialization.data(withJSONObject:payload))
         let restored = try AXExtractionSnapshot(nodes:snapshot.nodes,selected:snapshot.selected,paragraphs:snapshot.paragraphs,metadata:snapshot.metadata)
         return AXLineRendering.build(.init(frame:.init(snapshot:restored,image:ctx.makeImage()!,frameID:1,receivedAt:0),entries:[entry]))
+    }
+    private func renderCode(hidden:Bool = false, geometry:Bool = true, failed:Bool = false, wraps:Bool = false, decorated:Bool = false) throws -> AXRenderArtwork {
+        let source = "  x = \"日本語\";\n\n"
+        let box: [String:Double] = ["x":10,"y":10,"width":200,"height":wraps ? 43 : 18]
+        var runs: [[String:Any]] = []
+        var values: [[String:Any]] = []
+        for (id,part) in AXCodeTextSegments.split(source).enumerated() {
+            let length = part.text.trimmingCharacters(in:.newlines).utf16.count
+            var piece: [String:Any] = ["sourceNode":1,"rangeStart":part.range.location,"rangeLength":length,
+                "text":String(part.text.prefix(length)),"status":"complete",
+                "box":["x":10.0+Double(part.range.location)*8,"y":10.0,"width":Double(length)*8,"height":18.0]]
+            if part.translates && !geometry { piece.removeValue(forKey:"box");piece["status"]="bounds_unavailable" }
+            if wraps && part.range.location > 7 {
+                piece["box"]=["x":26.0,"y":35.0,"width":Double(length)*8,"height":18.0]
+            }
+            var pieces = [piece]
+            if wraps && part.translates {
+                var first = piece, second = piece
+                first["rangeLength"]=1;first["text"]="日";first["box"]=["x":66.0,"y":10.0,"width":8.0,"height":18.0]
+                second["sourceNode"]=2;second["rangeStart"]=part.range.location+1;second["rangeLength"]=2;second["text"]="本語"
+                second["box"]=["x":10.0,"y":35.0,"width":16.0,"height":18.0]
+                pieces=[first,second]
+            }
+            runs.append(["id":id,"rangeStart":part.range.location,"rangeLength":part.range.length,"text":part.text,
+                "translates":part.translates,"pieces":pieces,"status":part.translates && !geometry ? "partial" : "complete",
+                "style":["foregroundColorStatus":"uniform","foregroundColor":["red":0.7,"green":0,"blue":0,"alpha":1],"bold":true,"italic":decorated,"underline":decorated,"strikethrough":decorated]])
+            if part.translates {
+                var value: [String:Any] = ["id":id,"rangeStart":part.range.location,"rangeLength":part.range.length,"source":part.text,"status":failed ? "failed" : "translated"]
+                if !failed { value["translation"]="한국어 번역이 길어도 기호를 덮지 않습니다" }
+                values.append(value)
+            }
+        }
+        var paragraph: [String:Any] = ["node":1,"text":source,"lineSourceText":source,"lineRangeStatus":"complete_unverified","box":box,"members":[1],"lineSourceNodes":[1],"isCodeBlock":true,"protectNonSourceText":true,"codeSegments":runs,
+            "lineRanges":[["text":source,"rangeStart":0,"rangeLength":source.utf16.count,"box":["x":10.0,"y":10.0,"width":200.0,"height":18.0]]]]
+        if hidden { paragraph["visibleBoxes"]=[] as [[String:Double]] }
+        let snapshot = try AXExtractionSnapshot(nodes:[],selected:[],paragraphs:[paragraph],metadata:["status":"complete","selectionRegion":["x":0,"y":0,"width":300,"height":100]])
+        let payload: [String:Any] = ["provider":"test","node":1,"source":source,"sourceLanguage":"ja","targetLanguage":"ko","protectNonSourceText":true,"sourceLanguageEligible":true,"status":"translated","codeTranslations":values]
+        let entry = try JSONDecoder().decode(AXParagraphTranslation.self,from:JSONSerialization.data(withJSONObject:payload))
+        let ctx = CGContext(data:nil,width:300,height:100,bitsPerComponent:8,bytesPerRow:0,space:CGColorSpaceCreateDeviceRGB(),bitmapInfo:CGImageAlphaInfo.premultipliedLast.rawValue)!
+        ctx.setFillColor(NSColor.white.cgColor);ctx.fill(CGRect(x:0,y:0,width:300,height:100))
+        return AXLineRendering.build(.init(frame:.init(snapshot:snapshot,image:ctx.makeImage()!,frameID:1,receivedAt:0),entries:[entry]))
+    }
+    func testCodePaintsOnlyJapaneseAndCopiesMixedSourceExactly() throws {
+        let result = try renderCode()
+        let text = "  x = \"한국어 번역이 길어도 기호를 덮지 않습니다\";\n\n"
+        XCTAssertEqual(result.items.count,1)
+        XCTAssertEqual(result.items[0].translatedText,text)
+        XCTAssertEqual(result.fragments.map(\.text).joined(),text)
+        XCTAssertEqual(result.clipRects,[CGRect(x:66,y:72,width:24,height:18)])
+        XCTAssertTrue(result.diagnostics.contains { $0.status == "preserved_source" })
+        XCTAssertEqual(result.diagnostics.first(where: { $0.status == "rendered" })?.foregroundSource,"ax_uniform")
+        // Neither the mask nor translated glyphs may touch the original code syntax.
+        for image in [result.background!,result.text!] {
+            let bytes = [UInt8](image.dataProvider!.data! as Data)
+            for y in 0..<image.height { for x in 0..<image.width where x < 66 || x >= 90 {
+                XCTAssertEqual(bytes[y*image.bytesPerRow+x*4+3],0)
+            } }
+        }
+    }
+    func testCodeFailureAndInvisibleAreasNeverMaskSource() throws {
+        let failure = try renderCode(failed:true)
+        XCTAssertTrue(failure.clipRects.isEmpty)
+        XCTAssertEqual(failure.fragments.map(\.text).joined(),"  x = \"日本語\";\n\n")
+        XCTAssertTrue(try renderCode(geometry:false).clipRects.isEmpty)
+        let hidden = try renderCode(hidden:true)
+        XCTAssertTrue(hidden.fragments.isEmpty);XCTAssertTrue(hidden.clipRects.isEmpty)
+    }
+    func testCodeAcrossNodesAndSoftWrappedBoxesKeepsOneTranslationAndExactCopy() throws {
+        let result = try renderCode(wraps:true)
+        XCTAssertEqual(result.fragments.map(\.text).joined(),result.items[0].translatedText)
+        XCTAssertEqual(result.clipRects.count,2)
+        XCTAssertEqual(result.diagnostics.first(where: { $0.status == "rendered" })?.lineBoxes.count,2)
+        let styled = try renderCode(decorated:true), plain = try renderCode()
+        XCTAssertNotEqual(styled.text!.dataProvider!.data! as Data,plain.text!.dataProvider!.data! as Data)
+    }
+    @MainActor func testMixedCodeSelectionAndSearchUseNativeViewInBothPresentations() throws {
+        let artwork = try renderCode()
+        let ctx = CGContext(data:nil,width:300,height:100,bitsPerComponent:8,bytesPerRow:0,space:CGColorSpaceCreateDeviceRGB(),bitmapInfo:CGImageAlphaInfo.premultipliedLast.rawValue)!
+        let expected = artwork.items[0].translatedText
+        for outside in [true,false] {
+            let view = NativeTranslationMirrorView(frame:CGRect(x:0,y:0,width:300,height:100))
+            view.showsCapturedImage=true;view.fillsBackgroundOutsideImage=outside
+            view.setRenderingActive(true)
+            var frame = MirrorFrame(image:ctx.makeImage()!,translatedItems:artwork.items,frameID:1)
+            frame.axArtwork=artwork;view.frameSnapshot=frame
+            view.setSelectionModeActive(true);view.selectAll(nil)
+            XCTAssertEqual(view.clipboardText(),expected)
+            var matches = 0
+            view.onSearchCountChange = { count,_ in matches=count }
+            view.setSearch(query:"x =",caseSensitive:true,regex:false)
+            XCTAssertEqual(matches,1)
+            view.setSearch(query:"한국어",caseSensitive:true,regex:false)
+            XCTAssertEqual(matches,1)
+        }
     }
     func testFullTranslationSurvivesCompressionAndEmoji() throws {
         let text = String(repeating:"한국어👩‍💻",count:30)
