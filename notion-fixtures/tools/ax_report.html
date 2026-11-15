@@ -6,8 +6,14 @@ body{font:14px system-ui;margin:20px;line-height:1.6}button{cursor:pointer}nav{d
 <details id="collectionDetails" hidden><summary>실제 수집·스크린샷 시점</summary><pre id="collectionMetadata"></pre></details>
 <p id="coverageNote" role="status" hidden></p>
 <p>문단보기는 번역 단위 후보를 표시합니다: 본문 AXTextArea, 탭·DB 셀의 native 컨트롤 라벨, 그 외 선택 텍스트. 원문을 조합하지 않으며 의미상 문단을 보증하지 않습니다. 노드·라인은 현재 선택 결과이며 픽셀 가시성은 미검증입니다. 번호 클릭: 참조 복사 / 박스 클릭: 원문·소속 관계. 번호가 박스보다 클릭 우선입니다.</p>
-<nav aria-label="박스 보기"><button data-mode="paragraph" aria-pressed="true">문단보기</button><button data-mode="node" aria-pressed="false">노드보기</button><button data-mode="line" aria-pressed="false">라인보기</button><button data-mode="code" aria-pressed="false">코드 구간보기</button><button data-mode="none" aria-pressed="false">원본보기 (박스 없음)</button><button id="clear">소속 강조 해제</button><span id="count"></span></nav>
-<p id="modeNote"></p><div id="screen" class="screen"><img src="screen.png" alt="수집 시점 Notion 화면"></div>
+<nav aria-label="박스 보기"><button data-mode="paragraph" aria-pressed="true">문단보기</button><button data-mode="node" aria-pressed="false">노드보기</button><button data-mode="line" aria-pressed="false">라인보기</button><button data-mode="layout" aria-pressed="false">배치박스</button><button data-mode="display" aria-pressed="false">표시경계</button><button data-mode="container" hidden aria-pressed="false">박스 비교</button><button data-mode="code" aria-pressed="false">코드 구간보기</button><button data-mode="none" aria-pressed="false">원본보기 (박스 없음)</button><button id="clear">소속 강조 해제</button><span id="count"></span></nav>
+<p id="modeNote"></p><div id="geometryLayers" hidden>
+<label><input type="checkbox" data-layer="paragraph" checked>문단</label>
+<label><input type="checkbox" data-layer="node" checked>노드</label>
+<label><input type="checkbox" data-layer="line" checked>원본 라인</label>
+<label><input type="checkbox" data-layer="layout" checked>배치</label>
+<label><input type="checkbox" data-layer="display" checked>표시경계</label>
+<label><input type="checkbox" data-layer="cell" checked>셀</label></div><details id="containerStudyDetails" hidden><summary>텍스트 컨테이너 관측 목록</summary><p>문단·노드·원본 라인·실제 배치·표시 경계·셀을 선택하여 비교합니다. 배치 박스는 실제 렌더링에 성공한 결과만 표시합니다.</p><table><thead><tr><th>문단</th><th>원문</th><th>역할·출처</th><th>관측 상태</th></tr></thead><tbody id="containerStudyRows"></tbody></table></details><div id="screen" class="screen"><img src="screen.png" alt="수집 시점 Notion 화면"></div>
 <dialog id="detail"><button id="close">닫기</button> <button id="copyDetail">참조 복사</button><h2 id="heading"></h2><h3>원문</h3><pre id="text"></pre><section id="translationSection"><h3 id="translationHeading">번역문</h3><pre id="translation"></pre></section><div id="members"></div><details id="axDetails"><summary>AX 정보·선택 근거</summary><pre id="info"></pre></details><textarea id="reference" readonly aria-label="참조 정보" style="width:100%;height:60px"></textarea></dialog><div id="notice" role="status" hidden></div>
 <details><summary id="unresolvedTitle"></summary><p>문단보기에서는 아래 항목을 문단 박스로 그리지 않습니다. 노드 번호를 누르면 노드보기에서 상세를 확인합니다.</p><ul id="unresolved"></ul></details>
 <details><summary>현재 선택 노드 전체</summary><ul id="selected"></ul></details>
@@ -22,9 +28,14 @@ if((data.coverageLimitations||[]).includes('menu_background_not_exposed_by_ax'))
 
 if(data.collection?.collector){document.getElementById('collectionDetails').hidden=false;document.getElementById('collectionMetadata').textContent=JSON.stringify(data.collection,null,2);}
 const nodes=new Map(data.nodes.map(n=>[n.id,n])),selected=new Map(data.selected.map(n=>[n.node,n]));
-let mode='paragraph',current,focusMembers=[];
+let mode='paragraph',current,focusMembers=[],viewFrame=data.frame;
 Object.assign(screen.style,{width:data.frame.width+'px',height:data.frame.height+'px'});
 if(data.selectionRegion){const r=data.selectionRegion,b=document.createElement('div');b.dataset.selectionOverlay='true';Object.assign(b.style,{position:'absolute',pointerEvents:'none',border:'2px dashed purple',boxSizing:'border-box',left:(r.x-data.frame.x)+'px',top:(r.y-data.frame.y)+'px',width:r.width+'px',height:r.height+'px'});screen.append(b);}
+const containerStudy=data.tableContainerStudy||[];
+const studyByNode=new Map(containerStudy.map(r=>[r.node,r]));
+document.querySelector('[data-mode=container]').hidden=!containerStudy.length;
+const layouts=(data.layoutBoxes||[]).map(r=>({...data.paragraphs.find(p=>p.node===r.node),...r,kind:'layout',paragraphNode:r.node}));
+const displays=data.paragraphs.flatMap(p=>(p.displayBoxes??p.visibleBoxes??[p.box]).map(box=>({...p,box,kind:'display',paragraphNode:p.node})));
 const paragraphLines=data.paragraphs.flatMap(p=>(p.lineRanges||[]).map(l=>({...p,...l,kind:'line',paragraphNode:p.node})));
 const codeRanges=data.paragraphs.flatMap(p=>(p.codeSegments||[]).flatMap(run=>(run.pieces||[]).filter(piece=>piece.box).map(piece=>({...p,...piece,kind:'code',paragraphNode:p.node,codeRun:run.id,codeSegment:run}))));
 const lines=paragraphLines.length||data.nodes.some(n=>n.paragraphLineInvestigation)?paragraphLines:data.selected.flatMap(n=>(n.lineRanges||[]).map(l=>({...n,...l,kind:'line'})));
@@ -37,7 +48,7 @@ function related(c){return c.kind==='paragraph'||c.paragraphNode!==undefined?c.m
 function choose(c,targetMode){focusMembers=related(c);if(dialog.open)dialog.close();setMode(targetMode);}
 function action(label,callback){const b=document.createElement('button');b.textContent=label;b.onclick=callback;return b;}
 function show(c){current=c;const parent=parentOf(c),members=c.kind==='paragraph'?c.members:[c.node];
- document.getElementById('heading').textContent=data.scenario+' / '+(c.kind==='paragraph'?'문단 P'+c.node:c.kind==='line'?(c.paragraphNode!==undefined?'문단 P':'노드 ')+c.node+' / 라인 '+c.line:'노드 '+c.node);
+ document.getElementById('heading').textContent=(c.kind==='layout'?'실제 배치 박스 / ':c.kind==='display'?'표시 경계 / ':c.kind==='container'?'텍스트 컨테이너 · '+c.containerRole+' / ':'')+data.scenario+' / '+(c.kind==='paragraph'?'문단 P'+c.node:c.kind==='line'?(c.paragraphNode!==undefined?'문단 P':'노드 ')+c.node+' / 라인 '+c.line:'노드 '+c.node);
  document.getElementById('text').textContent=c.kind==='code'?c.codeSegment.text:c.text;
  document.getElementById('axDetails').open=false;
  const unit=c.kind==='paragraph'?c:parent,result=unit?.translationResult;
@@ -63,27 +74,45 @@ function show(c){current=c;const parent=parentOf(c),members=c.kind==='paragraph'
  }else if(parent){area.append(action('부모 문단 P'+parent.node,()=>{setMode('paragraph');show(parent);}));}
  const ownLines=lines.filter(l=>belongs(l,c));
  for(const line of ownLines)area.append(action('라인 '+line.node+'.'+line.line,()=>{choose(c,'line');show(line);}));
- document.getElementById('info').textContent=JSON.stringify({item:c,parentParagraph:parent?.node,rawAx:nodes.get(c.node)},null,2);
+ const study=studyByNode.get(unit?.node??c.node);
+ if(study){const note=document.createElement('p');note.textContent='컨테이너 조사: '+study.reason+' / '+study.containers.map(t=>t.role+' · '+t.source).join(', ');area.prepend(note);}
+ document.getElementById('info').textContent=JSON.stringify({tableContainerStudy:study,item:c,parentParagraph:parent?.node,rawAx:nodes.get(c.node)},null,2);
  if(!dialog.open)dialog.showModal();
 }
 function draw(c){
- const fragments=(c.kind==='line'||c.kind==='code')?[c.box]:(c.visibleBoxes||[c.box]);
+ const fragments=(['line','code','layout','display'].includes(c.kind))?[c.box]:(c.visibleBoxes||[c.box]);
  for(const f of fragments){drawBox(c,f);}
 }
 function drawBox(c,f){if(!f||f.width<=0||f.height<=0)return;
- const kind=c.kind||'node',box=document.createElement('button');box.className='box '+(kind==='paragraph'?'paragraph':kind==='line'?'line':c.textSource==='AXTitle'?'title-source':'');box.dataset.kind=kind;box.dataset.node=c.node;if(kind==='code'){box.style.borderColor=c.codeSegment.translates?'#16803c':'#245bd4';box.style.borderStyle=c.codeSegment.translates?'solid':'dashed';}
+ const kind=c.kind||'node',box=document.createElement('button');box.className='box '+(kind==='paragraph'?'paragraph':kind==='line'?'line':c.textSource==='AXTitle'?'title-source':'');box.dataset.kind=kind;if(kind==='container'){box.style.border='2px solid #d946ef';box.style.zIndex=4;}if(kind==='layout'){box.style.border='2px solid #00a5a5';}if(kind==='display'){box.style.border='2px dashed #a500d6';}if(kind==='cell'){box.style.border='2px dashed #e58a00';box.style.pointerEvents='none';}if(c.studyParagraph){box.style.border='1px dashed #16803c';box.style.pointerEvents='none';}if(c.studyLine){box.style.pointerEvents='none';box.style.opacity='.75';}box.dataset.node=c.node;if(kind==='code'){box.style.borderColor=c.codeSegment.translates?'#16803c':'#245bd4';box.style.borderStyle=c.codeSegment.translates?'solid':'dashed';}
  if(focusMembers.includes(c.node)||((kind==='paragraph'||c.paragraphNode!==undefined)&&c.members.some(id=>focusMembers.includes(id))))box.classList.add('related');
- Object.assign(box.style,{left:(f.x-data.frame.x)+'px',top:(f.y-data.frame.y)+'px',width:f.width+'px',height:f.height+'px'});
- box.setAttribute('aria-label',(kind==='paragraph'?'문단 ':kind==='line'?'라인 ':'노드 ')+c.node+(kind==='line'?'.'+c.line:'')+' 상세');box.onclick=()=>show(c);screen.append(box);
- const label=document.createElement('button');label.className='number '+(kind==='paragraph'?'paragraph':kind==='line'?'line':'');label.textContent=kind==='paragraph'?'P'+c.node:kind==='line'?(c.paragraphNode!==undefined?'P':'')+c.node+'.'+c.line:c.node;label.title='참조 복사';Object.assign(label.style,{left:box.style.left,top:box.style.top});label.onclick=e=>{e.stopPropagation();copy(c);};screen.append(label);
+ Object.assign(box.style,{left:(f.x-viewFrame.x)+'px',top:(f.y-viewFrame.y)+'px',width:f.width+'px',height:f.height+'px'});
+ box.setAttribute('aria-label',(kind==='layout'?'배치 ':kind==='display'?'표시 경계 ':kind==='paragraph'?'문단 ':kind==='line'?'라인 ':'노드 ')+c.node+(kind==='line'?'.'+c.line:'')+' 상세');box.onclick=()=>show(c);screen.append(box);
+ if(kind==='cell'||c.studyLine||c.studyParagraph||c.comparison)return;
+ const label=document.createElement('button');label.className='number '+(kind==='paragraph'?'paragraph':kind==='line'?'line':'');label.textContent=kind==='layout'?'B'+c.node+'.'+c.line:kind==='display'?'D'+c.node:kind==='container'?'T'+c.node:kind==='paragraph'?'P'+c.node:kind==='line'?(c.paragraphNode!==undefined?'P':'')+c.node+'.'+c.line:c.node;label.title='참조 복사';if(kind==='container')label.style.color='#d946ef';Object.assign(label.style,{left:box.style.left,top:box.style.top});label.onclick=e=>{e.stopPropagation();copy(c);};screen.append(label);
 }
-function setMode(value){mode=value;screen.querySelectorAll('button').forEach(b=>b.remove());document.querySelectorAll('[data-mode]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.mode===mode)));
- screen.querySelectorAll('[data-selection-overlay]').forEach(b=>b.hidden=mode==='none');
- const items=mode==='none'?[]:mode==='paragraph'?data.paragraphs:mode==='line'?lines:mode==='code'?codeRanges:data.selected.map(c=>({...c,kind:'node'}));items.forEach(draw);
- document.getElementById('count').textContent=mode==='none'?'':(mode==='paragraph'?'문단 후보 ':mode==='line'?'라인 ':mode==='code'?'코드 구간 조각 ':'선택 노드 ')+items.length+'개';
+function setMode(value){mode=value;const capture=['container','layout','display'].includes(mode)?data.containerStudyCapture:null;viewFrame=capture?.frame??data.frame;Object.assign(screen.style,{width:viewFrame.width+'px',height:viewFrame.height+'px'});screen.querySelector('img').src=capture?.image??'screen.png';screen.querySelectorAll('button').forEach(b=>b.remove());document.querySelectorAll('[data-mode]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.mode===mode)));
+ screen.querySelectorAll('[data-selection-overlay]').forEach(b=>b.hidden=['none','container','layout','display'].includes(mode));
+ const items=(mode==='none'||mode==='container')?[]:mode==='paragraph'?data.paragraphs:mode==='layout'?layouts:mode==='display'?displays:mode==='line'?lines:mode==='code'?codeRanges:data.selected.map(c=>({...c,kind:'node'}));if(mode==='container'){
+ const enabled=k=>document.querySelector('[data-layer='+k+']').checked;
+ for(const p of data.paragraphs){
+  const r=studyByNode.get(p.node);
+  const add=(k,c,b)=>{if(enabled(k))drawBox({...c,comparison:true},b);};
+  add('cell',{...p,kind:'cell'},r?.cellBox);
+  add('paragraph',{...p,kind:'paragraph',paragraphNode:p.node},p.box);
+  for(const id of p.members){const n=nodes.get(id);if(n?.role==='AXStaticText')add('node',{...p,kind:'node',paragraphNode:p.node},n.frame);}
+  for(const l of lines.filter(l=>l.paragraphNode===p.node))add('line',l,l.box);
+  for(const l of layouts.filter(l=>l.node===p.node))add('layout',l,l.box);
+  for(const d of displays.filter(d=>d.node===p.node))add('display',d,d.box);
+ }
+}else items.forEach(draw);
+ document.getElementById('geometryLayers').hidden=mode!=='container';
+ document.getElementById('containerStudyDetails').hidden=mode!=='container';
+ document.getElementById('count').textContent=mode==='container'?'조사 문단 '+containerStudy.length+'개 / 컨테이너 관측 '+containerStudy.filter(r=>r.status==='observed').length+'개':mode==='none'?'':(mode==='paragraph'?'문단 후보 ':mode==='layout'?'실제 배치 박스 ':mode==='display'?'표시 경계 ':mode==='line'?'라인 ':mode==='code'?'코드 구간 조각 ':'선택 노드 ')+items.length+'개';
  const missing=data.paragraphs.filter(c=>!(c.lineRanges||[]).length).length;
- document.getElementById('modeNote').textContent=mode==='code'?'초록 실선: 일본어 번역 구간 / 파랑 점선: 원문 유지·선택용 구간. 클릭하면 구간·서식·조회 상태를 확인합니다.':mode==='none'?'박스·번호·선택 영역 표시 없이 수집 시점의 원본 화면만 표시합니다.':mode==='paragraph'?'초록: 번역 단위 후보의 native 박스(본문·탭·DB·독립 텍스트). 문단 미분류 '+data.unresolved.length+'개는 아래 목록에서 확인합니다. 화면 밖 박스는 화면 경계에서 잘라 표시하며 원문은 유지합니다.':mode==='line'?'파랑: 문단에 속한 표시용 라인입니다. 라인이 없는 문단 '+missing+'개는 문단보기에서 확인하세요. 노드 박스를 라인으로 대체 표시하지 않습니다.':'빨강: 선택 노드 박스 / 주황 점선: AXTitle 컨트롤 박스. 라인·문단 후보와 별개입니다.';
+ document.getElementById('modeNote').textContent=mode==='layout'?'청록: 실제 렌더러의 라인 배치 박스입니다. 렌더링 성공 결과가 없는 문단은 표시하지 않습니다.':mode==='display'?'보라 점선: 문단의 최종 표시 경계입니다. 캡처 영역 밖은 화면에서 잘립니다.':mode==='container'?'초록: 문단 / 빨강: 노드 / 파랑: 원본 라인 / 청록: 실제 배치 / 보라 점선: 표시경계 / 주황 점선: 셀. 체크박스로 개별 비교할 수 있습니다. '+(data.containerStudyCapture?'배경은 실제 수집 캡처입니다.':'배경은 별도 시점 재생 캡처입니다.'):mode==='code'?'초록 실선: 일본어 번역 구간 / 파랑 점선: 원문 유지·선택용 구간. 클릭하면 구간·서식·조회 상태를 확인합니다.':mode==='none'?'박스·번호·선택 영역 표시 없이 수집 시점의 원본 화면만 표시합니다.':mode==='paragraph'?'초록: 번역 단위 후보의 native 박스(본문·탭·DB·독립 텍스트). 문단 미분류 '+data.unresolved.length+'개는 아래 목록에서 확인합니다. 화면 밖 박스는 화면 경계에서 잘라 표시하며 원문은 유지합니다.':mode==='line'?'파랑: 문단에 속한 표시용 라인입니다. 라인이 없는 문단 '+missing+'개는 문단보기에서 확인하세요. 노드 박스를 라인으로 대체 표시하지 않습니다.':'빨강: 선택 노드 박스 / 주황 점선: AXTitle 컨트롤 박스. 라인·문단 후보와 별개입니다.';
 }
+document.querySelectorAll('[data-layer]').forEach(b=>b.onchange=()=>setMode('container'));
 document.querySelectorAll('[data-mode]').forEach(b=>b.onclick=()=>setMode(b.dataset.mode));document.getElementById('clear').onclick=()=>{focusMembers=[];setMode(mode);};
 document.getElementById('close').onclick=()=>dialog.close();document.getElementById('copyDetail').onclick=()=>copy(current);
 dialog.onclick=e=>{if(e.target===dialog){const r=dialog.getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)dialog.close();}};
@@ -91,7 +120,9 @@ document.getElementById('unresolvedTitle').textContent='문단 미분류 '+data.
 for(const r of data.unresolved){const li=document.createElement('li');li.append(action('노드 '+r.node,()=>{setMode('node');show({...selected.get(r.node),kind:'node'});}),' — '+r.reason);document.getElementById('unresolved').append(li);}
 for(const c of data.selected){const li=document.createElement('li');const p=parentOf(c);li.textContent=c.node+': '+c.text+' / '+(p?.lineMethod?'문단 P'+p.node+' · '+(p.lineRangeStatus||'라인 미취득'):(c.lineRangeStatus||'라인 미취득'));document.getElementById('selected').append(li);}
 for(const n of data.nodes){if(!n.value&&!n.title)continue;const tr=document.createElement('tr');for(const text of [n.id,n.role,n.value||n.title,(n.decision||'')+' / '+(n.decisionReason||'')]){const td=document.createElement('td');td.textContent=text;tr.append(td);}document.getElementById('raw').append(tr);}
+for(const r of containerStudy){const p=data.paragraphs.find(p=>p.node===r.node),tr=document.createElement('tr');const first=document.createElement('td');first.append(action('P'+r.node,()=>{focusMembers=p.members;setMode('container');screen.scrollIntoView({block:'center'});}));tr.append(first);for(const value of [(r.scope==='table'?'[표] ':'[본문 등] ')+p.text,r.containers.map(t=>t.role+' / '+t.source).join(' · ')||'관측 없음',r.reason]){const td=document.createElement('td');td.textContent=value;tr.append(td);}document.getElementById('containerStudyRows').append(tr);}
 setMode(mode);
-function followHash(){const q=new URLSearchParams(location.hash.slice(1));if(q.has('paragraph')){const id=Number(q.get('paragraph'));const c=q.has('line')?lines.find(l=>l.paragraphNode===id&&l.line===Number(q.get('line'))):data.paragraphs.find(p=>p.node===id);if(c){setMode(q.has('line')?'line':'paragraph');show(c);}}else if(q.has('node')){const id=Number(q.get('node'));const c=q.has('line')?lines.find(l=>l.node===id&&l.line===Number(q.get('line'))):selected.get(id);if(c){setMode(q.has('line')?'line':'node');show(c);}else notify('현재 선택 결과에 없는 참조입니다');}}
+function followHash(){const q=new URLSearchParams(location.hash.slice(1));if(q.get('view')==='container'){setMode('container');window.scrollTo({top:Math.max(0,screen.offsetTop-document.querySelector('nav').offsetHeight-65)});}if(q.has('paragraph')){const id=Number(q.get('paragraph'));const c=q.has('line')?lines.find(l=>l.paragraphNode===id&&l.line===Number(q.get('line'))):data.paragraphs.find(p=>p.node===id);if(c){setMode(q.has('line')?'line':'paragraph');show(c);}}else if(q.has('node')){const id=Number(q.get('node'));const c=q.has('line')?lines.find(l=>l.node===id&&l.line===Number(q.get('line'))):selected.get(id);if(c){setMode(q.has('line')?'line':'node');show(c);}else notify('현재 선택 결과에 없는 참조입니다');}}
 window.addEventListener('hashchange',followHash);followHash();
+window.addEventListener('load',()=>{if(new URLSearchParams(location.hash.slice(1)).get('view')==='container')window.scrollTo({top:Math.max(0,screen.offsetTop-document.querySelector('nav').offsetHeight-65)});});
 </script></html>

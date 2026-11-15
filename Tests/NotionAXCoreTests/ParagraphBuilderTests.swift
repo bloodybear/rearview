@@ -24,8 +24,61 @@ final class ParagraphBuilderTests: XCTestCase {
                 ["id":1,"parent":0,"role":"AXTextArea","value":"日本語","frame":f],
                 ["id":2,"parent":1,"role":"AXStaticText","value":"日本語","frame":f]]
             let result = AXParagraphBuilder.build(nodes:nodes,selected:[["node":2,"text":"日本語","textSource":"AXValue","box":f]])
-            XCTAssertEqual(result[0]["layoutExpansionRight"] as? Double,kind == "notion-text-block" ? 110 : nil)
+            XCTAssertEqual(result[0]["layoutExpansionRight"] as? Double,kind != "notion-code-block" ? 110 : nil)
         }
+    }
+    func testVerifiedParentChangesBoxWithoutChangingTextIdentity() {
+        let source: [String:Double] = ["x":18,"y":22,"width":20,"height":17]
+        let area: [String:Double] = ["x":18,"y":20,"width":180,"height":21]
+        let control: [String:Double] = ["x":10,"y":10,"width":200,"height":40]
+        for verified in [false,true] {
+            let nodes: [[String:Any]] = [
+                ["id":0,"role":"AXButton","frame":control],
+                ["id":1,"role":"AXStaticText","controlTextOwner":0,"frame":source,
+                 "ownershipParentFrames":[["role":"AXGroup","frame":area,"singleTextOwnerVerified":verified]]]]
+            let unit = AXParagraphBuilder.build(nodes:nodes,selected:[["node":1,"text":"日本語","textSource":"AXValue","controlTextOwner":0,"box":source]])[0]
+            XCTAssertEqual(unit["node"] as? Int,1)
+            XCTAssertEqual(unit["text"] as? String,"日本語")
+            XCTAssertEqual(unit["members"] as? [Int],[1])
+            XCTAssertEqual(unit["box"] as? [String:Double],verified ? area : source)
+            XCTAssertEqual(unit["layoutExpansionRight"] as? Double,verified ? 198 : nil)
+            XCTAssertNil(unit["displayBoxes"])
+        }
+    }
+    func testOnlyNodeOverflowExtendsToCellEvenWhenTextEndsBeforeCellEdge() {
+        let area: [String:Double] = ["x":18,"y":20,"width":180,"height":21]
+        let cell: [String:Double] = ["x":10,"y":10,"width":200,"height":40]
+        for width in [179.0,180.0,187.0,192.0] {
+            let source: [String:Double] = ["x":18,"y":22,"width":width,"height":17]
+            let nodes: [[String:Any]] = [
+                ["id":2,"role":"AXGroup","domClasses":["notion-table-view-cell"],"frame":cell],
+                ["id":0,"parent":2,"role":"AXButton","frame":cell],
+                ["id":1,"role":"AXStaticText","controlTextOwner":0,"frame":source,
+                 "ownershipParentFrames":[["role":"AXGroup","frame":area,"singleTextOwnerVerified":true]],
+                 "paragraphLineInvestigation":["lineRanges":[["box":["x":18.0,"y":22.0,"width":900.0,"height":17.0]]]]]]
+            let unit = AXParagraphBuilder.build(nodes:nodes,selected:[["node":1,"text":"日本語","textSource":"AXValue","controlTextOwner":0,"box":source]])[0]
+            XCTAssertEqual(unit["box"] as? [String:Double],area)
+            XCTAssertEqual(unit["layoutExpansionRight"] as? Double,width > 180 ? 210 : 198)
+            XCTAssertEqual(unit["displayBoxes"] as? [[String:Double]],width > 180 ? [["x":18,"y":20,"width":192,"height":21]] : nil)
+            XCTAssertEqual((unit["lineRanges"] as! [[String:Any]])[0]["box"] as? [String:Double],["x":18,"y":22,"width":900,"height":17])
+        }
+    }
+    func testCellOverflowExtendsDisplayAndAppliesHeaderAndPreviewClipping() {
+        let source: [String:Double] = ["x":18,"y":22,"width":187,"height":17]
+        let area: [String:Double] = ["x":18,"y":20,"width":180,"height":21]
+        let control: [String:Double] = ["x":10,"y":10,"width":200,"height":40]
+        let nodes: [[String:Any]] = [
+            ["id":2,"role":"AXGroup","domClasses":["notion-table-view-cell"],"frame":control],
+            ["id":0,"parent":2,"role":"AXButton","frame":control],
+            ["id":1,"role":"AXStaticText","controlTextOwner":0,"frame":source,
+             "ownershipParentFrames":[["role":"AXGroup","frame":area,"singleTextOwnerVerified":true]]]]
+        let unit = AXParagraphBuilder.build(nodes:nodes,selected:[[
+            "node":1,"text":"日本語","textSource":"AXValue","controlTextOwner":0,"box":source,
+            "tableHeaderOcclusion":["headerFrame":["x":0.0,"y":0.0,"width":300.0,"height":25.0]],
+            "previewOcclusions":[["panelFrame":["x":205.0,"y":0.0,"width":100.0,"height":100.0]]]]])[0]
+        let masks = unit["displayBoxes"] as! [[String:Double]]
+        XCTAssertEqual(masks,[["x":18,"y":25,"width":187,"height":16]])
+        XCTAssertEqual(unit["layoutExpansionRight"] as? Double,210)
     }
     func testCancellationBeforeQueueWork() async {
         let provider = NativeSessionAXProvider()

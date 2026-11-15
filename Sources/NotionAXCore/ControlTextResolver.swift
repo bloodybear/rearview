@@ -11,6 +11,7 @@ package final class ControlTextResolver: AXTextAccess {
         let source: String
         let frame: CGRect
         let method: String
+        let parentFrames: [Entry]
     }
     struct Result {
         var texts: [Text] = []
@@ -19,6 +20,10 @@ package final class ControlTextResolver: AXTextAccess {
         var complete = true
     }
 
+    private var verifyTextParents = false
+    private var parentValidationCalls = 0
+    private var parentValidationSeconds = 0.0
+    private var groupChildren: [AXUIElement: [AXUIElement]] = [:]
     private var observations: [AXUIElement: Entry] = [:]
 
     private func observation(_ element: AXUIElement) -> Entry {
@@ -44,6 +49,7 @@ package final class ControlTextResolver: AXTextAccess {
             }
         }
         let parent = asElement(data["AXParent"] as CFTypeRef?)
+        var parentFrames: [Entry] = []
         if !internalOwnership {
             var ancestor = parent
             var belongsToOwner = false
@@ -51,6 +57,24 @@ package final class ControlTextResolver: AXTextAccess {
                 guard let current = ancestor else { break }
                 if CFEqual(current, owner) { belongsToOwner = true; break }
                 let info = observation(current)
+                // Retain frames already read for ownership and paragraph geometry.
+                // Ignored AX parents may be absent from the exported child tree.
+                if let role = info["AXRole"] as? String,
+                   let f = asRect(info["AXFrame"] as CFTypeRef?) {
+                    var saved: Entry = ["role":role,"frame":rect(f)]
+                    if role == "AXGroup", verifyTextParents {
+                        if groupChildren[current] == nil {
+                            let started = Date()
+                            groupChildren[current] = get(current,"AXChildren") as? [AXUIElement] ?? []
+                            parentValidationCalls += 1
+                            parentValidationSeconds += Date().timeIntervalSince(started)
+                        }
+                        let children = groupChildren[current] ?? []
+                        groupChildren[current] = children
+                        saved["singleTextOwnerVerified"] = children.count == 1 && CFEqual(children[0],element)
+                    }
+                    parentFrames.append(saved)
+                }
                 if ["AXButton", "AXPopUpButton", "AXRadioButton", "AXWebArea", "AXWindow"]
                     .contains(info["AXRole"] as? String ?? "") { break }
                 ancestor = asElement(info["AXParent"] as CFTypeRef?)
@@ -68,7 +92,7 @@ package final class ControlTextResolver: AXTextAccess {
         guard !source.isEmpty, let frame = asRect(data["AXFrame"] as CFTypeRef?),
               !rectArray(frame).isEmpty else { return nil }
         return Text(element: element, parent: parent, value: value, title: title,
-                    source: source, frame: frame, method: method)
+                    source: source, frame: frame, method: method, parentFrames: parentFrames)
     }
 
     private func fromMarker(_ raw: CFTypeRef?, owner: AXUIElement, method: String) -> Text? {
@@ -191,6 +215,7 @@ extension ControlTextResolver {
             while let id = p { ancestors.append(id); p = rows[id]["parent"] as? Int }
             let classes = ancestors.flatMap { rows[$0]["domClasses"] as? [String] ?? [] }
             let internalText = (rows[owner]["surfaceKind"] as? String == "sidebar" && rows[owner]["role"] as? String == "AXRadioButton") || (rows[owner]["role"] as? String == "AXButton" && classes.contains("notion-code-block"))
+            verifyTextParents = classes.contains("notion-table-view-cell")
             let ownerFrame = frame(rows[owner])!
             let neighbors = rows[owner]["surfaceKind"] as? String == "tabbar" ? controls.filter { $0 != owner && frame(rows[$0]).map { ownerFrame.contains($0) } == true }.map { elements[$0] } : []
             let before = queryCount
@@ -211,6 +236,7 @@ extension ControlTextResolver {
                 if let existing = ids[text.element], output.contains(where: { $0["node"] as? Int == existing }) || candidates.contains(where: { $0["node"] as? Int == existing && $0["textSource"] as? String != "AXTitle" }) { continue }
                 let id = ids[text.element] ?? rows.count
                 var row: Entry = ["id":id,"role":"AXStaticText","value":text.value,"title":text.title,"frame":box(text.frame),"controlTextOwner":owner,"textDiscovery":text.method,"recoveredText":text.source]
+                row["ownershipParentFrames"] = text.parentFrames
                 if let parent=text.parent, let parentID=ids[parent] { row["parent"] = parentID }
                 for key in ["surfaceKind","surfaceViewport","onscreenSelection"] { row[key] = rows[owner][key] }
                 let reason = filterTiny && (text.frame.width <= 1 || text.frame.height <= 1) ? "text_extent_at_most_1pt" : (!text.frame.intersects(ownerFrame) ? "text_outside_owning_control" : "selected_recovered_static_text")
@@ -222,6 +248,6 @@ extension ControlTextResolver {
             }
         }
         candidates = output
-        return ["resolvedControls":resolved,"calls":queryCount,"elapsed":Date().timeIntervalSince(started)]
+        return ["resolvedControls":resolved,"calls":queryCount,"elapsed":Date().timeIntervalSince(started),"parentValidationCalls":parentValidationCalls,"parentValidationSeconds":parentValidationSeconds]
     }
 }

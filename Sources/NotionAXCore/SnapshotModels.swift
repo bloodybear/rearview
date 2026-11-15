@@ -34,11 +34,14 @@ public struct AXParagraph: Codable, Sendable {
     public let lineSourceNodes: [Int]?
     public let lineSourceText, lineRangeStatus, lineMethod: String?
     public let inlineContent: [AXInlineContent]?
+    /// Optional cell-overflow display boundary, after all occlusion clipping.
+    public var displayBoxes: [AXBox]? = nil
     public var layoutExpansionRight: Double? = nil
     public var codeSegments: [AXCodeSegment]? = nil
     public let isCodeBlock, protectNonSourceText: Bool
 }
 extension AXParagraph {
+    public var displayRegions: [AXBox] { displayBoxes ?? visibleBoxes ?? [box] }
     /// Only source backed by the native line collection may cross the translation boundary.
     public var translationSourceText: String? {
         guard lineRangeStatus == "complete_unverified" else { return nil }

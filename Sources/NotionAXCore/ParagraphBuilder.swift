@@ -43,12 +43,51 @@ public enum AXParagraphBuilder {
                     }
                 }
             }
+            // A verified text parent changes geometry only, never paragraph identity.
+            var resolved = type == "native_textarea"
+            if type == "selected_text",
+               let parents = byID[id]?["ownershipParentFrames"] as? [[String:Any]],
+               let group = parents.first(where:{ $0["role"] as? String == "AXGroup" }),
+               group["singleTextOwnerVerified"] as? Bool == true {
+                let proposed = box(group["frame"])
+                if proposed.width > 1, proposed.height > 1,
+                   let control = byID[id]?["controlTextOwner"] as? Int,
+                   box(byID[control]?["frame"]).contains(proposed) {
+                    frame = proposed; resolved = true
+                }
+            }
+            if type == "native_control",
+               ancestors(id).contains(where: { (byID[$0]?["domClasses"] as? [String] ?? []).contains("notion-table-view-cell") }),
+               let groupID = ancestors(id).prefix(while: { $0 != owner }).first(where: { byID[$0]?["role"] as? String == "AXGroup" }) {
+                let children = nodes.filter { $0["parent"] as? Int == groupID }
+                let selectedIDs = Set(selected.compactMap { $0["node"] as? Int })
+                let proposed = box(byID[groupID]?["frame"])
+                if !children.isEmpty, children.allSatisfy({ $0["role"] as? String == "AXStaticText" && selectedIDs.contains($0["id"] as! Int) }),
+                   proposed.width > 1, proposed.height > 1, box(byID[owner]?["frame"]).contains(proposed) {
+                    frame = proposed; resolved = true
+                }
+            }
             if units[owner] == nil {
                 order.append(owner)
                 units[owner] = ["node":owner,"kind":"paragraph","text":text,"box":rect(frame),"members":[Int](),"unitType":type,
                     "status":"translation_unit_candidate_unverified","source":source+" / native frame","semanticParagraphConfirmed":false]
             }
             var unit = units[owner]!
+            if resolved { unit["resolvedTextArea"] = true; unit["layoutExpansionRight"] = Double(frame.maxX) }
+            // The node frame (not the unbounded line range) proves that text
+            // paints past this group. Its end is evidence, not the capacity limit.
+            if resolved, type != "native_textarea",
+               let cellID = ancestors(id).first(where: { (byID[$0]?["domClasses"] as? [String] ?? []).contains("notion-table-view-cell") }) ??
+                    (byID[id]?["controlTextOwner"] as? Int).flatMap({ control in
+                        ancestors(control).first(where: { (byID[$0]?["domClasses"] as? [String] ?? []).contains("notion-table-view-cell") })
+                    }) {
+                let nodeFrame = box(byID[id]?["frame"]), cellFrame = box(byID[cellID]?["frame"])
+                if byID[id]?["role"] as? String == "AXStaticText",
+                   nodeFrame.maxX > frame.maxX + 0.5, cellFrame.maxX > frame.maxX,
+                   nodeFrame.minX >= cellFrame.minX - 0.5, nodeFrame.maxX <= cellFrame.maxX + 0.5 {
+                    unit["cellExpansionRight"] = Double(cellFrame.maxX)
+                }
+            }
             unit["members"] = (unit["members"] as! [Int]) + [id]
             var current: Int? = id, code = false, visited = Set<Int>()
             while let n = current, let row = byID[n], visited.insert(n).inserted {
@@ -59,7 +98,7 @@ public enum AXParagraphBuilder {
             unit["protectNonSourceText"] = unit["isCodeBlock"]
             for (key, panelKey) in [("timelineOcclusion","panelFrame"),("timelineHeaderOcclusion","headerFrame"),("tableHeaderOcclusion","headerFrame")] {
                 if let occlusion = candidate[key] as? [String: Any] {
-                    if unit["originalBox"] == nil { unit["originalBox"] = type == "selected_text" ? candidate["originalBox"] ?? rect(frame) : rect(frame) }
+                    if unit["originalBox"] == nil { unit["originalBox"] = rect(frame) }
                     unit[key] = occlusion
                     let original = box(unit["originalBox"]), panel = box(occlusion[panelKey])
                     let clipped = key == "timelineOcclusion" ? TimelineClipping.visibleBox(original, behind:panel) : StickyHeaderClipping.belowHeader(box(unit["box"]), header:panel)
@@ -87,18 +126,8 @@ public enum AXParagraphBuilder {
             if unit["lineRangeStatus"] as? String == "complete_unverified" {
                 unit["translationSourceText"] = (unit["inlineContent"] as? [[String:Any]]).map { $0.filter { $0["kind"] as? String == "text" }.map { $0["text"] as? String ?? "" }.joined() } ?? unit["lineSourceText"]
             }
-            // Only a plain text block's native editable area is a layout container.
-            // Controls, table cells and text/math subranges must retain native capacity.
-            let chain = [id] + ancestors(id)
-            let block = chain.compactMap { byID[$0] }.first {
-                ($0["domClasses"] as? [String] ?? []).contains("notion-selectable")
-            }
-            if unit["unitType"] as? String == "native_textarea",
-               (block?["domClasses"] as? [String] ?? []).contains("notion-text-block"),
-               unit["isCodeBlock"] as? Bool != true,
-               unit["inlineContent"] == nil {
-                let right = box(byID[id]?["frame"]).maxX
-                if right.isFinite { unit["layoutExpansionRight"] = Double(right) }
+            if unit["isCodeBlock"] as? Bool == true || unit["inlineContent"] != nil {
+                unit.removeValue(forKey:"layoutExpansionRight")
             }
             unit["codeSegments"] = byID[id]?["codeSegments"]
             var fragments = [box(unit["box"])]
@@ -106,6 +135,25 @@ public enum AXParagraphBuilder {
                 for occlusion in occlusions { fragments = fragments.flatMap { PreviewOcclusion.visibleBoxes($0, behind:box(occlusion["panelFrame"])) } }
                 if unit["originalBox"] == nil { unit["originalBox"] = unit["box"] }
                 unit["visibleBoxes"] = fragments.map(rect); unit["box"] = rect(fragments.first ?? .zero)
+            }
+            if let right = unit.removeValue(forKey:"cellExpansionRight") as? Double,
+               unit["isCodeBlock"] as? Bool != true, unit["inlineContent"] == nil {
+                unit["layoutExpansionRight"] = right
+                unit["layoutExpansionReason"] = "text_node_overflows_paragraph_to_cell"
+                var display = box(unit["originalBox"] ?? unit["box"])
+                display.size.width = max(display.width, right-display.minX)
+                for (key, panelKey) in [("timelineOcclusion","panelFrame"),("timelineHeaderOcclusion","headerFrame"),("tableHeaderOcclusion","headerFrame")] {
+                    if let occlusion = unit[key] as? [String:Any] {
+                        let panel = box(occlusion[panelKey])
+                        display = key == "timelineOcclusion" ? TimelineClipping.visibleBox(display, behind:panel) : StickyHeaderClipping.belowHeader(display, header:panel)
+                        if display.isNull { display = .zero }
+                    }
+                }
+                var displayFragments = display.isEmpty ? [] : [display]
+                for occlusion in unit["previewOcclusions"] as? [[String:Any]] ?? [] {
+                    displayFragments = displayFragments.flatMap { PreviewOcclusion.visibleBoxes($0, behind:box(occlusion["panelFrame"])) }
+                }
+                unit["displayBoxes"] = displayFragments.map(rect)
             }
             let f = box(unit["box"])
             return f.width > 0 && f.height > 0 ? unit : nil

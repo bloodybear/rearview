@@ -171,6 +171,87 @@ def build_paragraphs(nodes, selected):
     return [unit for unit in units.values() if unit['box'].get('width', 0) > 0 and unit['box'].get('height', 0) > 0], unresolved
 
 
+def table_container_study(nodes, paragraphs):
+    by_id = {n['id']: n for n in nodes}
+
+    def chain(node):
+        result, seen = [], set()
+        while node in by_id and node not in seen:
+            seen.add(node)
+            item = by_id[node]
+            result.append(item)
+            node = item.get('controlTextOwner', item.get('parent'))
+        return result
+
+    result = []
+    for p in paragraphs:
+        chains = [chain(n) for n in p.get('members', [])]
+        cells = {n['id']: n for c in chains for n in c
+                 if n.get('role') == 'AXCell' or 'notion-table-view-cell' in n.get('domClasses', [])}
+        if len(cells) > 1:
+            continue
+        cell = next(iter(cells.values()), None)
+        if cell is None and (p.get('unitType') != 'native_textarea' or p['node'] not in by_id):
+            continue
+        containers = []
+        if p.get('unitType') == 'native_textarea' and (cell is None or cell['role'] == 'AXCell'):
+            containers = [dict(role='AXTextArea', box=by_id[p['node']].get('frame'),
+                               source='AX child tree / AXTextArea frame')]
+        else:
+            for c in chains:
+                if not c:
+                    continue
+                leaf = c[0]
+                if 'ownershipParentFrames' in leaf:
+                    # Actual AXParent path was validated against controlTextOwner
+                    # by the collector; no geometry/name-based cross-run matching.
+                    parent = next((n for n in leaf['ownershipParentFrames'] if n['role'] == 'AXGroup'), None)
+                    if parent:
+                        containers.append(dict(role=parent['role'], box=parent['frame'],
+                                               source='AXParent ownership path / cached AXFrame'))
+                else:
+                    for n in c[1:]:
+                        if n['id'] == cell['id'] or n['role'] in ('AXButton', 'AXPopUpButton', 'AXRadioButton'):
+                            break
+                        if n['role'] == 'AXGroup':
+                            containers.append(dict(role=n['role'], box=n.get('frame'),
+                                                   source='AX child tree / group frame'))
+                            break
+        unique = {}
+        for item in containers:
+            b = item.get('box')
+            if b and b.get('width', 0) > 1 and b.get('height', 0) > 1:
+                unique[(item['role'], tuple(b[k] for k in ('x', 'y', 'width', 'height')))] = item
+        observed = list(unique.values())
+        record = dict(node=p['node'], scope='table' if cell else 'text',
+                      cellNode=cell['id'] if cell else None, cellBox=cell.get('frame') if cell else None,
+                      containers=observed, status='observed' if len(observed) == 1 else 'ambiguous' if observed else 'unavailable')
+        record['reason'] = ('문단 박스로 채택됨' if p.get('resolvedTextArea') else '컨테이너 관측 · 안전성 미판정 또는 채택되지 않음') if len(observed) == 1 else (
+            '부모 영역이 여러 개임 · 확장 보류' if observed else '유효한 중간 텍스트 영역 미확인 · 셀 전체를 대신 사용하지 않음')
+        result.append(record)
+    return result
+
+
+def rendered_layout_boxes(folder, metadata):
+    """Actual product layout, converted from image pixels to screen-top-left pt."""
+    path = folder/'render-layout.json'
+    image = folder/'render-source.png'
+    region = metadata.get('selectionRegion')
+    if not path.exists() or not image.exists() or not region or metadata.get('renderFrameID') is None or metadata.get('renderFrameID') != metadata.get('frameID'):
+        return []
+    width, height = struct.unpack('>II', image.read_bytes()[16:24])
+    result = []
+    for d in json.loads(path.read_text()):
+        if d.get('status') != 'rendered':
+            continue
+        for index, ((x, y), (w, h)) in enumerate(d.get('lineBoxes', [])):
+            result.append(dict(node=d['node'], segment=d.get('segment'), logicalIndex=d.get('logicalIndex'), line=index,
+                               box=dict(x=region['x']+x*region['width']/width,
+                                        y=region['y']+(height-y-h)*region['height']/height,
+                                        width=w*region['width']/width, height=h*region['height']/height)))
+    return result
+
+
 def render(folder):
     folder = Path(folder).resolve()
     root = Path(__file__).resolve().parents[1]
@@ -209,6 +290,10 @@ def render(folder):
             'paragraphs': paragraphs, 'unresolved': unresolved, 'frame': metadata.get('windowFrame', run['screenshot']['frame']),
             'coverageLimitations': metadata.get('coverageLimitations', []), 'collection': metadata}
     data['selectionRegion'] = next((c['selectionRegion'] for c in selected if c.get('selectionRegion')), None)
+    data['tableContainerStudy'] = table_container_study(nodes, paragraphs)
+    data['layoutBoxes'] = rendered_layout_boxes(folder, metadata)
+    if (folder/'render-source.png').exists() and metadata.get('renderFrameID') is not None and metadata.get('renderFrameID') == metadata.get('frameID') and metadata.get('selectionRegion'):
+        data['containerStudyCapture'] = dict(image='render-source.png', frame=metadata['selectionRegion'], frameID=metadata['frameID'])
     encoded = base64.b64encode(json.dumps(data, ensure_ascii=False).encode()).decode()
     template = Path(__file__).with_name('ax_report.html').read_text()
     page = template.replace('__PAYLOAD__', encoded).replace('__SCENARIO__', html.escape(data['scenario']))

@@ -1,6 +1,7 @@
 import base64
 import importlib.util
 import json
+import struct
 from pathlib import Path
 import tempfile
 import unittest
@@ -12,6 +13,49 @@ spec.loader.exec_module(report)
 
 
 class NativeAXReportTests(unittest.TestCase):
+    def test_actual_layout_pixel_conversion_and_frame_guard(self):
+        with tempfile.TemporaryDirectory() as temp:
+            folder = Path(temp)
+            (folder/'render-source.png').write_bytes(bytes(16)+struct.pack('>II',400,200))
+            (folder/'render-layout.json').write_text(json.dumps([
+                dict(node=7,status='rendered',lineBoxes=[[[20,140],[100,20]]]),
+                dict(node=8,status='line_unavailable',lineBoxes=[[[0,0],[1,1]]])]))
+            metadata = dict(frameID=1,renderFrameID=1,selectionRegion=dict(x=10,y=100,width=200,height=100))
+            result = report.rendered_layout_boxes(folder,metadata)
+            self.assertEqual(result[0]['box'],dict(x=20,y=120,width=50,height=10))
+            self.assertEqual(len(result),1)
+            metadata['renderFrameID']=2
+            self.assertEqual(report.rendered_layout_boxes(folder,metadata),[])
+
+    def test_container_study_uses_same_capture_ownership_not_cell_or_label_size(self):
+        cell = dict(id=1, role='AXGroup', domClasses=['notion-table-view-cell'], frame=dict(x=0,y=0,width=300,height=40))
+        owner = dict(id=2, role='AXButton', parent=1)
+        group = dict(role='AXGroup', frame=dict(x=8,y=8,width=283,height=22))
+        text = dict(id=3, role='AXStaticText', controlTextOwner=2, ownershipParentFrames=[group])
+        unit = dict(node=3, members=[3], unitType='selected_text')
+        before = json.dumps([cell, owner, text, unit], sort_keys=True)
+        item = report.table_container_study([cell, owner, text], [unit])[0]
+        self.assertEqual(item['containers'][0]['box'], group['frame'])
+        self.assertEqual(item['containers'][0]['role'], 'AXGroup')
+        self.assertIn('미판정', item['reason'])
+        self.assertEqual(before, json.dumps([cell, owner, text, unit], sort_keys=True))
+        # A label's parent is the whole-cell button, not a text container.
+        text['ownershipParentFrames'] = []
+        self.assertEqual(report.table_container_study([cell, owner, text], [unit])[0]['containers'], [])
+        # Older artifacts never promote the outer cell group as a container.
+        del text['ownershipParentFrames']
+        self.assertEqual(report.table_container_study([cell, owner, text], [unit])[0]['containers'], [])
+
+    def test_simple_table_container_preserves_textarea_frame_including_clipping(self):
+        frame = dict(x=1000,y=100,width=16,height=30)
+        nodes = [dict(id=1,role='AXCell',frame=dict(x=1000,y=100,width=120,height=40)),
+                 dict(id=2,role='AXTextArea',parent=1,frame=frame),
+                 dict(id=3,role='AXStaticText',parent=2)]
+        unit = dict(node=2,members=[3],unitType='native_textarea')
+        item = report.table_container_study(nodes,[unit])[0]
+        self.assertEqual(item['containers'][0]['box'],frame)
+        self.assertEqual(item['containers'][0]['role'],'AXTextArea')
+
     def test_native_units_and_live_frame_are_authoritative_and_translation_can_be_skipped(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

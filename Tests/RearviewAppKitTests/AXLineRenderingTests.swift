@@ -24,7 +24,24 @@ final class AXLineRenderingTests: XCTestCase {
         let math = try render(math:true,expansionRight:210)
         XCTAssertEqual(math.diagnostics.first { $0.status == "rendered" }?.lineBoxes.map(\.width),[60,60])
     }
-    private func render(source: String = "日本語", translation: String = "한국어 👩‍💻 가나다라", heights: [Double] = [18,18], widths: [Double] = [60,60], clip: Bool = false, math: Bool = false, lineStatus: String? = nil, hidden: Bool = false, axRed: Bool = false, pixelScale: Double = 1, logical: Bool = false, expansionRight: Double? = nil) throws -> AXRenderArtwork {
+    func testCellOverflowExtendsDisplayClipAndMaskToCellBoundary() throws {
+        let artwork = try render(widths:[250,250],expansionRight:230,displayRight:230)
+        let d = try XCTUnwrap(artwork.diagnostics.first { $0.status == "rendered" })
+        XCTAssertEqual(d.lineBoxes.map(\.width),[250,250])
+        let image = try XCTUnwrap(artwork.background)
+        let bytes = [UInt8](image.dataProvider!.data! as Data)
+        // Both translated display and source mask reach 230, never its neighbor.
+        XCTAssertTrue(artwork.clipRects.allSatisfy { $0.maxX == 230 })
+        let y = 20
+        XCTAssertGreaterThan(bytes[y*image.bytesPerRow+220*4+3],0)
+        XCTAssertEqual(bytes[y*image.bytesPerRow+240*4+3],0)
+        let glyphs = try XCTUnwrap(artwork.text)
+        let glyphBytes = [UInt8](glyphs.dataProvider!.data! as Data)
+        for y in 0..<glyphs.height { for x in 230..<glyphs.width {
+            XCTAssertEqual(glyphBytes[y*glyphs.bytesPerRow+x*4+3],0)
+        } }
+    }
+    private func render(source: String = "日本語", translation: String = "한국어 👩‍💻 가나다라", heights: [Double] = [18,18], widths: [Double] = [60,60], clip: Bool = false, math: Bool = false, lineStatus: String? = nil, hidden: Bool = false, axRed: Bool = false, pixelScale: Double = 1, logical: Bool = false, expansionRight: Double? = nil, displayRight: Double? = nil) throws -> AXRenderArtwork {
         let canvasHeight = max(200,heights.count*25+40)
         let ctx = CGContext(data:nil,width:300,height:canvasHeight,bitsPerComponent:8,bytesPerRow:0,space:CGColorSpaceCreateDeviceRGB(),bitmapInfo:CGImageAlphaInfo.premultipliedLast.rawValue)!
         ctx.setFillColor(NSColor.white.cgColor);ctx.fill(CGRect(x:0,y:0,width:300,height:canvasHeight))
@@ -32,6 +49,7 @@ final class AXLineRenderingTests: XCTestCase {
         var paragraph: [String:Any] = ["node":1,"text":source,"lineSourceText":source,"lineRangeStatus":"complete_unverified","box":box,"members":[1],"isCodeBlock":false,"protectNonSourceText":false,
             "lineRanges":heights.enumerated().map { i,h in ["text":"日本語","rangeStart":i*3,"rangeLength":3,"box":["x":10.0,"y":10.0+Double(i)*25,"width":widths[i],"height":h]] as [String:Any] }]
         paragraph["layoutExpansionRight"] = expansionRight
+        if let displayRight { paragraph["displayBoxes"] = [["x":10.0,"y":10.0,"width":displayRight-10,"height":Double(heights.count*25+30)]] }
         var logicalEntries: [[String:Any]] = []
         if logical {
             let sourcePieces = AXLogicalLines.pieces(source)
