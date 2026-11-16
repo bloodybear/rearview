@@ -6,6 +6,31 @@ import CoreText
 @testable import NotionAXCore
 
 final class AXLineRenderingTests: XCTestCase {
+    @MainActor func testNonSourceParagraphHasSelectionWithoutPainting() throws {
+        let ctx = CGContext(data:nil,width:300,height:100,bitsPerComponent:8,bytesPerRow:0,space:CGColorSpaceCreateDeviceRGB(),bitmapInfo:CGImageAlphaInfo.premultipliedLast.rawValue)!
+        let paragraph: [String:Any] = ["node":1,"text":"English","lineSourceText":"English","lineRangeStatus":"complete_unverified","box":["x":10,"y":10,"width":100,"height":18],"members":[1],"isCodeBlock":false,"protectNonSourceText":false,"lineRanges":[["text":"English","rangeStart":0,"rangeLength":7,"box":["x":10,"y":10,"width":70,"height":18]]]]
+        let snapshot = try AXExtractionSnapshot(nodes:[],selected:[],paragraphs:[paragraph],metadata:["status":"complete"])
+        let payload: [String:Any] = ["provider":"test","node":1,"source":"English","sourceLanguage":"ja","targetLanguage":"ko","protectNonSourceText":false,"sourceLanguageEligible":false,"status":"skipped_non_source_language"]
+        let entry = try JSONDecoder().decode(AXParagraphTranslation.self,from:JSONSerialization.data(withJSONObject:payload))
+        let art = AXLineRendering.build(.init(frame:.init(snapshot:snapshot,image:ctx.makeImage()!,frameID:1,receivedAt:0),entries:[entry]))
+        XCTAssertEqual(art.fragments.map(\.text).joined(),"English")
+        XCTAssertEqual(art.items.first?.presentation,.selectionOnly)
+        XCTAssertTrue(art.clipRects.isEmpty)
+        XCTAssertFalse(art.selectionClipRects.isEmpty)
+        for captured in [true,false] {
+            let view = NativeTranslationMirrorView(frame:CGRect(x:0,y:0,width:300,height:100))
+            view.showsCapturedImage=captured; view.setRenderingActive(true)
+            var frame = MirrorFrame(image:ctx.makeImage()!,translatedItems:art.items,frameID:1)
+            frame.axArtwork=art; view.frameSnapshot=frame
+            view.setSelectionModeActive(true); view.selectAll(nil)
+            XCTAssertEqual(view.clipboardText(),"English")
+            var count = 0
+            view.onSearchCountChange = { value,_ in count=value }
+            view.setSearch(query:"English",caseSensitive:true,regex:false)
+            XCTAssertEqual(count,1)
+        }
+
+    }
     func testLayoutExpansionNeverShrinksOrMovesNativeLine() {
         let box = CGRect(x:20,y:30,width:80,height:18)
         XCTAssertEqual(AXLineRendering.layoutBox(box,expansionRight:150),CGRect(x:20,y:30,width:130,height:18))

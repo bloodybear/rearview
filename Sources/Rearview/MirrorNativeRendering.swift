@@ -998,7 +998,7 @@ final class NativeTranslationMirrorView: NSView, NSMenuItemValidation {
         drawSelectionModeDim(for: snapshot, in: imageRect)
         NSGraphicsContext.current?.cgContext.saveGState()
         if let ax = snapshot.axArtwork, let context = NSGraphicsContext.current?.cgContext {
-            context.addRects((ax.clipRects + snapshot.imageOCRLayers.map(\.pixelBox)).map { rect in
+            context.addRects((ax.clipRects + ax.selectionClipRects + snapshot.imageOCRLayers.map(\.pixelBox)).map { rect in
                 CGRect(x:imageRect.minX+rect.minX/CGFloat(snapshot.image.width)*imageRect.width,
                        y:imageRect.minY+rect.minY/CGFloat(snapshot.image.height)*imageRect.height,
                        width:rect.width/CGFloat(snapshot.image.width)*imageRect.width,
@@ -1206,9 +1206,9 @@ final class NativeTranslationMirrorView: NSView, NSMenuItemValidation {
         let imageSize = CGSize(width: snapshot.image.width, height: snapshot.image.height)
         let imageRect = imageRect(for: imageSize)
         let orderedItems = mirrorItemsInReadingOrder(snapshot.translatedItems)
-        let selectableItems = showsCapturedImage ? orderedItems : orderedItems.filter(\.isTranslated)
+        let selectableItems = snapshot.axArtwork != nil || showsCapturedImage ? orderedItems : orderedItems.filter(\.isTranslated)
         for item in selectableItems {
-            if item.isTranslated {
+            if item.isTranslated || snapshot.axArtwork?.items.contains(where: { $0.id == item.id }) == true {
                 appendRenderedSelectionFragments(for: item, imageRect: imageRect)
             } else if showsCapturedImage {
                 let sourceRect = mirrorPixelAlignedRect(

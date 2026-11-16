@@ -36,6 +36,7 @@ struct AXRenderArtwork: @unchecked Sendable {
     let clipRects: [CGRect]
     let diagnostics: [AXRenderDiagnostic]
     let elapsed: Double
+    var selectionClipRects: [CGRect] = []
 }
 
 // No AX handles or UI objects cross this queue. Native geometry stays immutable;
@@ -81,6 +82,7 @@ enum AXLineRendering {
                 space:CGColorSpaceCreateDeviceRGB(),bitmapInfo:CGImageAlphaInfo.premultipliedLast.rawValue)
         }
         let bg = context(), fg = context(), debug = context()
+        var selectionClips: [CGRect] = []
         var clipRects: [CGRect] = []
         var diagnostics: [AXRenderDiagnostic] = [], items: [MirrorItem] = [], fragments: [NativeMirrorRenderedFragment] = []
         let observations = Dictionary(uniqueKeysWithValues:value.frame.snapshot.observations.map { ($0.id,$0) })
@@ -104,6 +106,36 @@ enum AXLineRendering {
             let clips = paragraph.displayRegions.map(\.cgRect).map(pixel).map { $0.intersection(bounds) }.filter { !$0.isNull && !$0.isEmpty }
             func excluded(_ reason: String, segment: Int? = nil) {
                 diagnostics.append(.init(node:paragraph.node,segment:segment,status:reason,box:pixel(paragraph.box.cgRect)))
+            }
+            func preserve(_ source: String, lines: [AXLine], itemID: UUID = UUID(), itemText: String? = nil, offset: Int = 0) {
+                let ns = source as NSString
+                var selected: [NativeMirrorRenderedFragment] = []
+                for line in lines {
+                    let start = line.segmentRangeStart ?? line.rangeStart
+                    guard start >= 0, line.rangeLength > 0, start <= ns.length,
+                          line.rangeLength <= ns.length-start,
+                          ns.substring(with:NSRange(location:start,length:line.rangeLength)) == line.text else { continue }
+                    let box = pixel(line.box.cgRect)
+                    guard box.width.isFinite, box.height.isFinite, box.width > 0, box.height > 0 else { continue }
+                    var local = 0
+                    let text = line.text as NSString
+                    while local < text.length {
+                        let range = text.rangeOfComposedCharacterSequence(at:local)
+                        let r = CGRect(x:box.minX+box.width*CGFloat(local)/CGFloat(text.length),y:box.minY,
+                            width:box.width*CGFloat(range.length)/CGFloat(text.length),height:box.height)
+                        if clips.contains(where: { $0.intersects(r) }) {
+                            selected.append(.init(itemID:itemID,text:text.substring(with:range),rect:r,characterOffset:offset+start+local))
+                        }
+                        local = NSMaxRange(range)
+                    }
+                }
+                guard !selected.isEmpty else { return }
+                fragments += selected
+                if !items.contains(where: { $0.id == itemID }) {
+                    items.append(MirrorItem(id:itemID,translatedText:itemText ?? source,presentation:.selectionOnly,
+                        normalizedRect:normalized(pixel(paragraph.box.cgRect)),background:.lightBackground,foreground:.darkText))
+                }
+                selectionClips += clips
             }
             var parts: [AXLogicalRenderPart] = []
             var invalid = false
@@ -180,6 +212,12 @@ enum AXLineRendering {
                     offset += (outputs[index] as NSString).length
                 }
             } else {
+                if entry?.status == "skipped_non_source_language" {
+                    if let content = paragraph.inlineContent {
+                        for part in content where part.kind == "text" { preserve(part.text ?? "",lines:part.lineRanges ?? []) }
+                    } else { preserve(sourceText,lines:paragraph.lineRanges) }
+                    excluded("skipped_non_source_language"); continue
+                }
                 if newline(sourceText), entry?.logicalSegments == nil { excluded("logical_translation_unavailable"); continue }
                 guard let entry else { excluded("translation_pending"); continue }
                 if entry.status != "translated" && entry.segments?.contains(where: { $0.status == "translated" }) != true && entry.logicalSegments?.contains(where: { $0.status == "translated" }) != true { excluded(entry.status); continue }
@@ -201,6 +239,9 @@ enum AXLineRendering {
                                       value.rangeLength == map.range.length, value.delimiter == map.delimiter else { throw AXLogicalLines.Failure.textMismatch }
                                 if value.status == "translated", let text = value.translation, !text.isEmpty {
                                     parts.append(.init(segment:segment,text:text,lines:map.lineIndices.map { lines[$0] },fontLines:lines,source:source,logical:value,itemID:itemID,itemText:itemText,offset:offset))
+                                } else if value.status == "skipped_non_source_language" {
+                                    let shifted = map.lineIndices.map { lines[$0] }
+                                    preserve(source,lines:shifted,itemID:itemID,itemText:itemText,offset:offset-value.rangeStart)
                                 } else { excluded(value.status,segment:segment) }
                                 offset += ((value.translation ?? value.source)+value.delimiter as NSString).length
                             }
@@ -208,6 +249,7 @@ enum AXLineRendering {
                     } else {
                         let translated = segment.flatMap { id in entry.segments?.first { $0.id == id } }
                         let text = segment == nil ? entry.translation : translated?.translation
+                        if translated?.status == "skipped_non_source_language" { preserve(source,lines:lines); continue }
                         guard (segment == nil ? entry.status : translated?.status) == "translated", let text else { excluded(translated?.status ?? entry.status,segment:segment); continue }
                         parts.append(.init(segment:segment,text:text,lines:lines,fontLines:lines,source:source,logical:nil,itemID:itemID,itemText:text,offset:0))
                     }
@@ -374,7 +416,7 @@ enum AXLineRendering {
                     }
                     location = end
                 }
-                if addedItems.insert(itemID).inserted {
+                if addedItems.insert(itemID).inserted && !items.contains(where: { $0.id == itemID }) {
                     items.append(MirrorItem(id:itemID,translatedText:part.itemText,presentation:.translated,
                         normalizedRect:normalized(pixel(paragraph.box.cgRect)),background:colors.background,foreground:colors.foreground))
                 }
@@ -431,6 +473,6 @@ enum AXLineRendering {
         }
         debug?.setStrokeColor(NSColor.orange.cgColor)
         for box in clipRects { debug?.stroke(box) }
-        return AXRenderArtwork(background:bg?.makeImage(),text:fg?.makeImage(),debug:debug?.makeImage(),items:items,fragments:fragments,clipRects:clipRects,diagnostics:diagnostics,elapsed:CFAbsoluteTimeGetCurrent()-start)
+        return AXRenderArtwork(background:bg?.makeImage(),text:fg?.makeImage(),debug:debug?.makeImage(),items:items,fragments:fragments,clipRects:clipRects,diagnostics:diagnostics,elapsed:CFAbsoluteTimeGetCurrent()-start,selectionClipRects:selectionClips)
     }
 }
