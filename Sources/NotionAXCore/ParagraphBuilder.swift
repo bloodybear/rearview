@@ -13,6 +13,36 @@ public enum AXParagraphBuilder {
             guard let r = value as? [String: Double] else { return .zero }
             return CGRect(x:r["x"] ?? 0,y:r["y"] ?? 0,width:r["width"] ?? 0,height:r["height"] ?? 0)
         }
+        var children: [Int:[Int]] = [:]
+        for n in nodes { if let parent = n["parent"] as? Int { children[parent,default:[]].append(n["id"] as! Int) } }
+        let selectedIDs = Set(selected.compactMap { $0["node"] as? Int })
+        var groupOwners: [Int:(group:Int,control:Int,text:String)] = [:]
+        func leaves(_ id:Int) -> [Int]? {
+            guard let n=byID[id], n["mathOwner"] == nil else { return nil }
+            if n["role"] as? String == "AXStaticText" {
+                return (n["recoveredText"] as? String ?? n["value"] as? String ?? "").isEmpty ? [] : [id]
+            }
+            guard n["role"] as? String == "AXGroup" else { return nil }
+            var result:[Int]=[]
+            for child in children[id] ?? [] { guard let found=leaves(child) else{return nil};result += found }
+            return result
+        }
+        for n in nodes where ["AXButton","AXPopUpButton","AXRadioButton"].contains(n["role"] as? String ?? "") {
+            let control=n["id"] as! Int
+            var branches:[(Int,[Int])]=[], valid=true
+            for child in children[control] ?? [] {
+                guard let found=leaves(child) else{valid=false;break}
+                if !found.isEmpty { branches.append((child,found)) }
+            }
+            guard valid, branches.count == 2 else{continue}
+            let texts=branches.map { $0.1.map { byID[$0]?["recoveredText"] as? String ?? byID[$0]?["value"] as? String ?? "" } }
+            let icons=texts.map { $0.allSatisfy(AXEmojiClassification.isSingleEmoji) }
+            guard icons.filter({$0}).count == 1,
+                  branches.allSatisfy({ byID[$0.0]?["role"] as? String == "AXGroup" && $0.1.allSatisfy { selectedIDs.contains($0) } && box(byID[$0.0]?["frame"]).width > 1 && box(byID[$0.0]?["frame"]).height > 1 && [box(byID[$0.0]?["frame"]).minX,box(byID[$0.0]?["frame"]).minY,box(byID[$0.0]?["frame"]).width,box(byID[$0.0]?["frame"]).height].allSatisfy(\.isFinite) }) else{continue}
+            for (i,branch) in branches.enumerated() {
+                for leaf in branch.1 { groupOwners[leaf]=(branch.0,control,texts[i].joined()) }
+            }
+        }
         var containers = Set<Int>()
         for n in nodes where n["role"] as? String == "AXTextArea" {
             for id in ancestors(n["id"] as! Int) where byID[id]?["role"] as? String == "AXTextArea" { containers.insert(id) }
@@ -42,6 +72,10 @@ public enum AXParagraphBuilder {
                         break
                     }
                 }
+            }
+            if let split=groupOwners[id] {
+                owner=split.group; text=split.text; frame=box(byID[owner]?["frame"])
+                type="native_control_group"; source="AXGroup text leaves"
             }
             // A verified text parent changes geometry only, never paragraph identity.
             var resolved = type == "native_textarea"
@@ -73,6 +107,10 @@ public enum AXParagraphBuilder {
                     "status":"translation_unit_candidate_unverified","source":source+" / native frame","semanticParagraphConfirmed":false]
             }
             var unit = units[owner]!
+            if let split=groupOwners[id] {
+                unit["controlGroupOwner"]=split.control
+                unit["paragraphGrouping"]="control_icon_label_subgroups"
+            }
             if resolved { unit["resolvedTextArea"] = true; unit["layoutExpansionRight"] = Double(frame.maxX) }
             // The node frame (not the unbounded line range) proves that text
             // paints past this group. Its end is evidence, not the capacity limit.

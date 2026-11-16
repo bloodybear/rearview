@@ -2,6 +2,44 @@ import XCTest
 @testable import NotionAXCore
 
 final class ParagraphBuilderTests: XCTestCase {
+    func testIconAndLabelGroupsBecomeSeparateUnits() {
+        let f:[String:Double] = ["x":0,"y":0,"width":100,"height":30]
+        var nodes:[[String:Any]] = [
+            ["id":0,"role":"AXRadioButton","title":"✅ 日本語","frame":f],
+            ["id":1,"parent":0,"role":"AXGroup","frame":f],
+            ["id":2,"parent":1,"role":"AXStaticText","value":"✅","frame":f],
+            ["id":3,"parent":0,"role":"AXGroup","frame":f],
+            ["id":4,"parent":3,"role":"AXStaticText","value":"日本語","frame":f]]
+        let selected:[[String:Any]] = [(2,"✅"),(4,"日本語")].map { ["node":$0.0,"text":$0.1,"textSource":"AXValue","box":f] }
+        let units=AXParagraphBuilder.build(nodes:nodes,selected:selected)
+        XCTAssertEqual(units.map{$0["node"] as! Int},[1,3])
+        XCTAssertEqual(units.map{$0["text"] as! String},["✅","日本語"])
+        XCTAssertTrue(units.allSatisfy{$0["layoutExpansionRight"] == nil})
+        XCTAssertEqual(AXParagraphBuilder.build(nodes:nodes,selected:[selected[1]]).first?["node"] as? Int,0)
+        nodes[2]["value"]="普通"
+        XCTAssertEqual(AXParagraphBuilder.build(nodes:nodes,selected:selected).count,1)
+    }
+    func testSavedBatchGroupingCompatibility() throws {
+        guard let path=ProcessInfo.processInfo.environment["AX_GROUPING_BASELINE"] else { throw XCTSkip("Saved report audit is opt-in") }
+        let root=URL(fileURLWithPath:path)
+        let batch=try JSONSerialization.jsonObject(with:Data(contentsOf:root)) as! [String:Any]
+        var removed=0, added=0
+        for row in batch["results"] as! [[String:Any]] {
+            let folder=root.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent(row["report"] as! String).deletingLastPathComponent()
+            func load(_ file:String)throws->Any { try JSONSerialization.jsonObject(with:Data(contentsOf:folder.appendingPathComponent(file))) }
+            let old=(try load("native-paragraphs.json") as! [String:Any])["units"] as! [[String:Any]]
+            let new=AXParagraphBuilder.build(nodes:try load("rawAx.json") as! [[String:Any]],selected:try load("candidate.json") as! [[String:Any]])
+            let oldIDs=Set(old.map{$0["node"] as! Int}),newIDs=Set(new.map{$0["node"] as! Int})
+            removed += oldIDs.subtracting(newIDs).count;added += newIDs.subtracting(oldIDs).count
+            for unit in old where newIDs.contains(unit["node"] as! Int) {
+                let replacement=new.first{$0["node"] as! Int == unit["node"] as! Int}!
+                for key in ["members","box","lineRanges","lineSourceText"] {
+                    XCTAssertEqual(NSDictionary(dictionary:[key:unit[key] ?? NSNull()]),NSDictionary(dictionary:[key:replacement[key] ?? NSNull()]),"\(row["scenario"]!) \(key)")
+                }
+            }
+        }
+        XCTAssertEqual(removed,3);XCTAssertEqual(added,6)
+    }
     func testNearestBoundaryPreservesDuplicatePositionsAndUTF16() {
         let f: [String:Double] = ["x":0,"y":0,"width":100,"height":30]
         let nodes: [[String:Any]] = [

@@ -4,13 +4,9 @@ import NotionAXCore
 enum AXFontHeight {
     struct Decision: Codable { let originalHeight: Double; let selectedHeight: Double?; let nodeIDs: [Int]; let reason: String }
     static func emojiNode(_ text:String)->Bool {
-        var iterator=text.makeIterator()
-        guard let character=iterator.next(),iterator.next()==nil else{return false}
-        let scalars=character.unicodeScalars
-        if scalars.contains(where:{$0.value==0xFE0E}){return false}
-        return scalars.contains{$0.properties.isEmojiPresentation} ||
-            (scalars.contains{$0.value==0xFE0F || $0.value==0x20E3} && scalars.contains{$0.properties.isEmoji})
+        AXEmojiClassification.isSingleEmoji(text)
     }
+
     static func select(lines:[AXLine],source:String,ids:[Int],nodes:[Int:AXNode],clips:[CGRect],record: ((Decision)->Void)? = nil)->Double {
         let original=lines.map{$0.box.height}.min() ?? 0
         guard original>=8 else{return original}
