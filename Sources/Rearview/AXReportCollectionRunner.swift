@@ -20,12 +20,15 @@ import NotionAXReportSupport
                   let image = NSBitmapImageRep(data:try read("render-source.png"))?.cgImage,
                   let region = metadata["selectionRegion"] as? [String:Double],
                   let screen = NSScreen.screens.first else { throw CocoaError(.coderInvalidValue) }
+            let savedImages = (try? JSONDecoder().decode([AXImageOCRSavedLayer].self,from:read("image-ocr-layers.json"))) ?? []
+            let imageLayers = savedImages.compactMap { $0.restore(source:image) }
             let captured = SessionCoordinator.AXTranslatedFrame(frame:.init(snapshot:snapshot,image:image,frameID:translations.frameID,receivedAt:0),entries:translations.entries)
             fputs("AX review: loaded captured frame\n",stderr)
             let art = await AXLineRendering.render(captured)
             fputs("AX review: layout ready\n",stderr)
-            var frame = MirrorFrame(image:image,translatedItems:art.items,frameID:translations.frameID)
+            var frame = MirrorFrame(image:image,translatedItems:art.items + imageLayers.flatMap { $0.mappedItems(frameSize:CGSize(width:image.width,height:image.height)) },frameID:translations.frameID)
             frame.axArtwork = art
+            frame.imageOCRLayers = imageLayers
             let display = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as! NSNumber
             let selection = appKitSelectionRect(for:CGRect(x:region["x"]!,y:region["y"]!,width:region["width"]!,height:region["height"]!),screenFrame:screen.frame,displayBounds:CGDisplayBounds(display.uint32Value))
             let modeIndex = CommandLine.arguments.firstIndex(of:"--ax-review-display-mode")
@@ -95,19 +98,32 @@ import NotionAXReportSupport
             var finishedCount = 0
             var translationSamples: [[String:Any]] = []
             var translationStartedAt = Date()
+            var presentations: [[String:Any]] = []
+            coordinator.onAXPresentation = { value in
+                presentations.append(["seconds":Date().timeIntervalSince(translationStartedAt),
+                    "paragraphs":value.entries.count,"imageRegions":value.imageOCR.diagnostics.count])
+            }
             coordinator.onAXTranslationProgress = { translated = $0 }
             coordinator.onAXTranslation = { value in
                 translated = value; finishedCount += 1
                 translationSamples.append(["frameID":value.frame.frameID,
                     "elapsed":max(0,Date().timeIntervalSince(translationStartedAt)-(coordinator.latestAXRenderedFrame?.axArtwork?.elapsed ?? 0)),
                     "renderSeconds":coordinator.latestAXRenderedFrame?.axArtwork?.elapsed ?? 0,
+                    "presentations":presentations,
+                    "maxConcurrentOCR":value.imageOCR.maxConcurrentOCR,
                     "paragraphs":value.entries.count,
-                    "failures":value.entries.filter { $0.status == "failed" }.count])
+                    "imageOCR":value.imageOCR.diagnostics.map { d in
+                        ["node":d.node,"status":d.status,"cacheHit":d.cacheHit,"ocrSeconds":d.ocrSeconds,
+                         "translationSeconds":d.translationSeconds,"lines":d.lines.count,
+                         "startedSeconds":d.startedSeconds,"completedSeconds":d.completedSeconds] as [String:Any]
+                    },
+                    "failures":value.imageOCR.failures + value.entries.filter { $0.status == "failed" }.count])
             }
             var collected: AXExtractionSnapshot?, frameID: UInt64?, failure: Error?
             coordinator.onAXExtraction = { snapshot, _, id in
                 collected = snapshot; frameID = id
                 translationStartedAt = Date()
+                presentations = []
                 if skip { finishedCount += 1 }
                 if var sample = (try? JSONSerialization.jsonObject(with:snapshot.metadata)) as? [String:Any] {
                     sample["frameID"] = id; samples.append(sample)
@@ -155,9 +171,26 @@ import NotionAXReportSupport
                 if let result = view.compositedImage(), let tiff = result.tiffRepresentation, let bitmap = NSBitmapImageRep(data:tiff) {
                     try bitmap.representation(using:.png,properties:[:])?.write(to:output.appendingPathComponent("render-translated.png"))
                 }
-                try png(art.debug,"render-debug.png")
+                let debugContext = CGContext(data:nil,width:frame.image.width,height:frame.image.height,bitsPerComponent:8,bytesPerRow:0,
+                    space:CGColorSpaceCreateDeviceRGB(),bitmapInfo:CGImageAlphaInfo.premultipliedLast.rawValue)
+                if let debug = art.debug { debugContext?.draw(debug,in:CGRect(x:0,y:0,width:debug.width,height:debug.height)) }
+                for layer in frame.imageOCRLayers {
+                    debugContext?.setStrokeColor(NSColor.systemPurple.cgColor); debugContext?.setLineWidth(2)
+                    debugContext?.stroke(layer.pixelBox)
+                    debugContext?.setStrokeColor(NSColor.systemYellow.cgColor)
+                    for item in layer.items {
+                        let r = item.normalizedRect
+                        debugContext?.stroke(CGRect(x:layer.pixelBox.minX+r.minX*layer.pixelBox.width,
+                            y:layer.pixelBox.minY+r.minY*layer.pixelBox.height,width:r.width*layer.pixelBox.width,height:r.height*layer.pixelBox.height))
+                    }
+                }
+                try png(debugContext?.makeImage(),"render-debug.png")
+                let imageEncoder = JSONEncoder(); imageEncoder.outputFormatting = [.prettyPrinted,.sortedKeys]
+                try imageEncoder.encode(frame.imageOCRLayers.map(AXImageOCRSavedLayer.init)).write(to:output.appendingPathComponent("image-ocr-layers.json"))
+                try imageEncoder.encode(coordinator.latestAXTranslation?.imageOCR.diagnostics ?? []).write(to:output.appendingPathComponent("image-ocr.json"))
                 try JSONSerialization.data(withJSONObject:["frameID":frame.frameID,
                     "clipRects":art.clipRects.map { ["x":$0.minX,"y":$0.minY,"width":$0.width,"height":$0.height] },
+                    "imageOCRPixelBoxes":frame.imageOCRLayers.map { ["x":$0.pixelBox.minX,"y":$0.pixelBox.minY,"width":$0.pixelBox.width,"height":$0.pixelBox.height] },
                     "fragments":art.fragments.map { ["text":$0.text,"offset":$0.characterOffset,"x":$0.rect.minX,"y":$0.rect.minY,"width":$0.rect.width,"height":$0.rect.height] }],options:[.sortedKeys,.prettyPrinted])
                     .write(to:output.appendingPathComponent("render-geometry.json"))
                 let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted,.sortedKeys]

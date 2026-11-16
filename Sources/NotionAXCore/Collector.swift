@@ -615,7 +615,34 @@ static func collect(_ request: AXExtractionRequest, window: AXUIElement, cancell
     let truncated = Date() > deadline || investigator.limitReached || !stack.isEmpty || rows.contains{$0["depthLimitReached"] as? Bool == true}
     let codePartial = paragraphs.contains { ($0["codeSegments"] as? [[String:Any]])?.contains(where: { $0["status"] as? String == "partial" }) == true }
     let partial = codePartial || truncated || paragraphs.contains { ($0["lineRangeStatus"] as? String ?? "unavailable") != "complete_unverified" }
-    let metadata: [String: Any] = ["status": valid ? (partial ? "partial" : "complete") : "failed",
+    let imageRegions = ImageRegionBuilder.build(rows:rows,selection:request.selectionRegion,
+        viewport:{ id in
+            var viewport = selectionViewport(rows[id])
+            let ancestors = [id]+ancestorIDs(id)
+            if let view = ancestors.first(where:{ classes($0).contains("notion-timeline-view") || classes($0).contains("notion-table-view") }),
+               let header = stickyHeaders[view],
+               ancestors.prefix(while:{$0 != view}).contains(where:{ classes($0).contains("notion-collection-item") || (header.kind == "timeline" && classes($0).contains("notion-timeline-item-row")) }) {
+                viewport = StickyHeaderClipping.belowHeader(viewport,header:header.frame)
+            }
+            if let timeline = ancestors.first(where:{ classes($0).contains("notion-timeline-view") }),
+               let choices=panels[timeline],choices.count == 1,let panelID=choices.first,
+               let panel=rowFrame(panelID),let timelineFrame=rowFrame(timeline),
+               panel.width>1,panel.height>1,panel.minX<=timelineFrame.minX,panel.maxX<timelineFrame.maxX,
+               !ancestors.contains(panelID) {
+                viewport = TimelineClipping.visibleBox(viewport,behind:panel)
+            }
+            return viewport
+        }, visible:{ id in
+            guard let root = ([id]+ancestorIDs(id)).first(where:{ rows[$0]["role"] as? String == "AXWebArea" }),
+                  let membership = visibleRoots[root] else { return false }
+            return !AXVisibleSelection.excludes(discovered:membership.all.contains(elements[id]),visible:membership.visible.contains(elements[id]))
+        }, occlusions:{ id in
+            guard previewPanels.count == 1, let (root,ids) = previewPanels.first,
+                  ids.count == 1, let panelID=ids.first, let panel=rowFrame(panelID),
+                  !([id]+ancestorIDs(id)).contains(root) else { return [] }
+            return [panel]
+        })
+    let metadata: [String: Any] = ["imageRegions":imageRegions,"status": valid ? (partial ? "partial" : "complete") : "failed",
         "targetAndFrameMatch":valid,"coordinateSystem":"screen-top-left-points", "elapsed":Date().timeIntervalSince(started), "colorQueries":colorCalls, "colorQuerySeconds":Date().timeIntervalSince(colorStarted),
         "codeRangeQueries":investigator.calls-codeCallsBefore,"codeRangeSeconds":codeSeconds,
         "parentValueQueries":request.collectParentTextDiagnostics ? rows.filter { $0["role"] as? String == "AXTextArea" }.count : 0,

@@ -3237,6 +3237,20 @@
       "allowedUnsupported": [
         "zoom"
       ]
+    },
+    "media-images-multiple": {
+      "suite": "media",
+      "purpose": "이미지 여러 개의 병렬 OCR 및 AX와 독립적인 완료별 표시",
+      "visibilityChecks": [],
+      "sourceReferences": [],
+      "checks": [
+        "이미지 영역이 두 개 이상 수집되는지 확인한다.",
+        "AX와 이미지의 완료별 표시 시점 및 최대 동시 OCR 수를 확인한다.",
+        "완료 순서와 관계없이 최종 좌표·레이어가 유지되는지 확인한다."
+      ],
+      "allowedUnsupported": [
+        "zoom"
+      ]
     }
   },
   "sequences": {

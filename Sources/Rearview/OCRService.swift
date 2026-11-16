@@ -326,6 +326,20 @@ final class OCRSelectionGeometrySource: @unchecked Sendable {
         self.fallbackRect = fallbackRect
     }
 
+    private init(text: String, fallbackRect: CGRect, provider: @escaping (Range<String.Index>) -> CGRect?) {
+        self.text = text; self.fallbackRect = fallbackRect; self.boundingBoxProvider = provider
+    }
+    func mapped(to crop: CGRect, frameSize: CGSize) -> OCRSelectionGeometrySource {
+        func convert(_ rect: CGRect) -> CGRect {
+            CGRect(x:(crop.minX+rect.minX*crop.width)/frameSize.width,
+                   y:(crop.minY+rect.minY*crop.height)/frameSize.height,
+                   width:rect.width*crop.width/frameSize.width,height:rect.height*crop.height/frameSize.height)
+        }
+        return OCRSelectionGeometrySource(text:text,fallbackRect:convert(fallbackRect),provider: { [self] range in
+            boundingBoxProvider(range).map(convert)
+        })
+    }
+
     func fragments() -> [RecognizedTextFragment] {
         lock.lock()
         defer { lock.unlock() }

@@ -212,7 +212,33 @@ private final class NativeMirrorRenderer {
         artworkBuildCount += 1
         if let ax = frame.axArtwork {
             let rects = Dictionary(uniqueKeysWithValues: ax.items.map { ($0.id, mirrorItemRect(normalizedRect:$0.normalizedRect,imageRect:CGRect(x:0,y:0,width:frame.image.width,height:frame.image.height))) })
-            return NativeMirrorArtwork(frameID:frame.frameID,imageSize:CGSize(width:frame.image.width,height:frame.image.height),backgroundLayer:ax.background,textLayer:ax.text,textRects:rects,layouts:[:],fragments:ax.fragments)
+            guard !frame.imageOCRLayers.isEmpty else {
+                return NativeMirrorArtwork(frameID:frame.frameID,imageSize:CGSize(width:frame.image.width,height:frame.image.height),backgroundLayer:ax.background,textLayer:ax.text,textRects:rects,layouts:[:],fragments:ax.fragments)
+            }
+            guard let background = makeContext(width:frame.image.width,height:frame.image.height),
+                  let text = makeContext(width:frame.image.width,height:frame.image.height) else { return nil }
+            let full = CGRect(x:0,y:0,width:frame.image.width,height:frame.image.height)
+            if let image = ax.background { background.draw(image,in:full) }
+            if let image = ax.text { text.draw(image,in:full) }
+            var allRects = rects, allFragments = ax.fragments
+            for layer in frame.imageOCRLayers {
+                let child = NativeMirrorRenderer()
+                let local = MirrorFrame(image:layer.image,translatedItems:layer.items,frameID:frame.frameID)
+                guard let artwork = child.buildArtwork(for:local) else { continue }
+                // Local OCR layout can expand within its crop, never outside it.
+                background.saveGState(); text.saveGState()
+                background.clip(to:layer.pixelBox); text.clip(to:layer.pixelBox)
+                if let image = artwork.backgroundLayer { background.draw(image,in:layer.pixelBox) }
+                if let image = artwork.textLayer { text.draw(image,in:layer.pixelBox) }
+                background.restoreGState(); text.restoreGState()
+                for (id,rect) in artwork.textRects { allRects[id] = rect.offsetBy(dx:layer.pixelBox.minX,dy:layer.pixelBox.minY) }
+                allFragments += artwork.fragments.map {
+                    NativeMirrorRenderedFragment(itemID:$0.itemID,text:$0.text,
+                        rect:$0.rect.offsetBy(dx:layer.pixelBox.minX,dy:layer.pixelBox.minY),characterOffset:$0.characterOffset)
+                }
+            }
+            return NativeMirrorArtwork(frameID:frame.frameID,imageSize:full.size,
+                backgroundLayer:background.makeImage(),textLayer:text.makeImage(),textRects:allRects,layouts:[:],fragments:allFragments)
         }
         layoutCacheHits = 0
         layoutCacheMisses = 0
@@ -829,10 +855,10 @@ final class NativeTranslationMirrorView: NSView, NSMenuItemValidation {
     )? {
         renderer.layoutMetrics(for: id)
     }
-    fileprivate func renderedFragmentsForTesting(_ id: UUID) -> [NativeMirrorRenderedFragment] {
+    func renderedFragmentsForTesting(_ id: UUID) -> [NativeMirrorRenderedFragment] {
         renderer.renderedFragments.filter { $0.itemID == id }
     }
-    fileprivate func selectionFragmentRectsForTesting() -> [CGRect] {
+    func selectionFragmentRectsForTesting() -> [CGRect] {
         rebuildSelectionFragments()
         return selectionFragments.map(\.rect)
     }
@@ -951,6 +977,14 @@ final class NativeTranslationMirrorView: NSView, NSMenuItemValidation {
             if let debug = snapshot.axArtwork?.debug {
                 NSImage(cgImage:debug,size:imageRect.size).draw(in:imageRect)
             }
+            for layer in snapshot.imageOCRLayers {
+                NSColor.systemPurple.setStroke()
+                let rect = CGRect(x:imageRect.minX+layer.pixelBox.minX/CGFloat(snapshot.image.width)*imageRect.width,
+                    y:imageRect.minY+layer.pixelBox.minY/CGFloat(snapshot.image.height)*imageRect.height,
+                    width:layer.pixelBox.width/CGFloat(snapshot.image.width)*imageRect.width,
+                    height:layer.pixelBox.height/CGFloat(snapshot.image.height)*imageRect.height)
+                NSBezierPath(rect:rect).stroke()
+            }
             for item in snapshot.ocrDebugItems {
                 let rect = mirrorItemRect(
                     normalizedRect: item.normalizedRect, imageRect: imageRect
@@ -964,7 +998,7 @@ final class NativeTranslationMirrorView: NSView, NSMenuItemValidation {
         drawSelectionModeDim(for: snapshot, in: imageRect)
         NSGraphicsContext.current?.cgContext.saveGState()
         if let ax = snapshot.axArtwork, let context = NSGraphicsContext.current?.cgContext {
-            context.addRects(ax.clipRects.map { rect in
+            context.addRects((ax.clipRects + snapshot.imageOCRLayers.map(\.pixelBox)).map { rect in
                 CGRect(x:imageRect.minX+rect.minX/CGFloat(snapshot.image.width)*imageRect.width,
                        y:imageRect.minY+rect.minY/CGFloat(snapshot.image.height)*imageRect.height,
                        width:rect.width/CGFloat(snapshot.image.width)*imageRect.width,
@@ -1333,7 +1367,7 @@ final class NativeTranslationMirrorView: NSView, NSMenuItemValidation {
         return result
     }
 
-    fileprivate func selectAllTextForTesting() -> String? { selectAll(nil); return selectedText() }
+    func selectAllTextForTesting() -> String? { selectAll(nil); return selectedText() }
 
     fileprivate func contextMenuStateForTesting(defaults: UserDefaults = .standard) -> [(String, Bool)] {
         makeContextMenu(defaults: defaults).items.filter { !$0.isSeparatorItem }.map {

@@ -92,9 +92,11 @@ private final class TestTargetResolver: SessionTargetResolver {
 private final class TestOCRProvider: SessionOCRProvider, @unchecked Sendable {
     let batch: OCRService.RecognitionBatch
     let gate: TestGate?
+    let gatedWidth: Int?
 
-    init(batch: OCRService.RecognitionBatch, gate: TestGate? = nil) {
+    init(batch: OCRService.RecognitionBatch, gate: TestGate? = nil, gatedWidth: Int? = nil) {
         self.batch = batch
+        self.gatedWidth = gatedWidth
         self.gate = gate
     }
 
@@ -103,7 +105,7 @@ private final class TestOCRProvider: SessionOCRProvider, @unchecked Sendable {
         includeRejectedAlternatives: Bool, settings: OCRSettings?,
         direction: TranslationDirection
     ) async throws -> OCRService.RecognitionBatch {
-        if let gate { await gate.wait() }
+        if let gate, gatedWidth == nil || gatedWidth == image.width { await gate.wait() }
         return batch
     }
 }
@@ -113,14 +115,33 @@ private actor TestAXProvider: SessionAXProvider {
     let gate: TestGate?
     let failure: AXExtractionError?
     let snapshot: AXExtractionSnapshot?
-    init(gate: TestGate? = nil, failure: AXExtractionError? = nil, snapshot: AXExtractionSnapshot? = nil) {
-        self.gate = gate; self.failure = failure; self.snapshot = snapshot
+    let images: Bool
+    let imageCount: Int
+    init(gate: TestGate? = nil, failure: AXExtractionError? = nil, snapshot: AXExtractionSnapshot? = nil, images: Bool = false, imageCount: Int = 1) {
+        self.gate = gate; self.failure = failure; self.snapshot = snapshot; self.images = images; self.imageCount = imageCount
     }
     func collect(_ request: AXExtractionRequest) async throws -> AXExtractionSnapshot {
         calls += 1
         if let gate { await gate.wait() }
         if let failure { throw failure }
         // Intentionally ignores cancellation to test stale-result rejection.
+        if images {
+            let r=request.selectionRegion
+            let regions: [[String:Any]] = (0..<imageCount).map { n in
+                let box: [String:Double] = ["x":r.minX+10,"y":r.minY+10,"width":r.width/Double(n+2),"height":r.height/2]
+                return ["node":99+n,"status":"selected","box":box,"displayBoxes":[box]]
+            }
+            var paragraphs = snapshot.map { (try! JSONSerialization.jsonObject(with:$0.paragraphs) as! [String:Any])["units"] as! [[String:Any]] } ?? []
+            for index in paragraphs.indices {
+                let box: [String:Double] = ["x":r.minX+10,"y":r.minY+10,"width":100,"height":20]
+                paragraphs[index]["box"] = box
+                if var lines = paragraphs[index]["lineRanges"] as? [[String:Any]] {
+                    for line in lines.indices { lines[line]["box"] = box }
+                    paragraphs[index]["lineRanges"] = lines
+                }
+            }
+            return try AXExtractionSnapshot(nodes:[],selected:[],paragraphs:paragraphs,metadata:["status":"complete","selectionRegion":["x":r.minX,"y":r.minY,"width":r.width,"height":r.height],"imageRegions":regions])
+        }
         if let snapshot { return snapshot }
         return try AXExtractionSnapshot(nodes:[],selected:[],paragraphs:[],metadata:["status":"partial","reason":"injected_limit"])
     }
@@ -131,6 +152,7 @@ private actor TestAXProvider: SessionAXProvider {
 private final class TestTranslationProvider: SessionTranslationProvider {
     var translations: [String: String]
     var gate: TestGate?
+    var gatedSources: Set<String>?
     var failingSources: Set<String>
     private(set) var calls: [String] = []
 
@@ -153,7 +175,7 @@ private final class TestTranslationProvider: SessionTranslationProvider {
 
     func translate(_ source: String) async throws -> String {
         calls.append(source)
-        if let gate { await gate.wait() }
+        if let gate, gatedSources == nil || gatedSources!.contains(source) { await gate.wait() }
         if failingSources.contains(source) { throw TestSessionError.translation }
         return translations[source] ?? source
     }
@@ -395,6 +417,176 @@ final class SessionCoordinatorIntegrationTests: XCTestCase {
         for _ in 0..<10 { await Task.yield() }
         XCTAssertNil(coordinator.latestAXSnapshot)
         XCTAssertTrue(output.frames.isEmpty)
+    }
+
+    func testImageOCRDoesNotBlockAXProgressAndLateImageIsDiscarded() async throws {
+        for invalidate in ["stop","mode","target","region"] {
+            let gate=TestGate(),capture=TestCaptureProvider(),output=TestOutputSink()
+            let coordinator=SessionCoordinator(broker:TestTranslationProvider(translations:[:]),capture:capture,
+                targetResolver:TestTargetResolver(),ocr:TestOCRProvider(batch:makeBatch(lines:[makeLine(sourceText:"設定")]),gate:gate),
+                ax:TestAXProvider(snapshot:try translatedAXFixture(),images:true),outputSink:output,createsOutputWindow:false)
+            coordinatorsUnderTest.append(coordinator)
+            let (screen,selection)=try makeScreenAndSelection()
+            await coordinator.setTextExtractionMode(.ax)
+            try await coordinator.start(screen:screen,selection:selection,mirrorUpdateStyle:.atomic,captureTarget:.application(
+                CaptureApplication(processID:123,bundleIdentifier:"notion.id",name:"Notion",anchorWindowID:42,anchorWindowFrame:screen.frame)))
+            coordinator.setRefreshMode(.automatic);coordinator.setPaused(false)
+            let visible=expectation(description:"AX displayed while OCR waits")
+            var displayed=false
+            output.onDisplay = { frame in
+                if !displayed,frame.axArtwork != nil,frame.imageOCRLayers.isEmpty {
+                    displayed=true;visible.fulfill()
+                }
+            }
+            let paragraph=expectation(description:"AX finished while OCR waits")
+            coordinator.onAXTranslationProgress = { value in
+                if !value.entries.isEmpty { paragraph.fulfill() }
+            }
+            capture.emit(makeImage(width:320,height:200,gray:40),frameID:41)
+            await gate.waitUntilStarted()
+            await fulfillment(of:[paragraph,visible],timeout:2)
+            coordinator.onAXTranslationProgress=nil
+            switch invalidate {
+            case "stop": await coordinator.stop()
+            case "mode": await coordinator.setTextExtractionMode(.ocr)
+            case "target": await coordinator.setApplicationCapture(nil)
+            default: await coordinator.applySelection(selection.insetBy(dx:2,dy:2),screen:screen,reevaluateTarget:false)
+            }
+            await gate.release()
+            for _ in 0..<30 { await Task.yield() }
+            XCTAssertFalse(output.frames.contains { !$0.imageOCRLayers.isEmpty },invalidate)
+        }
+    }
+
+    private func renderableAXFixture() throws -> AXExtractionSnapshot {
+        let box: [String:Double] = ["x":0,"y":0,"width":100,"height":20]
+        return try AXExtractionSnapshot(nodes:[],selected:[],paragraphs:[
+            ["node":10,"text":"日本語","box":box,"lineSourceText":"日本語",
+             "lineRangeStatus":"complete_unverified","members":[],
+             "lineRanges":[["text":"日本語","rangeStart":0,"rangeLength":3,"box":box]],
+             "isCodeBlock":false,"protectNonSourceText":false]],metadata:["status":"complete"])
+    }
+    func testEachImagePublishesBeforeSlowImageAndRetainsAX() async throws {
+        for style in [MirrorUpdateStyle.atomic,.progressive] {
+            let gate=TestGate(),capture=TestCaptureProvider(),output=TestOutputSink()
+            let coordinator=SessionCoordinator(broker:TestTranslationProvider(translations:["設定":"설정"]),capture:capture,
+                targetResolver:TestTargetResolver(),ocr:TestOCRProvider(batch:makeBatch(lines:[makeLine(sourceText:"設定")]),gate:gate,gatedWidth:160),
+                ax:TestAXProvider(snapshot:try renderableAXFixture(),images:true,imageCount:2),outputSink:output,createsOutputWindow:false)
+            coordinatorsUnderTest.append(coordinator)
+            let (screen,selection)=try makeScreenAndSelection()
+            await coordinator.setTextExtractionMode(.ax)
+            try await coordinator.start(screen:screen,selection:selection,mirrorUpdateStyle:style,captureTarget:.application(
+                CaptureApplication(processID:123,bundleIdentifier:"notion.id",name:"Notion",anchorWindowID:42,anchorWindowFrame:screen.frame)))
+            coordinator.setRefreshMode(.automatic);coordinator.setPaused(false)
+            let first=expectation(description:"fast image and AX visible"),last=expectation(description:"both images complete")
+            var observed=false
+            output.onDisplay = { frame in
+                if !observed,frame.imageOCRLayers.count == 1,frame.axArtwork?.items.isEmpty == false {
+                    observed=true; first.fulfill()
+                }
+            }
+            coordinator.onAXTranslation = { value in
+                XCTAssertEqual(value.imageOCR.layers.count,2);XCTAssertFalse(value.entries.isEmpty);last.fulfill()
+            }
+            capture.emit(makeImage(width:320,height:200,gray:40),frameID:61)
+            await gate.waitUntilStarted()
+            await fulfillment(of:[first],timeout:2)
+            await gate.release()
+            await fulfillment(of:[last],timeout:2)
+            XCTAssertEqual(output.frames.last?.imageOCRLayers.count,2)
+        }
+    }
+    func testAtomicRetainsAXBatchBoundaryWhileProgressivePublishesParagraph() async throws {
+        for style in [MirrorUpdateStyle.atomic,.progressive] {
+            let gate=TestGate(),capture=TestCaptureProvider(),output=TestOutputSink()
+            let broker=TestTranslationProvider(translations:[:],gate:gate);broker.gatedSources=["変更"]
+            let original=try renderableAXFixture()
+            var rows=(try JSONSerialization.jsonObject(with:original.paragraphs) as! [String:Any])["units"] as! [[String:Any]]
+            var second=rows[0];second["node"]=20;second["text"]="変更";second["lineSourceText"]="変更"
+            let box=second["box"]!
+            second["lineRanges"]=[["text":"変更","rangeStart":0,"rangeLength":2,"box":box]]
+            rows.append(second)
+            let snapshot=try AXExtractionSnapshot(nodes:[],selected:[],paragraphs:rows,metadata:["status":"complete"])
+            let coordinator=SessionCoordinator(broker:broker,capture:capture,targetResolver:TestTargetResolver(),
+                ocr:TestOCRProvider(batch:makeBatch(lines:[])),ax:TestAXProvider(snapshot:snapshot,images:true),
+                outputSink:output,createsOutputWindow:false)
+            coordinatorsUnderTest.append(coordinator)
+            let (screen,selection)=try makeScreenAndSelection()
+            await coordinator.setTextExtractionMode(.ax)
+            try await coordinator.start(screen:screen,selection:selection,mirrorUpdateStyle:style,captureTarget:.application(
+                CaptureApplication(processID:123,bundleIdentifier:"notion.id",name:"Notion",anchorWindowID:42,anchorWindowFrame:screen.frame)))
+            coordinator.setRefreshMode(.automatic);coordinator.setPaused(false)
+            let partial=expectation(description:"partial work completed"),finished=expectation(description:"all paragraphs finished")
+            var observed=false,presented: [Int]=[]
+            coordinator.onAXTranslationProgress = { value in
+                if !observed,value.entries.count == 1,!value.imageOCR.layers.isEmpty { observed=true;partial.fulfill() }
+            }
+            coordinator.onAXPresentation = { presented.append($0.entries.count) }
+            coordinator.onAXTranslation = { value in XCTAssertEqual(value.entries.count,2);finished.fulfill() }
+            capture.emit(makeImage(width:320,height:200,gray:40),frameID:63)
+            await gate.waitUntilStarted()
+            await fulfillment(of:[partial],timeout:2)
+            XCTAssertEqual(presented.contains(1),style == .progressive)
+            await gate.release()
+            await fulfillment(of:[finished],timeout:2)
+            XCTAssertEqual(presented.last,2)
+        }
+    }
+
+    func testImageBeforeAXRemainsVisibleWhenAXCompletes() async throws {
+        let gate=TestGate(),capture=TestCaptureProvider(),output=TestOutputSink()
+        let coordinator=SessionCoordinator(broker:TestTranslationProvider(translations:[:],gate:gate),capture:capture,
+            targetResolver:TestTargetResolver(),ocr:TestOCRProvider(batch:makeBatch(lines:[])),
+            ax:TestAXProvider(snapshot:try renderableAXFixture(),images:true),outputSink:output,createsOutputWindow:false)
+        coordinatorsUnderTest.append(coordinator)
+        let (screen,selection)=try makeScreenAndSelection()
+        await coordinator.setTextExtractionMode(.ax)
+        try await coordinator.start(screen:screen,selection:selection,captureTarget:.application(
+            CaptureApplication(processID:123,bundleIdentifier:"notion.id",name:"Notion",anchorWindowID:42,anchorWindowFrame:screen.frame)))
+        coordinator.setRefreshMode(.automatic);coordinator.setPaused(false)
+        let image=expectation(description:"image visible before AX"),finished=expectation(description:"AX finished")
+        var seen=false
+        output.onDisplay = { frame in
+            if !seen,!frame.imageOCRLayers.isEmpty { seen=true;XCTAssertTrue(frame.axArtwork?.items.isEmpty == true);image.fulfill() }
+        }
+        coordinator.onAXTranslation = { _ in finished.fulfill() }
+        capture.emit(makeImage(width:320,height:200,gray:40),frameID:62)
+        await gate.waitUntilStarted()
+        await fulfillment(of:[image],timeout:2)
+        await gate.release()
+        await fulfillment(of:[finished],timeout:2)
+        XCTAssertEqual(output.frames.last?.imageOCRLayers.count,1)
+        XCTAssertFalse(output.frames.last?.axArtwork?.items.isEmpty ?? true)
+    }
+
+    func testImageOCRPublishesAlongsideAXAndNewestPendingFrameRuns() async throws {
+        let gate=TestGate(),capture=TestCaptureProvider(),output=TestOutputSink()
+        let coordinator=SessionCoordinator(broker:TestTranslationProvider(translations:["設定":"설정"]),capture:capture,
+            targetResolver:TestTargetResolver(),ocr:TestOCRProvider(batch:makeBatch(lines:[makeLine(sourceText:"設定")]),gate:gate),
+            ax:TestAXProvider(images:true),outputSink:output,createsOutputWindow:false)
+        coordinatorsUnderTest.append(coordinator)
+        let (screen,selection)=try makeScreenAndSelection()
+        await coordinator.setTextExtractionMode(.ax)
+        try await coordinator.start(screen:screen,selection:selection,captureTarget:.application(
+            CaptureApplication(processID:123,bundleIdentifier:"notion.id",name:"Notion",anchorWindowID:42,anchorWindowFrame:screen.frame)))
+        await coordinator.setCapturePolicy(CapturePolicy(targetFPS:30,realtimeOCRIntervalMilliseconds:100))
+        coordinator.setRefreshMode(.automatic);coordinator.setPaused(false)
+        let first=expectation(description:"image result"),latest=expectation(description:"new image result")
+        coordinator.onAXTranslation = { value in
+            XCTAssertEqual(value.imageOCR.layers.first?.items.first?.translatedText,"설정")
+            if value.frame.frameID == 50 { first.fulfill() }
+            if value.frame.frameID == 52 { latest.fulfill() }
+        }
+        capture.emit(makeImage(width:32,height:24,gray:40),frameID:50)
+        await gate.waitUntilStarted()
+        capture.emit(makeImage(width:32,height:24,gray:40,changedPixel:(0,0,255)),frameID:51)
+        await gate.release()
+        await fulfillment(of:[first],timeout:2)
+        try await Task.sleep(for:.milliseconds(120))
+        capture.emit(makeImage(width:32,height:24,gray:40,changedPixel:(0,0,255)),frameID:52)
+        await fulfillment(of:[latest],timeout:2)
+        XCTAssertEqual(output.frames.last?.imageOCRLayers.count,1)
+        XCTAssertNotNil(output.frames.last?.axArtwork)
     }
 
     func testAXRequestedForAllContentStillUsesOCR() async throws {

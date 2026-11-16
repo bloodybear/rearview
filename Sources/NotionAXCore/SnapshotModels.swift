@@ -88,3 +88,13 @@ public struct AXCodeSegment: Codable, Sendable {
     public let status: String
     public let style: AXCodeStyle
 }
+
+/// Image geometry is independent of paragraph/text geometry. Coordinates use
+/// screen top-left points, matching the captured selection metadata.
+public struct AXImageRegion: Codable, Sendable {
+    public let node: Int
+    public let imageNode: Int?
+    public let box: AXBox?
+    public let displayBoxes: [AXBox]?
+    public let status: String
+}

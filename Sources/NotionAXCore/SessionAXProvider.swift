@@ -20,6 +20,10 @@ public enum AXExtractionError: String, Error, Sendable {
 // JSON is the versioned report wire format. Only value data crosses the queue;
 // handles and Chromium text markers remain private to a single traversal.
 public struct AXExtractionSnapshot: Sendable {
+    public var imageRegions: [AXImageRegion] {
+        struct Metadata: Decodable { let imageRegions: [AXImageRegion]? }
+        return (try? JSONDecoder().decode(Metadata.self, from: metadata).imageRegions) ?? []
+    }
     public let observations: [AXNode]
     public let paragraphUnits: [AXParagraph]
     public let status: AXCollectionStatus

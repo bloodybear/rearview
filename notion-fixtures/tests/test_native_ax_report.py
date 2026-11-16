@@ -13,6 +13,31 @@ spec.loader.exec_module(report)
 
 
 class NativeAXReportTests(unittest.TestCase):
+    def test_image_ocr_report_uses_capture_pixels_and_escapes_text(self):
+        with tempfile.TemporaryDirectory() as temp:
+            folder = Path(temp)
+            (folder/'render-source.png').write_bytes(bytes(16)+struct.pack('>II',400,200))
+            (folder/'image-ocr.json').write_text(json.dumps([
+                dict(node=7, status='complete', pixelBox=[[40,100],[200,80]],
+                     ocrSeconds=0.123,translationSeconds=0.456,cacheHit=False,
+                     lines=[dict(source='<script>日本語</script>',translation='한국어',box=[[0.1,0.25],[0.5,0.5]])])]))
+            result = report.image_ocr_review(folder,dict(selectionRegion=dict(x=10,y=20,width=200,height=100),imageRegions=[dict(node=7,status='selected',box=dict(x=30,y=30,width=100,height=40))],translationSamples=[dict(maxConcurrentOCR=2,presentations=[dict(seconds=0.1,paragraphs=3,imageRegions=0)],error='<unsafe>')]))
+            self.assertIn('AX 이미지 7',result)
+            self.assertIn('#00cccc',result)
+            self.assertIn('left:10.0%',result)
+            self.assertIn('top:10.0%',result)
+            self.assertIn('left:15.0%',result)
+            self.assertIn('&lt;script&gt;日本語&lt;/script&gt;',result)
+            self.assertNotIn('<script>日本語',result)
+            self.assertIn('한국어',result)
+            self.assertIn('0.123s',result)
+            self.assertIn('False',result)
+            self.assertIn('병렬 처리 · 화면 표시 시점',result)
+            self.assertIn('maxConcurrentOCR',result)
+            self.assertIn('&lt;unsafe&gt;',result)
+            self.assertNotIn('<unsafe>',result)
+            self.assertEqual(report.image_ocr_review(folder,{}),'')
+
     def test_actual_layout_pixel_conversion_and_frame_guard(self):
         with tempfile.TemporaryDirectory() as temp:
             folder = Path(temp)

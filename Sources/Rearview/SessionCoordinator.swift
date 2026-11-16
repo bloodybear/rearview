@@ -32,7 +32,7 @@ protocol SessionOCRProvider: AnyObject, Sendable {
 }
 
 @MainActor
-protocol SessionTranslationProvider: AnyObject {
+protocol SessionTranslationProvider: AnyObject, Sendable {
     func setDirection(_ direction: TranslationDirection)
     func setProtectsNonSourceText(_ enabled: Bool)
     func translate(_ source: String) async throws -> String
@@ -125,10 +125,17 @@ final class SessionCoordinator {
     struct AXTranslatedFrame: Sendable {
         let frame: AXFrameSnapshot
         let entries: [AXParagraphTranslation]
+        var imageOCR = AXImageOCRResult()
+    }
+    private let imageOCRProcessor = AXImageOCRProcessor()
+    private enum AXWorkResult: Sendable {
+        case paragraph(Int, AXParagraphTranslation)
+        case images(AXImageOCRProcessor.Completion)
     }
     private(set) var latestAXRenderedFrame: MirrorFrame?
     private(set) var latestAXTranslation: AXTranslatedFrame?
     var onAXTranslation: ((AXTranslatedFrame) -> Void)?
+    var onAXPresentation: ((AXTranslatedFrame) -> Void)?
     var onAXTranslationProgress: ((AXTranslatedFrame) -> Void)?
     private let translatesAXParagraphs: Bool
     private(set) var latestAXFrame: AXFrameSnapshot?
@@ -239,6 +246,22 @@ final class SessionCoordinator {
             collectParentTextDiagnostics:CommandLine.arguments.contains("--ax-collect-parent-values"))
     }
 
+    private func axPresentation(_ value: AXTranslatedFrame, artwork: AXRenderArtwork) -> MirrorFrame {
+        let size = CGSize(width:value.frame.image.width,height:value.frame.image.height)
+        var frame = MirrorFrame(image:value.frame.image,
+            translatedItems:artwork.items + value.imageOCR.layers.flatMap { $0.mappedItems(frameSize:size) },
+            ocrDebugItems:value.imageOCR.layers.flatMap { layer in
+                layer.debugItems.map { item in
+                    OCRDebugItem(id:item.id,status:item.status,rawText:item.rawText,confidence:item.confidence,
+                        recognitionLanguages:item.recognitionLanguages,translatedText:item.translatedText,
+                        normalizedRect:AXImageOCRProcessor.normalized(item.normalizedRect,in:layer.pixelBox,frameSize:size))
+                }
+            },frameID:value.frame.frameID)
+        frame.axArtwork = artwork
+        frame.imageOCRLayers = value.imageOCR.layers
+        return frame
+    }
+
     private func scheduleAX(_ frame: FrameEnvelope, origin: MirrorStatusOrigin) {
         let activeGeneration = generation, activeRevision = contentRevision
         ocrTaskSequence &+= 1
@@ -263,54 +286,100 @@ final class SessionCoordinator {
                 self.onAXExtraction?(result, frame.image, frame.id)
                 if self.translatesAXParagraphs {
                     let translator = AXParagraphTranslator(broker: self.broker, direction: self.translationDirection)
-                    let total = result.paragraphUnits.count
+                    let imageJobs = AXImageOCRProcessor.jobs(snapshot:result,image:frame.image,selection:request.selectionRegion)
+                    let total = result.paragraphUnits.count + imageJobs.count
                     self.showProcessingStatus(.translating(completed:0,total:total),frameID:frame.id,origin:origin)
-                    let entries = try await withThrowingTaskGroup(of: (Int, AXParagraphTranslation).self) { group in
-                        for (index, paragraph) in result.paragraphUnits.enumerated() {
-                            let request = AXTranslationRequest(paragraph:paragraph)
-                            group.addTask {
-                                (index, try await translator.translate(request, node:paragraph.node))
-                            }
+                    if !result.imageRegions.contains(where: { $0.status == "selected" }) { self.imageOCRProcessor.reset() }
+                    var imageOCR = AXImageOCRResult()
+                    let settings = self.ocrSettings[.realtime] ?? OCRSettings.defaultProfile(for:.realtime)
+                    let direction = self.translationDirection
+                    let processor = self.imageOCRProcessor, ocr = self.ocr, broker = self.broker
+                    let (events, continuation) = AsyncThrowingStream<AXWorkResult, Error>.makeStream()
+                    let entries = try await withThrowingTaskGroup(of:Void.self) { producers in
+                        producers.addTask {
+                            do {
+                                try await withThrowingTaskGroup(of:Void.self) { group in
+                                    if !imageJobs.isEmpty {
+                                        group.addTask {
+                                            _ = try await processor.process(snapshot:result,image:frame.image,
+                                                selection:request.selectionRegion,ocr:ocr,broker:broker,settings:settings,direction:direction,
+                                                onCompletion: { continuation.yield(.images($0)) })
+                                        }
+                                    }
+                                    for (index, paragraph) in result.paragraphUnits.enumerated() {
+                                        let request = AXTranslationRequest(paragraph:paragraph)
+                                        group.addTask {
+                                            let value = try await translator.translate(request,node:paragraph.node)
+                                            continuation.yield(.paragraph(index,value))
+                                        }
+                                    }
+                                    try await group.waitForAll()
+                                }
+                                continuation.finish()
+                            } catch { continuation.finish(throwing:error) }
                         }
+                        defer { producers.cancelAll() }
                         var completed: [(Int, AXParagraphTranslation)] = []
+                        var images: [Int:AXImageOCRResult] = [:]
                         var lastPresentation = ContinuousClock.now
-                        for try await entry in group {
+                        var finished = 0
+                        var artwork: AXRenderArtwork?
+                        var renderedParagraphs = -1
+                        for try await entry in events {
                             try Task.checkCancellation()
                             guard self.generation == activeGeneration, self.contentRevision == activeRevision,
                                   self.ocrTaskSequence == sequence else { throw CancellationError() }
-                            completed.append(entry)
+                            finished += 1
+                            let imageCompleted: Bool
+                            switch entry {
+                            case let .paragraph(index,value): completed.append((index,value)); imageCompleted = false
+                            case let .images(value):
+                                images[value.index] = value.result
+                                let ordered = images.keys.sorted().compactMap { images[$0] }
+                                imageOCR = AXImageOCRResult(layers:ordered.flatMap(\.layers),diagnostics:ordered.flatMap(\.diagnostics),maxConcurrentOCR:ordered.map(\.maxConcurrentOCR).max() ?? 0)
+                                imageCompleted = true
+                            }
                             if let captured = self.latestAXFrame {
-                                let progress = AXTranslatedFrame(frame:captured,entries:completed.sorted { $0.0 < $1.0 }.map { $0.1 })
+                                let allParagraphs = completed.count == result.paragraphUnits.count
+                                let visibleEntries = self.mirrorUpdateStyle == .progressive || allParagraphs
+                                    ? completed.sorted { $0.0 < $1.0 }.map { $0.1 } : []
+                                let progress = AXTranslatedFrame(frame:captured,entries:completed.sorted { $0.0 < $1.0 }.map { $0.1 },imageOCR:imageOCR)
                                 self.onAXTranslationProgress?(progress)
-                                if self.mirrorUpdateStyle == .progressive, ContinuousClock.now-lastPresentation >= .milliseconds(50) {
-                                    let artwork = await AXLineRendering.render(progress)
+                                if imageCompleted || allParagraphs || (self.mirrorUpdateStyle == .progressive &&
+                                    (artwork == nil || ContinuousClock.now-lastPresentation >= .milliseconds(50))) {
+                                    let visible = AXTranslatedFrame(frame:captured,entries:visibleEntries,imageOCR:imageOCR)
+                                    if artwork == nil || renderedParagraphs != visibleEntries.count {
+                                        artwork = await AXLineRendering.render(visible)
+                                        renderedParagraphs = visibleEntries.count
+                                    }
                                     try Task.checkCancellation()
                                     guard self.generation == activeGeneration, self.contentRevision == activeRevision,
                                           self.ocrTaskSequence == sequence else { throw CancellationError() }
-                                    var presentation = MirrorFrame(image:captured.image,translatedItems:artwork.items,frameID:captured.frameID)
-                                    presentation.axArtwork = artwork
+                                    let presentation = self.axPresentation(visible,artwork:artwork!)
                                     self.latestAXRenderedFrame = presentation
                                     self.display(presentation)
+                                    self.onAXPresentation?(visible)
                                     lastPresentation = .now
                                 }
                             }
-                            self.showProcessingStatus(.translating(completed:completed.count,total:total),frameID:frame.id,origin:origin)
+                            self.showProcessingStatus(.translating(completed:finished,total:total),frameID:frame.id,origin:origin)
                         }
+                        try await producers.waitForAll()
                         return completed.sorted { $0.0 < $1.0 }.map { $0.1 }
                     }
                     guard !Task.isCancelled, self.generation == activeGeneration,
                           self.contentRevision == activeRevision, self.ocrTaskSequence == sequence,
                           let captured = self.latestAXFrame else { return }
-                    let translated = AXTranslatedFrame(frame:captured,entries:entries)
+                    let translated = AXTranslatedFrame(frame:captured,entries:entries,imageOCR:imageOCR)
                     let artwork = await AXLineRendering.render(translated)
                     guard !Task.isCancelled, self.generation == activeGeneration,
                           self.contentRevision == activeRevision, self.ocrTaskSequence == sequence else { return }
-                    var rendered = MirrorFrame(image:captured.image,translatedItems:artwork.items,frameID:captured.frameID)
-                    rendered.axArtwork = artwork
+                    let rendered = self.axPresentation(translated,artwork:artwork)
                     self.latestAXRenderedFrame = rendered
                     self.display(rendered)
+                    self.onAXPresentation?(translated)
                     self.latestAXTranslation = translated
-                    self.showProcessingStatus(.completed(failures:entries.filter { $0.status == "failed" }.count + (result.status == .complete ? 0 : 1)),frameID:frame.id,origin:origin)
+                    self.showProcessingStatus(.completed(failures:imageOCR.failures + entries.filter { $0.status == "failed" }.count + (result.status == .complete ? 0 : 1)),frameID:frame.id,origin:origin)
                     self.onAXTranslation?(translated)
                 } else {
                     self.showProcessingStatus(.completed(failures:result.status == .complete ? 0 : 1),frameID:frame.id,origin:origin)
@@ -400,6 +469,7 @@ final class SessionCoordinator {
     }
 
     func stop() async {
+        imageOCRProcessor.reset()
         latestAXFrame = nil
         latestAXTranslation = nil; latestAXRenderedFrame = nil
         guard !stopping else { return }
@@ -459,6 +529,7 @@ final class SessionCoordinator {
     func setTranslationDirection(_ direction: TranslationDirection) {
         guard translationDirection != direction else { return }
         translationDirection = direction
+        imageOCRProcessor.reset()
         latestAXFrame = nil; latestAXTranslation = nil; latestAXRenderedFrame = nil
         direction.save()
         contentRevision += 1
@@ -477,6 +548,7 @@ final class SessionCoordinator {
     func setProtectsNonSourceText(_ enabled: Bool) {
         guard protectsNonSourceText != enabled else { return }
         protectsNonSourceText = enabled
+        imageOCRProcessor.reset()
         latestAXFrame = nil; latestAXTranslation = nil; latestAXRenderedFrame = nil
         TranslationTextProtection.save(enabled)
         contentRevision += 1
@@ -496,6 +568,13 @@ final class SessionCoordinator {
         guard ocrSettings[mode] != settings else { return }
         ocrSettings[mode] = settings
         settings.save(mode: mode)
+        if mode == .realtime, usesAXExtraction {
+            let captured = latestCapturedFrame
+            invalidateCapturedContent()
+            if let captured, acceptingFrames, !paused {
+                scheduleAX(captured,origin:.userAction)
+            }
+        }
     }
 
     func setRefinementOCRPolicy(_ policy: RefinementOCRPolicy) {
@@ -762,6 +841,7 @@ final class SessionCoordinator {
     }
 
     private func suspendAutomaticProcessing() {
+        imageOCRProcessor.reset()
         latestAXFrame = nil
         latestAXTranslation = nil; latestAXRenderedFrame = nil
         contentRevision += 1
@@ -1196,6 +1276,7 @@ final class SessionCoordinator {
     }
 
     private func invalidateCapturedContent() {
+        imageOCRProcessor.reset()
         latestAXFrame = nil
         latestAXTranslation = nil; latestAXRenderedFrame = nil
         contentRevision += 1

@@ -252,6 +252,44 @@ def rendered_layout_boxes(folder, metadata):
     return result
 
 
+def image_ocr_review(folder, metadata):
+    review = ''
+    image_path = folder/'image-ocr.json'
+    image_ocr = json.loads(image_path.read_text()) if image_path.exists() else []
+    if metadata.get('imageRegions'):
+        review += '<details open><summary>이미지 영역 · OCR</summary><p>청록색: AX 이미지 박스, 보라색: 실제 캡처 영역, 노란색: OCR 박스. 캡션은 기존 AX 텍스트로 처리합니다.</p>'
+        if (folder/'render-source.png').exists():
+            iw, ih = struct.unpack('>II', (folder/'render-source.png').read_bytes()[16:24])
+            review += '<div style="position:relative"><img src="render-source.png" style="width:100%;display:block">'
+            def overlay(x, y, w, h, color, title):
+                return f'<span title="{html.escape(title, quote=True)}" style="position:absolute;box-sizing:border-box;border:2px solid {color};left:{x/iw*100}%;top:{(ih-y-h)/ih*100}%;width:{w/iw*100}%;height:{h/ih*100}%"></span>'
+            selection = metadata.get('selectionRegion')
+            if selection and selection['width'] > 0 and selection['height'] > 0:
+                for region in metadata['imageRegions']:
+                    b = region.get('box')
+                    if region.get('status') == 'selected' and b:
+                        x = (b['x']-selection['x'])*iw/selection['width']
+                        y = ih-(b['y']+b['height']-selection['y'])*ih/selection['height']
+                        review += overlay(x,y,b['width']*iw/selection['width'],b['height']*ih/selection['height'],'#00cccc',f"AX 이미지 {region['node']}")
+            for d in image_ocr:
+                (x,y),(w,h) = d['pixelBox']
+                review += overlay(x,y,w,h,'#d080ff',f"이미지 {d['node']} · {d['status']}")
+                for line in d.get('lines',[]):
+                    (lx,ly),(lw,lh) = line['box']
+                    review += overlay(x+lx*w,y+ly*h,lw*w,lh*h,'#ffe060',line['source'])
+            review += '</div>'
+        samples = metadata.get('translationSamples', [])
+        if samples:
+            review += '<details><summary>병렬 처리 · 화면 표시 시점</summary><pre>'+html.escape(json.dumps(samples,ensure_ascii=False,indent=2))+'</pre></details>'
+        for d in image_ocr:
+            review += '<details><summary>'+html.escape(f"이미지 {d['node']} · {d['status']} · OCR {d['ocrSeconds']:.3f}s · 번역 {d['translationSeconds']:.3f}s · 재사용 {d['cacheHit']}")+'</summary>'
+            for line in d.get('lines',[]):
+                review += '<p>원문</p><pre>'+html.escape(line['source'])+'</pre><p>번역문</p><pre>'+html.escape(line.get('translation') or '번역 결과 없음 · 원문 유지')+'</pre>'
+            review += '<pre>'+html.escape(d.get('error') or '')+'</pre></details>'
+        review += '<details><summary>이미지 선택·제외 및 OCR 진단</summary><pre>'+html.escape(json.dumps({'regions':metadata['imageRegions'],'ocr':image_ocr},ensure_ascii=False,indent=2))+'</pre></details></details>'
+    return review
+
+
 def render(folder):
     folder = Path(folder).resolve()
     root = Path(__file__).resolve().parents[1]
@@ -323,6 +361,7 @@ def render(folder):
                     continue
                 review += f'<details><summary>{d["node"]}/{d.get("segment", "")} · {html.escape(d["status"])}</summary><div style="max-width:100%;overflow:auto"><div style="position:relative;overflow:hidden;width:{(right-left)*2}px;height:{(bottom-top)*2}px"><img loading="lazy" src="render-translated.png" style="position:absolute;max-width:none;width:{image_width*2}px;height:{image_height*2}px;left:{-left*2}px;top:{-top*2}px"></div></div></details>'
             review += '</details>'
+        review += image_ocr_review(folder, metadata)
         review += '</details>'
         page = page.replace('</style>', '</style>'+review, 1)
     (folder/'index.html').write_text(page)
