@@ -36,12 +36,18 @@ public struct AXParagraph: Codable, Sendable {
     public let inlineContent: [AXInlineContent]?
     /// Optional cell-overflow display boundary, after all occlusion clipping.
     public var displayBoxes: [AXBox]? = nil
+    public var occlusionBoxes: [AXBox]? = nil
     public var layoutExpansionRight: Double? = nil
     public var codeSegments: [AXCodeSegment]? = nil
     public let isCodeBlock, protectNonSourceText: Bool
 }
 extension AXParagraph {
-    public var displayRegions: [AXBox] { displayBoxes ?? visibleBoxes ?? [box] }
+    public var baseDisplayRegions: [AXBox] { displayBoxes ?? visibleBoxes ?? [box] }
+    public var displayRegions: [AXBox] {
+        var regions = baseDisplayRegions.map(\.cgRect)
+        for mask in occlusionBoxes ?? [] { regions = regions.flatMap { PreviewOcclusion.visibleBoxes($0, behind: mask.cgRect) } }
+        return regions.map { AXBox(x:$0.minX,y:$0.minY,width:$0.width,height:$0.height) }
+    }
     /// Only source backed by the native line collection may cross the translation boundary.
     public var translationSourceText: String? {
         guard lineRangeStatus == "complete_unverified" else { return nil }

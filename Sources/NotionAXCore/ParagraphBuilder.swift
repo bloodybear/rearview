@@ -219,6 +219,22 @@ public enum AXParagraphBuilder {
                 }
                 unit["displayBoxes"] = displayFragments.map(rect)
             }
+            let memberIDs = unit["members"] as? [Int] ?? []
+            let masks = nodes.filter { menu in
+                guard (menu["domClasses"] as? [String] ?? []).contains("notion-text-action-menu"),
+                      let menuID = menu["id"] as? Int,
+                      let root = ancestors(menuID).first(where: { byID[$0]?["role"] as? String == "AXWebArea" }) else { return false }
+                return memberIDs.allSatisfy { member in
+                    let chain = [member] + ancestors(member)
+                    return chain.contains(root) && !chain.contains(menuID) && !chain.contains(where: {
+                        (byID[$0]?["domClasses"] as? [String] ?? []).contains("notion-overlay-container")
+                    })
+                }
+            }.compactMap { menu -> [String:Double]? in
+                let f = box(menu["frame"])
+                return f.width > 1 && f.height > 1 && [f.minX,f.minY,f.width,f.height].allSatisfy(\.isFinite) ? rect(PreviewOcclusion.textEditingMenuPanel(f)) : nil
+            }
+            if !masks.isEmpty { unit["occlusionBoxes"] = masks }
             let f = box(unit["box"])
             return f.width > 0 && f.height > 0 ? unit : nil
         }

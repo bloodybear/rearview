@@ -2,6 +2,20 @@ import XCTest
 @testable import NotionAXCore
 
 final class ParagraphBuilderTests: XCTestCase {
+    func testTemporaryTextEditingMenuInset() {
+        let frame = CGRect(x:239,y:332,width:225,height:350)
+        XCTAssertEqual(PreviewOcclusion.textEditingMenuPanel(frame),CGRect(x:255,y:348,width:193,height:318))
+        let tiny = CGRect(x:10,y:10,width:25,height:25)
+        XCTAssertEqual(PreviewOcclusion.textEditingMenuPanel(tiny),tiny)
+    }
+    func testMenuMaskPreservesLayoutAndExcludesMenuDescendants() throws {
+        let data = Data("{\"node\":1,\"text\":\"日本語\",\"box\":{\"x\":0,\"y\":0,\"width\":100,\"height\":100},\"members\":[],\"lineRanges\":[],\"isCodeBlock\":false,\"protectNonSourceText\":false,\"occlusionBoxes\":[{\"x\":25,\"y\":25,\"width\":50,\"height\":50}]}".utf8)
+        let paragraph = try JSONDecoder().decode(AXParagraph.self,from:data)
+        XCTAssertEqual(paragraph.baseDisplayRegions.count,1)
+        XCTAssertEqual(paragraph.displayRegions.count,4)
+        XCTAssertEqual(paragraph.displayRegions.reduce(0) { $0+$1.width*$1.height },7500)
+        XCTAssertTrue(paragraph.displayRegions.allSatisfy { !$0.cgRect.intersects(CGRect(x:25,y:25,width:50,height:50)) })
+    }
     func testIconAndLabelGroupsBecomeSeparateUnits() {
         let f:[String:Double] = ["x":0,"y":0,"width":100,"height":30]
         var nodes:[[String:Any]] = [

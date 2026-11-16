@@ -637,10 +637,13 @@ static func collect(_ request: AXExtractionRequest, window: AXUIElement, cancell
                   let membership = visibleRoots[root] else { return false }
             return !AXVisibleSelection.excludes(discovered:membership.all.contains(elements[id]),visible:membership.visible.contains(elements[id]))
         }, occlusions:{ id in
+            let chain = [id]+ancestorIDs(id)
+            let menuMasks = rows.indices.filter { classes($0).contains("notion-text-action-menu") && !chain.contains($0) &&
+                ancestorIDs($0).contains(where: { rows[$0]["role"] as? String == "AXWebArea" && chain.contains($0) }) }.compactMap(rowFrame).map(PreviewOcclusion.textEditingMenuPanel)
             guard previewPanels.count == 1, let (root,ids) = previewPanels.first,
                   ids.count == 1, let panelID=ids.first, let panel=rowFrame(panelID),
-                  !([id]+ancestorIDs(id)).contains(root) else { return [] }
-            return [panel]
+                  !([id]+ancestorIDs(id)).contains(root) else { return menuMasks }
+            return menuMasks + [panel]
         })
     let metadata: [String: Any] = ["imageRegions":imageRegions,"status": valid ? (partial ? "partial" : "complete") : "failed",
         "targetAndFrameMatch":valid,"coordinateSystem":"screen-top-left-points", "elapsed":Date().timeIntervalSince(started), "colorQueries":colorCalls, "colorQuerySeconds":Date().timeIntervalSince(colorStarted),

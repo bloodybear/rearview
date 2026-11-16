@@ -6,7 +6,7 @@ body{font:14px system-ui;margin:20px;line-height:1.6}button{cursor:pointer}nav{d
 <details id="collectionDetails" hidden><summary>실제 수집·스크린샷 시점</summary><pre id="collectionMetadata"></pre></details>
 <p id="coverageNote" role="status" hidden></p>
 <p>문단보기는 번역 단위 후보를 표시합니다: 본문 AXTextArea, 탭·DB 셀의 native 컨트롤 라벨, 그 외 선택 텍스트. 원문을 조합하지 않으며 의미상 문단을 보증하지 않습니다. 노드·라인은 현재 선택 결과이며 픽셀 가시성은 미검증입니다. 번호 클릭: 참조 복사 / 박스 클릭: 원문·소속 관계. 번호가 박스보다 클릭 우선입니다.</p>
-<nav aria-label="박스 보기"><button data-mode="paragraph" aria-pressed="true">문단보기</button><button data-mode="node" aria-pressed="false">노드보기</button><button data-mode="line" aria-pressed="false">라인보기</button><button data-mode="layout" aria-pressed="false">배치박스</button><button data-mode="display" aria-pressed="false">표시경계</button><button data-mode="container" hidden aria-pressed="false">박스 비교</button><button data-mode="code" aria-pressed="false">코드 구간보기</button><button data-mode="none" aria-pressed="false">원본보기 (박스 없음)</button><button id="clear">소속 강조 해제</button><span id="count"></span></nav>
+<nav aria-label="박스 보기"><button data-mode="paragraph" aria-pressed="true">문단보기</button><button data-mode="node" aria-pressed="false">노드보기</button><button data-mode="line" aria-pressed="false">라인보기</button><button data-mode="layout" aria-pressed="false">배치박스</button><button data-mode="display" aria-pressed="false">표시경계</button><button data-mode="container" hidden aria-pressed="false">박스 비교</button><button data-mode="code" aria-pressed="false">코드 구간보기</button><button data-mode="occlusion" aria-pressed="false">가림 영역</button><button data-mode="none" aria-pressed="false">원본보기 (박스 없음)</button><button id="clear">소속 강조 해제</button><span id="count"></span></nav>
 <p id="modeNote"></p><div id="geometryLayers" hidden>
 <label><input type="checkbox" data-layer="paragraph" checked>문단</label>
 <label><input type="checkbox" data-layer="node" checked>노드</label>
@@ -35,7 +35,8 @@ const containerStudy=data.tableContainerStudy||[];
 const studyByNode=new Map(containerStudy.map(r=>[r.node,r]));
 document.querySelector('[data-mode=container]').hidden=!containerStudy.length;
 const layouts=(data.layoutBoxes||[]).map(r=>({...data.paragraphs.find(p=>p.node===r.node),...r,kind:'layout',paragraphNode:r.node}));
-const displays=data.paragraphs.flatMap(p=>(p.displayBoxes??p.visibleBoxes??[p.box]).map(box=>({...p,box,kind:'display',paragraphNode:p.node})));
+function subtractMask(b,m){const x=Math.max(b.x,m.x),y=Math.max(b.y,m.y),r=Math.min(b.x+b.width,m.x+m.width),d=Math.min(b.y+b.height,m.y+m.height);if(r<=x||d<=y)return [b];return [{x:b.x,y:b.y,width:b.width,height:y-b.y},{x:b.x,y:d,width:b.width,height:b.y+b.height-d},{x:b.x,y,width:x-b.x,height:d-y},{x:r,y,width:b.x+b.width-r,height:d-y}].filter(v=>v.width>0&&v.height>0);}
+const displays=data.paragraphs.flatMap(p=>(p.occlusionBoxes??[]).reduce((rs,m)=>rs.flatMap(b=>subtractMask(b,m)),p.displayBoxes??p.visibleBoxes??[p.box]).map(box=>({...p,box,kind:'display',paragraphNode:p.node})));
 const paragraphLines=data.paragraphs.flatMap(p=>(p.lineRanges||[]).map(l=>({...p,...l,kind:'line',paragraphNode:p.node})));
 const codeRanges=data.paragraphs.flatMap(p=>(p.codeSegments||[]).flatMap(run=>(run.pieces||[]).filter(piece=>piece.box).map(piece=>({...p,...piece,kind:'code',paragraphNode:p.node,codeRun:run.id,codeSegment:run}))));
 const lines=paragraphLines.length||data.nodes.some(n=>n.paragraphLineInvestigation)?paragraphLines:data.selected.flatMap(n=>(n.lineRanges||[]).map(l=>({...n,...l,kind:'line'})));
@@ -93,7 +94,7 @@ function drawBox(c,f){if(!f||f.width<=0||f.height<=0)return;
 }
 function setMode(value){mode=value;const capture=['container','layout','display'].includes(mode)?data.containerStudyCapture:null;viewFrame=capture?.frame??data.frame;Object.assign(screen.style,{width:viewFrame.width+'px',height:viewFrame.height+'px'});screen.querySelector('img').src=capture?.image??'screen.png';screen.querySelectorAll('button').forEach(b=>b.remove());document.querySelectorAll('[data-mode]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.mode===mode)));
  screen.querySelectorAll('[data-selection-overlay]').forEach(b=>b.hidden=['none','container','layout','display'].includes(mode));
- const items=(mode==='none'||mode==='container')?[]:mode==='paragraph'?data.paragraphs:mode==='layout'?layouts:mode==='display'?displays:mode==='line'?lines:mode==='code'?codeRanges:data.selected.map(c=>({...c,kind:'node'}));if(mode==='container'){
+ const items=mode==='occlusion'?data.paragraphs.flatMap(p=>(p.occlusionBoxes??[]).map(box=>({...p,box,kind:'display',paragraphNode:p.node}))):(mode==='none'||mode==='container')?[]:mode==='paragraph'?data.paragraphs:mode==='layout'?layouts:mode==='display'?displays:mode==='line'?lines:mode==='code'?codeRanges:data.selected.map(c=>({...c,kind:'node'}));if(mode==='container'){
  const enabled=k=>document.querySelector('[data-layer='+k+']').checked;
  for(const p of data.paragraphs){
   const r=studyByNode.get(p.node);

@@ -118,7 +118,7 @@ enum AXLineRendering {
                 var heightDecisions: [AXFontHeight.Decision] = []
                 let height = AXFontHeight.select(lines:paragraph.lineRanges.filter { !MathTranslationPolicy.nonrendering($0.text) },
                     source:sourceText,ids:paragraph.lineSourceNodes ?? paragraph.members,nodes:observations,
-                    clips:paragraph.displayRegions.map(\.cgRect).map { $0.intersection(region) },
+                    clips:paragraph.baseDisplayRegions.map(\.cgRect).map { $0.intersection(region) },
                     record:{ heightDecisions.append($0) })
                 fontHeights[-2]=(height,heightDecisions)
                 var paintable = Set<Int>(), paintFailures: [Int:String] = [:]
@@ -244,7 +244,7 @@ enum AXLineRendering {
                 if let cached = fontHeights[fontKey] { minHeight = cached.0; heightDecisions = cached.1 }
                 else {
                     minHeight = AXFontHeight.select(lines:part.fontLines.filter { !MathTranslationPolicy.nonrendering($0.text) },source:nativeSource,ids:ids,nodes:observations,
-                        clips:paragraph.displayRegions.map(\.cgRect).map { $0.intersection(region) },
+                        clips:paragraph.baseDisplayRegions.map(\.cgRect).map { $0.intersection(region) },
                         record:{ heightDecisions.append($0) })
                     fontHeights[fontKey] = (minHeight,heightDecisions)
                 }
