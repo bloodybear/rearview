@@ -1,4 +1,5 @@
 import AppKit
+import NotionAXCore
 import CoreText
 
 enum OpacityPopoverMetrics {
@@ -1231,6 +1232,20 @@ final class TranslationMirrorWindow: NSPanel, NSWindowDelegate {
     var onBackgroundOpacityChange: ((CGFloat) -> Void)?
     var onOverlayPresentationChange: ((OverlayPresentationSettings) -> Void)?
     var onDisplayModeChange: ((TranslationDisplayMode) -> Void)?
+    var onExtractionModeToggle: (() -> Void)?
+    var failureNoticeAnchorRect: CGRect? {
+        (displayMode == .mirror ? mirrorControlBar : overlayControlBar).screenRect
+    }
+    func clearTranslationOutput() {
+        if let frame = mirrorView.frameSnapshot {
+            display(MirrorFrame(image: frame.image, translatedItems: [], frameID: frame.frameID))
+        }
+    }
+    func clearTextInteractions() {
+        mirrorView.clearSelection(nil); mirrorView.clearSearch()
+        overlayPanel.translationView.clearSelection(nil); overlayPanel.translationView.clearSearch()
+    }
+    func setExtractionMode(_ mode: TextExtractionMode) { controlBars.forEach { $0.setExtractionMode(mode) } }
     var onTranslationDirectionChange: ((TranslationDirection) -> Void)?
     var onNonSourceTextProtectionChange: ((Bool) -> Void)?
     var onFollowSelectionSizeChange: ((Bool) -> Void)?
@@ -1388,6 +1403,7 @@ final class TranslationMirrorWindow: NSPanel, NSWindowDelegate {
         controlBar.onDisplayModeChange = { [weak self] mode in
             self?.displayModeDidChange(mode)
         }
+        controlBar.onExtractionModeToggle = { [weak self] in self?.onExtractionModeToggle?() }
         controlBar.onTranslationDirectionChange = { [weak self] direction in
             self?.translationDirectionDidChange(direction)
         }

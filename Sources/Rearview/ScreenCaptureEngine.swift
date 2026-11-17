@@ -25,6 +25,11 @@ final class ScreenCaptureEngine: NSObject, SCStreamOutput, SCStreamDelegate, @un
     private let queue = DispatchQueue(label: "Rearview.capture", qos: .userInteractive)
     private let stateLock = NSLock()
     private let ciContext = CIContext(options: [.cacheIntermediates: false])
+    var onFailure: (@Sendable (Error) -> Void)?
+    func stream(_ stream: SCStream, didStopWithError error: Error) {
+        guard self.stream === stream else { return }
+        onFailure?(error)
+    }
     private var onFrame: (@Sendable (CGImage, UInt64, UInt64) -> Void)?
     private var lastDelivery = ContinuousClock.now
     private var deliveryInterval: Duration = .milliseconds(30)
@@ -149,6 +154,7 @@ final class ScreenCaptureEngine: NSObject, SCStreamOutput, SCStreamDelegate, @un
         self.stream = nil
         configuration = nil
         onFrame = nil
+        onFailure = nil
         captureTarget = .allContent
         currentDisplayID = nil
     }

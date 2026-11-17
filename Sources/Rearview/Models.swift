@@ -91,6 +91,8 @@ enum AppDefaults {
             ToolbarHotKey(keyCode: UInt32(kVK_ANSI_Minus), modifiers: command, keyLabel: "-", isEnabled: true)
         case .zoomIn:
             ToolbarHotKey(keyCode: UInt32(kVK_ANSI_Equal), modifiers: command, keyLabel: "=", isEnabled: true)
+        case .extractionMode:
+            ToolbarHotKey(keyCode: UInt32(kVK_ANSI_7), modifiers: command, keyLabel: "7", isEnabled: true)
         case .translationDirection:
             ToolbarHotKey(keyCode: UInt32(kVK_ANSI_3), modifiers: command, keyLabel: "3", isEnabled: true)
         case .refreshMode:
@@ -205,6 +207,7 @@ enum ImageSaveSettings {
 
 enum AppSettings {
     static let defaultsKeys: [String] = [
+        TextExtractionPreference.defaultsKey,
         SelectionHotKey.keyCodeDefaultsKey, SelectionHotKey.modifiersDefaultsKey, SelectionHotKey.keyLabelDefaultsKey,
         "selectionHotKeyEnabled",
         ImmediateTranslationHotKey.keyCodeDefaultsKey, ImmediateTranslationHotKey.modifiersDefaultsKey, ImmediateTranslationHotKey.keyLabelDefaultsKey,
@@ -469,6 +472,7 @@ enum ToolbarShortcutAction: String, CaseIterable, Sendable {
     case openSettings
     case stopTranslation
     case applicationCapture
+    case extractionMode
     case translationDirection
     case protectNonSourceText
     case displayMode
@@ -507,6 +511,7 @@ enum ToolbarShortcutAction: String, CaseIterable, Sendable {
         case .openSettings: L10n.text("설정 열기")
         case .stopTranslation: L10n.text("번역 종료")
         case .applicationCapture: L10n.text("캡처 대상 선택")
+        case .extractionMode: L10n.text("AX/OCR 모드 전환")
         case .translationDirection: L10n.text("번역 방향 전환")
         case .protectNonSourceText: L10n.text("원문 외 텍스트 보호 전환")
         case .displayMode: L10n.text("미러/오버레이 모드 전환")
@@ -542,6 +547,8 @@ enum ToolbarShortcutAction: String, CaseIterable, Sendable {
             L10n.text("현재 번역 세션과 화면 캡처를 종료합니다.")
         case .applicationCapture:
             L10n.text("현재 영역에서 캡처할 앱을 선택합니다.")
+        case .extractionMode:
+            L10n.text("현재 대상과 관계없이 공용 AX/OCR 모드를 전환합니다.")
         case .translationDirection:
             L10n.text("일→한과 한→일 번역 방향을 전환합니다.")
         case .protectNonSourceText:

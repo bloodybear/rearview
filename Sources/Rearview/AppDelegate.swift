@@ -45,7 +45,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let permissionClient: ScreenCapturePermissionClient
     private let defaults: UserDefaults
     private let broker = TranslationBroker()
-    private lazy var coordinator = SessionCoordinator(broker: broker)
+    private lazy var coordinator = SessionCoordinator(broker: broker, initialTextExtractionMode: TextExtractionPreference.load(), persistsExtractionMode: true)
     private let selector = ScreenSelectionController()
 #if LST_EXCLUDE_DEBUG_FEATURES
     private let appUpdater: AppUpdater
@@ -409,6 +409,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 shortcutModifiers: entry.value.modifiers
             )
         })?.key else { return false }
+        if action == .extractionMode {
+            guard !event.isARepeat else { return true }
+            Task { await coordinator.setTextExtractionMode(coordinator.textExtractionMode == .ax ? .ocr : .ax) }
+            return true
+        }
         guard screenCapturePermissionGranted else {
             presentCurrentPermissionGate()
             return true
@@ -422,6 +427,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .applicationCapture:
             guard coordinator.isTranslationSessionKeyWindow(NSApp.keyWindow) else { return false }
             coordinator.showApplicationCapturePopup()
+        case .extractionMode: return true
         case .translationDirection:
             coordinator.setTranslationDirection(coordinator.currentTranslationDirection.toggled)
         case .protectNonSourceText:
@@ -766,7 +772,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 onComplete?(nil)
             } catch {
                 onComplete?(error)
-                if !(error is CancellationError) { self.show(error: error) }
+                if !(error is CancellationError), self.isScreenCapturePermissionError(error) { self.show(error: error) }
             }
         }
     }
@@ -906,6 +912,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             controller.onDisplayLanguageChange = { [weak self] language in
                 Task { @MainActor [weak self] in self?.applyDisplayLanguage(language) }
             }
+            controller.onExtractionModeChange = { [weak self] mode in
+                Task { await self?.coordinator.setTextExtractionMode(mode) }
+            }
+            coordinator.onExtractionModeChange = { [weak controller] _ in controller?.refresh() }
             controller.onTranslationDirectionChange = { [weak self] direction in
                 self?.coordinator.setTranslationDirection(direction)
             }
@@ -1054,6 +1064,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         coordinator.setMirrorAlwaysOnTop(MirrorAlwaysOnTop.load())
         coordinator.setMirrorBackgroundOpacity(MirrorBackgroundOpacity.load())
         coordinator.setDisplayMode(mode)
+        Task { await coordinator.setTextExtractionMode(TextExtractionPreference.load()) }
         coordinator.setTranslationDirection(TranslationDirection.load())
         coordinator.setProtectsNonSourceText(TranslationTextProtection.load())
         coordinator.setMirrorFollowsSelectionSize(MirrorFollowsSelectionSize.load())

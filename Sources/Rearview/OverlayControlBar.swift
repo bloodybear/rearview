@@ -1,4 +1,5 @@
 import AppKit
+import NotionAXCore
 
 @MainActor
 private final class OverlayControlBarDragView: NSView {
@@ -139,6 +140,7 @@ private final class OverlayControlBarContainerView: NSView {
 enum OverlayControlBarItemID: String, CaseIterable, Sendable {
     case application
     case displayMode
+    case extractionMode
     case translationDirection
     case protectNonSourceText
     case refreshMode
@@ -168,6 +170,7 @@ enum OverlayControlBarItemGroup: Equatable, Sendable {
 enum OverlayControlBarOverflowPresentation: Sendable {
     case applicationMenu
     case displayModeAction
+    case extractionModeAction
     case translationDirectionAction
     case protectNonSourceTextAction
     case refreshModeMenu
@@ -237,6 +240,7 @@ enum OverlayControlBarCatalog {
               width: OverlayControlBarMetrics.applicationWidth,
               compactWidth: OverlayControlBarMetrics.applicationCompactWidth,
               overflowPresentation: .applicationMenu),
+        .init(id: .extractionMode, group: .leading, width: OverlayControlBarMetrics.iconControlWidth, overflowPresentation: .extractionModeAction),
         .init(id: .displayMode, group: .leading,
               width: OverlayControlBarMetrics.displayModeWidth,
               compactWidth: OverlayControlBarMetrics.iconControlWidth,
@@ -323,6 +327,7 @@ func overlayControlBarShortcutSource(
     switch id {
     case .application: .toolbar(.applicationCapture)
     case .displayMode: .toolbar(.displayMode)
+    case .extractionMode: .toolbar(.extractionMode)
     case .translationDirection: .toolbar(.translationDirection)
     case .protectNonSourceText: .toolbar(.protectNonSourceText)
     case .refreshMode: .toolbar(.refreshMode)
@@ -877,6 +882,11 @@ final class OverlayControlBarController: NSObject, NSMenuDelegate {
         frame: .zero, pullsDown: false
     )
     private let displayModeButton = OverlayControlBarButton()
+    private let extractionModeButton = OverlayControlBarButton()
+    private var extractionMode: TextExtractionMode = .ax
+    var screenRect: CGRect? { container.window.map { $0.convertToScreen(container.convert(container.bounds, to: nil)) } }
+    var onExtractionModeToggle: (() -> Void)?
+    @objc private func toggleExtractionMode() { onExtractionModeToggle?() }
     private let translationDirectionButton = OverlayControlBarButton()
     private let protectNonSourceTextButton = OverlayControlBarButton()
     private let refreshModeButton = OverlayControlBarButton()
@@ -1101,6 +1111,7 @@ final class OverlayControlBarController: NSObject, NSMenuDelegate {
             translationDirectionButton, symbol: "arrow.left.arrow.right", toolTip: L10n.text("번역 방향 전환"),
             action: #selector(toggleTranslationDirection)
         )
+        configureButton(extractionModeButton, symbol: "text.alignleft", toolTip: "AX", action: #selector(toggleExtractionMode))
         translationDirectionButton.imagePosition = .imageLeading
         translationDirectionButton.imageHugsTitle = true
         translationDirectionButton.alignment = .center
@@ -1360,6 +1371,7 @@ final class OverlayControlBarController: NSObject, NSMenuDelegate {
         switch id {
         case .application: applicationPopup
         case .displayMode: displayModeButton
+        case .extractionMode: extractionModeButton
         case .translationDirection: translationDirectionButton
         case .protectNonSourceText: protectNonSourceTextButton
         case .refreshMode: refreshModeButton
@@ -1725,6 +1737,7 @@ final class OverlayControlBarController: NSObject, NSMenuDelegate {
     ) {
         self.applications = applications
         selectedApplication = selected
+        setExtractionMode(extractionMode)
         rebuildApplicationPopup()
         if let overflowApplicationMenu {
             rebuildOverflowApplicationMenu(overflowApplicationMenu)
@@ -1744,6 +1757,28 @@ final class OverlayControlBarController: NSObject, NSMenuDelegate {
         updateAllPresentation()
     }
 
+    private var extractionModeTooltip: String {
+        if extractionMode == .ocr { return L10n.text("OCR 모드 · 클릭하여 AX로 전환") }
+        if TextExtractionPreference.effective(.ax, bundleIdentifier: selectedApplication?.bundleIdentifier) == .ax { return L10n.text("AX 모드 · 클릭하여 OCR로 전환") }
+        return selectedApplication == nil ? L10n.text("AX 선택 · 모든 앱 대상에서는 OCR 사용 · 클릭하여 OCR로 전환") : L10n.text("AX 선택 · 현재 앱은 미지원하여 OCR 사용 · 클릭하여 OCR로 전환")
+    }
+    func setExtractionMode(_ mode: TextExtractionMode) {
+        extractionMode = mode
+        let label = extractionModeTooltip
+        let base = symbol(mode == .ax ? "text.alignleft" : "viewfinder", description: label)
+        if mode == .ax && TextExtractionPreference.effective(.ax, bundleIdentifier: selectedApplication?.bundleIdentifier) != .ax {
+            let size = NSSize(width: 20, height: 20)
+            extractionModeButton.image = NSImage(size: size, flipped: false) { rect in
+                base.draw(in: rect.insetBy(dx: 2, dy: 2))
+                NSGraphicsContext.current?.cgContext.clear(CGRect(x: 12, y: 0, width: 8, height: 8))
+                NSImage(systemSymbolName: "nosign", accessibilityDescription: nil)?.draw(in: NSRect(x: 12, y: 0, width: 8, height: 8))
+                return true
+            }
+            extractionModeButton.image?.isTemplate = true
+        } else { extractionModeButton.image = base }
+        setTooltip(toolbarShortcutToolTip(label, action: .extractionMode), for: extractionModeButton)
+        extractionModeButton.setAccessibilityLabel(label)
+    }
     func setTranslationDirection(_ direction: TranslationDirection) {
         translationDirection = direction
         translationDirectionButton.image = symbol(
@@ -1905,6 +1940,7 @@ final class OverlayControlBarController: NSObject, NSMenuDelegate {
         updateDockedAppearance()
         updateBackgroundPresentation()
         updateDisplayModePresentation()
+        setExtractionMode(extractionMode)
         setTranslationDirection(translationDirection)
         setProtectsNonSourceText(protectsNonSourceText)
         updateRefreshPresentation()
@@ -2041,6 +2077,7 @@ final class OverlayControlBarController: NSObject, NSMenuDelegate {
 
     func refreshShortcutToolTips() {
         updateDisplayModePresentation()
+        setExtractionMode(extractionMode)
         setTranslationDirection(translationDirection)
         setProtectsNonSourceText(protectsNonSourceText)
         updateRefreshPresentation()
@@ -2448,6 +2485,8 @@ final class OverlayControlBarController: NSObject, NSMenuDelegate {
                 symbol: displayMode == .overlay ? "macwindow" : "macwindow.on.rectangle",
                 action: #selector(toggleDisplayMode)
             )
+        case .extractionModeAction:
+            return actionMenuItem(extractionModeTooltip, symbol: extractionMode == .ax ? "text.alignleft" : "viewfinder", action: #selector(toggleExtractionMode))
         case .translationDirectionAction:
             return actionMenuItem(
                 L10n.format("번역 방향: %@", translationDirection.title), symbol: "arrow.left.arrow.right",
@@ -2906,7 +2945,7 @@ final class OverlayControlBarController: NSObject, NSMenuDelegate {
             "overlay control bar: tooltip panel must not animate when ordered"
         )
 
-        let wideWidth: CGFloat = 800
+        let wideWidth: CGFloat = 850
         setDebugFeaturesEnabled(true)
         panel?.setFrame(
             CGRect(x: 0, y: 0, width: wideWidth, height: OverlayControlBarMetrics.height),

@@ -230,6 +230,7 @@ final class SessionCoordinatorIntegrationTests: XCTestCase {
         try await coordinator.start(screen:screen,selection:selection,captureTarget:.application(
             CaptureApplication(processID:123,bundleIdentifier:"notion.id",name:"Notion",anchorWindowID:42,anchorWindowFrame:screen.frame)))
         coordinator.setRefreshMode(.automatic); coordinator.setPaused(false)
+        coordinator.onFailure = { failure in XCTFail("Partial collection must not toast: \(failure)") }
         let done = expectation(description:"AX result")
         coordinator.onAXExtraction = { _, _, _ in done.fulfill() }
         capture.emit(makeImage(gray:40),frameID:1)
@@ -366,7 +367,7 @@ final class SessionCoordinatorIntegrationTests: XCTestCase {
         await gate.release()
         for _ in 0..<10 { await Task.yield() }
         XCTAssertNil(coordinator.latestAXSnapshot)
-        XCTAssertTrue(output.frames.isEmpty)
+        XCTAssertTrue(output.frames.allSatisfy { $0.axArtwork == nil && $0.translatedItems.isEmpty })
     }
 
     func testNewestPendingFrameRunsAfterInFlightAXFinishes() async throws {
@@ -418,7 +419,7 @@ final class SessionCoordinatorIntegrationTests: XCTestCase {
         await gate.release()
         for _ in 0..<10 { await Task.yield() }
         XCTAssertNil(coordinator.latestAXSnapshot)
-        XCTAssertTrue(output.frames.isEmpty)
+        XCTAssertTrue(output.frames.allSatisfy { $0.axArtwork == nil && $0.translatedItems.isEmpty })
     }
 
     func testImageOCRDoesNotBlockAXProgressAndLateImageIsDiscarded() async throws {
@@ -529,19 +530,19 @@ final class SessionCoordinatorIntegrationTests: XCTestCase {
             await gate.waitUntilStarted()
             await fulfillment(of:[partial],timeout:2)
             XCTAssertEqual(presented.contains(1),style == .progressive)
-            await gate.release()
             if style == .atomic {
                 XCTAssertTrue(output.frames.isEmpty, "Atomic AX must not flash the source while translation is pending")
             } else {
                 XCTAssertTrue(output.frames.contains { $0.axArtwork == nil })
             }
+            await gate.release()
             await fulfillment(of:[finished],timeout:2)
             XCTAssertEqual(presented.last,2)
-        }
             if style == .atomic {
                 XCTAssertFalse(output.frames.isEmpty)
                 XCTAssertTrue(output.frames.allSatisfy { $0.axArtwork != nil })
             }
+        }
     }
 
     func testImageBeforeAXRemainsVisibleWhenAXCompletes() async throws {
@@ -653,8 +654,8 @@ final class SessionCoordinatorIntegrationTests: XCTestCase {
             capture.emit(makeImage(gray:40),frameID:1)
             await fulfillment(of:[failed],timeout:2)
             XCTAssertNil(coordinator.latestAXSnapshot)
-            XCTAssertTrue(output.statuses.contains(.recognitionFailed))
             XCTAssertTrue(output.frames.isEmpty, "AX recognition failure must retain the displayed frame, like OCR")
+            XCTAssertTrue(output.statuses.contains(.recognitionFailed))
             XCTAssertTrue(translator.calls.isEmpty)
             await coordinator.stop()
         }
@@ -867,6 +868,98 @@ final class SessionCoordinatorIntegrationTests: XCTestCase {
         XCTAssertEqual(output.cancellationCount, 1)
         XCTAssertEqual(translator.calls, ["設定"])
 
+    }
+
+    func testModeSwitchRefreshesOnceWhileManualOrPaused() async throws {
+        for manual in [true, false] {
+            let capture = TestCaptureProvider(), output = TestOutputSink(), ax = TestAXProvider()
+            let coordinator = SessionCoordinator(broker: TestTranslationProvider(translations: [:]), capture: capture,
+                targetResolver: TestTargetResolver(), ocr: TestOCRProvider(batch: makeBatch(lines: [])),
+                ax: ax, outputSink: output, createsOutputWindow: false, translatesAXParagraphs: false)
+            coordinatorsUnderTest.append(coordinator)
+            let (screen, selection) = try makeScreenAndSelection()
+            try await coordinator.start(screen: screen, selection: selection, captureTarget: .application(
+                CaptureApplication(processID: 123, bundleIdentifier: "notion.id", name: "Notion", anchorWindowID: 42, anchorWindowFrame: screen.frame)))
+            coordinator.setRefreshMode(manual ? .manual : .automatic)
+            if !manual { coordinator.setPaused(true) }
+            capture.emit(makeImage(gray: 40), frameID: 1)
+            for _ in 0..<10 { await Task.yield() }
+            let done = expectation(description: "one mode refresh")
+            done.assertForOverFulfill = true
+            coordinator.onAXExtraction = { _, _, _ in done.fulfill() }
+            await coordinator.setTextExtractionMode(.ax)
+            await fulfillment(of: [done], timeout: 2)
+            XCTAssertEqual(coordinator.currentRefreshMode, manual ? .manual : .automatic)
+            XCTAssertEqual(coordinator.isPaused, !manual)
+            capture.emit(makeImage(gray: 80), frameID: 2)
+            try await Task.sleep(for: .milliseconds(100))
+            let calls = await ax.calls
+            XCTAssertEqual(calls, 1)
+            await coordinator.stop()
+        }
+    }
+
+    func testAXPermissionFailureIsReportedWithoutOCRFallback() async throws {
+        let capture = TestCaptureProvider(), ax = TestAXProvider(failure: .permissionDenied)
+        let coordinator = SessionCoordinator(broker: TestTranslationProvider(translations: [:]), capture: capture,
+            targetResolver: TestTargetResolver(), ocr: TestOCRProvider(batch: makeBatch(lines: [])), ax: ax,
+            createsOutputWindow: false, initialTextExtractionMode: .ax)
+        coordinatorsUnderTest.append(coordinator)
+        let (screen, selection) = try makeScreenAndSelection()
+        try await coordinator.start(screen: screen, selection: selection, captureTarget: .application(
+            CaptureApplication(processID: 123, bundleIdentifier: "notion.id", name: "Notion", anchorWindowID: 42, anchorWindowFrame: screen.frame)))
+        coordinator.setRefreshMode(.automatic); coordinator.setPaused(false)
+        let done = expectation(description: "permission notice")
+        coordinator.onFailure = { failure in
+            XCTAssertEqual(failure.permission, .accessibility)
+            done.fulfill()
+        }
+        capture.emit(makeImage(gray: 40), frameID: 1)
+        await fulfillment(of: [done], timeout: 2)
+        XCTAssertTrue(coordinator.usesAXExtraction)
+    }
+
+    func testModeSwitchBeforeFirstFrameRefreshesWhileManual() async throws {
+        let capture = TestCaptureProvider(), output = TestOutputSink(), ax = TestAXProvider()
+        let coordinator = SessionCoordinator(broker: TestTranslationProvider(translations: [:]), capture: capture,
+            targetResolver: TestTargetResolver(), ocr: TestOCRProvider(batch: makeBatch(lines: [])), ax: ax,
+            outputSink: output, createsOutputWindow: false, translatesAXParagraphs: false)
+        coordinatorsUnderTest.append(coordinator)
+        let (screen, selection) = try makeScreenAndSelection()
+        try await coordinator.start(screen: screen, selection: selection, captureTarget: .application(
+            CaptureApplication(processID: 123, bundleIdentifier: "notion.id", name: "Notion", anchorWindowID: 42, anchorWindowFrame: screen.frame)))
+        coordinator.setRefreshMode(.manual)
+        await coordinator.setTextExtractionMode(.ax)
+        let done = expectation(description: "first frame refresh")
+        coordinator.onAXExtraction = { _, _, _ in done.fulfill() }
+        capture.emit(makeImage(gray: 40), frameID: 1)
+        await fulfillment(of: [done], timeout: 2)
+        XCTAssertEqual(coordinator.currentRefreshMode, .manual)
+    }
+
+    func testRapidModeSwitchUsesLatestSelection() async throws {
+        let capture = TestCaptureProvider(), output = TestOutputSink(), ax = TestAXProvider()
+        let coordinator = SessionCoordinator(broker: TestTranslationProvider(translations: [:]), capture: capture,
+            targetResolver: TestTargetResolver(), ocr: TestOCRProvider(batch: makeBatch(lines: [])), ax: ax,
+            outputSink: output, createsOutputWindow: false, translatesAXParagraphs: false)
+        coordinatorsUnderTest.append(coordinator)
+        let (screen, selection) = try makeScreenAndSelection()
+        try await coordinator.start(screen: screen, selection: selection, captureTarget: .application(
+            CaptureApplication(processID: 123, bundleIdentifier: "notion.id", name: "Notion", anchorWindowID: 42, anchorWindowFrame: screen.frame)))
+        coordinator.setRefreshMode(.manual)
+        capture.emit(makeImage(gray: 40), frameID: 1)
+        for _ in 0..<10 { await Task.yield() }
+        let done = expectation(description: "latest mode refresh")
+        coordinator.onAXExtraction = { _, _, _ in done.fulfill() }
+        let first = Task { await coordinator.setTextExtractionMode(.ax) }
+        await Task.yield()
+        let second = Task { await coordinator.setTextExtractionMode(.ocr) }
+        await Task.yield()
+        let third = Task { await coordinator.setTextExtractionMode(.ax) }
+        await first.value; await second.value; await third.value
+        await fulfillment(of: [done], timeout: 2)
+        XCTAssertEqual(coordinator.textExtractionMode, .ax)
+        XCTAssertTrue(coordinator.usesAXExtraction)
     }
 
     private func makeCoordinator(

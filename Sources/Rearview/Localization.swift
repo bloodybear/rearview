@@ -135,6 +135,28 @@ Rearview 설정	Rearview Settings	Rearview設定
 일반	General	一般
 단축키	Shortcuts	ショートカット
 화면 표시	Display	画面表示
+AX/OCR 모드 전환	Toggle AX/OCR mode	AX/OCRモードを切り替え
+현재 대상과 관계없이 공용 AX/OCR 모드를 전환합니다.	Switch the shared AX/OCR mode regardless of the current target.	現在の対象にかかわらず共通のAX/OCRモードを切り替えます。
+캡처 및 인식	Capture & Recognition	キャプチャと認識
+추출 방식	Text extraction	テキスト抽出
+AX/OCR 모드	AX/OCR mode	AX/OCRモード
+AX는 Notion 단일 앱에서 지원합니다. 다른 앱 또는 모든 앱 대상에서는 OCR을 사용합니다.	AX supports Notion as a single-app target. Other apps and All Apps use OCR.	AXはNotion単独の指定に対応しています。他のアプリやすべてのアプリではOCRを使用します。
+OCR 모드 · 클릭하여 AX로 전환	OCR mode · Click to switch to AX	OCRモード · クリックでAXに切り替え
+AX 모드 · 클릭하여 OCR로 전환	AX mode · Click to switch to OCR	AXモード · クリックでOCRに切り替え
+AX 선택 · 모든 앱 대상에서는 OCR 사용 · 클릭하여 OCR로 전환	AX selected · All Apps uses OCR · Click to switch to OCR	AX選択中 · すべてのアプリではOCRを使用 · クリックでOCRに切り替え
+AX 선택 · 현재 앱은 미지원하여 OCR 사용 · 클릭하여 OCR로 전환	AX selected · This app uses OCR because AX is unsupported · Click to switch to OCR	AX選択中 · このアプリは未対応のためOCRを使用 · クリックでOCRに切り替え
+손쉬운 사용 권한이 없어 AX 수집을 시작할 수 없습니다.	AX collection cannot start without Accessibility permission.	アクセシビリティの権限がないためAX収集を開始できません。
+화면 기록 권한이 없어 화면을 캡처할 수 없습니다.	Screen capture requires Screen Recording permission.	画面収録の権限がないため画面をキャプチャできません。
+화면 캡처에 실패했습니다.	Screen capture failed.	画面のキャプチャに失敗しました。
+화면의 글자 인식에 실패했습니다.	Screen text recognition failed.	画面の文字認識に失敗しました。
+번역에 실패했습니다.	Translation failed.	翻訳に失敗しました。
+대상 앱 또는 창이 종료되어 AX 수집에 실패했습니다.	AX collection failed because the target app or window closed.	対象のアプリまたはウインドウが終了したためAX収集に失敗しました。
+대상 창을 확인할 수 없어 AX 수집에 실패했습니다.	AX collection failed because the target window could not be identified.	対象のウインドウを確認できないためAX収集に失敗しました。
+앱의 텍스트를 가져오는 AX 수집에 실패했습니다.	AX could not retrieve text from the app.	AXでアプリのテキストを取得できませんでした。
+ · 클릭하여 권한 설정 열기	 · Click to open permission settings	 · クリックして権限設定を開く
+손쉬운 사용	Accessibility	アクセシビリティ
+화면 기록	Screen Recording	画面収録
+시스템 설정 → 개인정보 보호 및 보안 → %@에서 권한을 허용하세요.	Allow access in System Settings → Privacy & Security → %@.	システム設定 → プライバシーとセキュリティ → %@で権限を許可してください。
 캡처 및 OCR	Capture & OCR	キャプチャとOCR
 개발자	Developer	開発者
 시작 및 실행	Startup & Operation	起動と動作

@@ -110,7 +110,7 @@ struct SettingsAndShortcutTests {
 
     @Test func toolbarShortcutDefaultsAndPresentation() {
         withTestDefaults { defaults in
-            #expect(ToolbarShortcutAction.allCases.count == 27)
+            #expect(ToolbarShortcutAction.allCases.count == 28)
             #expect(ToolbarHotKey.defaultValue(for: .protectNonSourceText).keyCode == UInt32(kVK_ANSI_4))
             #expect(ToolbarHotKey.defaultValue(for: .refreshMode).keyCode == UInt32(kVK_ANSI_5))
             #expect(ToolbarHotKey.defaultValue(for: .modeSpecificDisplayControl).keyCode == UInt32(kVK_ANSI_6))
@@ -321,7 +321,7 @@ struct SettingsAndShortcutTests {
             == overlayIDs.firstIndex(of: .translationDirection).map { $0 + 1 })
         #expect(overlay.contains(where: { $0.id == .search }))
         #expect(!overlay.contains(where: { $0.id == .zoomOut }))
-        #expect(overlayControlBarResponsiveLayout(width: 800, items: overlay)
+        #expect(overlayControlBarResponsiveLayout(width: 850, items: overlay)
             == OverlayControlBarResponsiveLayout(visibleItemIDs: overlayIDs, overflowItemIDs: []))
         let overlayCompactPresentation = overlayControlBarResponsivePresentation(
             width: 782,
@@ -343,7 +343,7 @@ struct SettingsAndShortcutTests {
         let releaseOverlay = OverlayControlBarCatalog.availableItems(
             displayMode: .overlay, debugFeaturesEnabled: false
         )
-        #expect(overlayControlBarResponsiveLayout(width: 800, items: releaseOverlay)
+        #expect(overlayControlBarResponsiveLayout(width: 850, items: releaseOverlay)
             == OverlayControlBarResponsiveLayout(
                 visibleItemIDs: releaseOverlay.map(\.id), overflowItemIDs: []
             ))
@@ -379,7 +379,7 @@ struct SettingsAndShortcutTests {
         #expect(mirrorCompactPresentation.layout.visibleItemIDs == mirrorIDs)
         #expect(mirrorCompactPresentation.layout.overflowItemIDs.isEmpty)
         #expect(mirrorCompactPresentation.compactedItemIDs == [
-            .refreshMode, .translationDirection, .displayMode
+            .refreshMode, .translationDirection, .displayMode, .application
         ])
         let mirrorTooNarrowPresentation = overlayControlBarResponsivePresentation(
             width: 1,

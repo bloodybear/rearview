@@ -141,6 +141,15 @@ final class SessionCoordinator {
     private(set) var latestAXFrame: AXFrameSnapshot?
     var latestAXSnapshot: AXExtractionSnapshot? { latestAXFrame?.snapshot }
     var onAXExtraction: ((AXExtractionSnapshot, CGImage, UInt64) -> Void)?
+    private let failureNotice = SessionFailureNotice()
+    private var failureDeduplicator = SessionFailureDeduplicator()
+    var onFailure: ((SessionFailure) -> Void)?
+    private func reportFailure(_ error: Error?, stage: SessionFailure.Stage, userInitiated: Bool = false) {
+        let failure = SessionFailure.make(error, stage: stage)
+        guard failureDeduplicator.shouldPresent(failure, userInitiated: userInitiated) else { return }
+        onFailure?(failure)
+        if createsOutputWindow { failureNotice.show(failure, anchor: mirror, anchorRect: mirror?.failureNoticeAnchorRect) }
+    }
     var onAXExtractionError: ((Error) -> Void)?
     private let ocr: any SessionOCRProvider
     private let changes = ChangeDetector()
@@ -210,8 +219,12 @@ final class SessionCoordinator {
         outputSink: (any SessionOutputSink)? = nil,
         createsOutputWindow: Bool = true,
         translatesAXParagraphs: Bool = true,
-        initialTranslationDirection: TranslationDirection? = nil
+        initialTranslationDirection: TranslationDirection? = nil,
+        initialTextExtractionMode: TextExtractionMode = .ocr,
+        persistsExtractionMode: Bool = false
     ) {
+        self.persistsExtractionMode = persistsExtractionMode
+        self.textExtractionMode = initialTextExtractionMode
         self.broker = broker
         self.translatesAXParagraphs = translatesAXParagraphs
         if let initialTranslationDirection { self.translationDirection = initialTranslationDirection }
@@ -224,14 +237,47 @@ final class SessionCoordinator {
     }
 
     var usesAXExtraction: Bool {
-        textExtractionMode == .ax && captureTarget.application?.bundleIdentifier == "notion.id"
+        TextExtractionPreference.effective(textExtractionMode, bundleIdentifier: captureTarget.application?.bundleIdentifier) == .ax
     }
 
+    var onExtractionModeChange: ((TextExtractionMode) -> Void)?
+    private var modeTransition: Task<Void, Never>?
+    private var modeTransitionID = 0
+    private var modeTransitionInProgress = false
+    private var pendingModeRefresh = false
+    private let persistsExtractionMode: Bool
     func setTextExtractionMode(_ mode: TextExtractionMode) async {
         guard mode != textExtractionMode else { return }
         textExtractionMode = mode
+        if persistsExtractionMode { TextExtractionPreference.save(mode) }
+        mirror?.clearTextInteractions()
+        mirror?.clearTranslationOutput()
+        mirror?.setExtractionMode(mode)
+        onExtractionModeChange?(mode)
+        failureDeduplicator.reset()
+        failureNotice.dismiss()
+        modeTransitionInProgress = true
+        pendingModeRefresh = false
+        let frame = latestCapturedFrame
         invalidateCapturedContent()
-        await ax.endSession()
+        if let frame { display(MirrorFrame(image: frame.image, translatedItems: [], frameID: frame.id)) }
+        modeTransitionID += 1
+        let transitionID = modeTransitionID, activeGeneration = generation, activeRevision = contentRevision
+        let previous = modeTransition
+        let task = Task { @MainActor [weak self] in
+            await previous?.value
+            guard let self else { return }
+            await self.ax.endSession()
+            guard self.modeTransitionID == transitionID else { return }
+            self.modeTransitionInProgress = false
+            guard self.generation == activeGeneration, self.contentRevision == activeRevision else { return }
+            if self.latestCapturedFrame == nil { self.latestCapturedFrame = frame }
+            if self.latestCapturedFrame != nil { self.translateImmediately() }
+            else { self.pendingModeRefresh = self.isSessionActive }
+        }
+        modeTransition = task
+        await task.value
+        if modeTransitionID == transitionID { modeTransition = nil }
     }
 
     private func axRequest() throws -> AXExtractionRequest {
@@ -281,6 +327,8 @@ final class SessionCoordinator {
                 let result = try await self.ax.collect(request)
                 guard !Task.isCancelled, self.generation == activeGeneration,
                       self.contentRevision == activeRevision, self.ocrTaskSequence == sequence else { return }
+                if result.status == .failed { throw SessionCollectionFailure.failed }
+                self.failureDeduplicator.succeeded(.ax)
                 self.latestAXFrame = AXFrameSnapshot(snapshot:result,image:frame.image,frameID:frame.id,receivedAt:frame.receivedAt)
                 // Match OCR: atomic updates retain the displayed result until rendering finishes.
                 if !self.translatesAXParagraphs || self.mirrorUpdateStyle == .progressive {
@@ -382,6 +430,12 @@ final class SessionCoordinator {
                     self.display(rendered)
                     self.onAXPresentation?(translated)
                     self.latestAXTranslation = translated
+                    let attempts = entries.filter { ["failed", "translated", "partial"].contains($0.status) }
+                    if !attempts.isEmpty && attempts.allSatisfy({ $0.status == "failed" }) && imageOCR.layers.isEmpty { self.reportFailure(nil, stage: .translation, userInitiated: origin == .userAction) }
+                    else if attempts.isEmpty && !imageOCR.diagnostics.isEmpty && imageOCR.failures == imageOCR.diagnostics.count {
+                        let stage: SessionFailure.Stage = imageOCR.diagnostics.contains { $0.status == "failed" } ? .ocr : .translation
+                        self.reportFailure(nil, stage: stage, userInitiated: origin == .userAction)
+                    } else { self.failureDeduplicator.succeeded(.translation) }
                     self.showProcessingStatus(.completed(failures:imageOCR.failures + entries.filter { $0.status == "failed" }.count + (result.status == .complete ? 0 : 1)),frameID:frame.id,origin:origin)
                     self.onAXTranslation?(translated)
                 } else {
@@ -391,6 +445,7 @@ final class SessionCoordinator {
                 guard !Task.isCancelled, self.generation == activeGeneration,
                       self.contentRevision == activeRevision, self.ocrTaskSequence == sequence else { return }
                 self.showProcessingStatus(.recognitionFailed,frameID:frame.id,origin:origin)
+                self.reportFailure(error, stage: .ax, userInitiated: origin == .userAction)
                 self.onAXExtractionError?(error)
             }
         }
@@ -414,9 +469,18 @@ final class SessionCoordinator {
         // Explicit targets remain authoritative for benchmark and programmatic starts.
         let resolvedTarget: CaptureTarget
         if captureTarget == .allContent {
-            let resolution = try await targetResolver.resolveTarget(for: selection, on: screen)
-            resolvedTarget = resolution.target
-            self.availableApplications = resolution.candidate.map { [$0] } ?? []
+            let resolvingGeneration = generation
+            do {
+                let resolution = try await targetResolver.resolveTarget(for: selection, on: screen)
+                guard generation == resolvingGeneration else { throw CancellationError() }
+                resolvedTarget = resolution.target
+                self.availableApplications = resolution.candidate.map { [$0] } ?? []
+            } catch {
+                if generation == resolvingGeneration, !(error is CancellationError), SessionFailure.make(error, stage: .capture).permission != .screenCapture {
+                    reportFailure(error, stage: .capture, userInitiated: true)
+                }
+                throw error
+            }
         } else {
             resolvedTarget = captureTarget
             self.availableApplications = captureTarget.application.map { [$0] } ?? []
@@ -442,6 +506,14 @@ final class SessionCoordinator {
         self.debugCaptureTranscript = debugCaptureTranscript
 
         do {
+            if let engine = capture as? ScreenCaptureEngine {
+                engine.onFailure = { [weak self] error in
+                    Task { @MainActor in
+                        guard let self, self.generation == activeGeneration, self.isSessionActive else { return }
+                        self.reportFailure(error, stage: .capture)
+                    }
+                }
+            }
             try await capture.start(
                 displayID: number.uint32Value, screenFrame: screen.frame,
                 backingScale: screen.backingScaleFactor, selection: selection,
@@ -457,6 +529,7 @@ final class SessionCoordinator {
             acceptingFrames = true
             startWindowTrackingIfNeeded()
         } catch {
+            if !(error is CancellationError), generation == activeGeneration, SessionFailure.make(error, stage: .capture).permission != .screenCapture { reportFailure(error, stage: .capture, userInitiated: true) }
             await cleanupFailedStart(activeGeneration: activeGeneration)
             throw error
         }
@@ -471,6 +544,11 @@ final class SessionCoordinator {
     }
 
     func stop() async {
+        modeTransitionID += 1
+        modeTransitionInProgress = false
+        pendingModeRefresh = false
+        failureNotice.dismiss()
+        failureDeduplicator.reset()
         imageOCRProcessor.reset()
         latestAXFrame = nil
         latestAXTranslation = nil; latestAXRenderedFrame = nil
@@ -506,6 +584,7 @@ final class SessionCoordinator {
         debugCaptureTranscript?.close()
         debugCaptureTranscript = nil
         await capture.stop()
+        await modeTransition?.value
         await ax.endSession()
     }
 
@@ -541,7 +620,7 @@ final class SessionCoordinator {
         broker.setDirection(direction)
         mirror?.setTranslationDirection(direction)
         onTranslationDirectionChange?(direction)
-        if let frame = latestCapturedFrame, acceptingFrames {
+        if let frame = latestCapturedFrame, acceptingFrames, !modeTransitionInProgress {
             lastRealtimeOCR = .now
             scheduleOCR(frame, mode: .realtime, roi: nil)
         }
@@ -560,7 +639,7 @@ final class SessionCoordinator {
         broker.setProtectsNonSourceText(enabled)
         mirror?.setProtectsNonSourceText(enabled)
         onNonSourceTextProtectionChange?(enabled)
-        if let frame = latestCapturedFrame, acceptingFrames {
+        if let frame = latestCapturedFrame, acceptingFrames, !modeTransitionInProgress {
             lastRealtimeOCR = .now
             scheduleOCR(frame, mode: .realtime, roi: nil)
         }
@@ -945,6 +1024,13 @@ final class SessionCoordinator {
         window.onRefreshModeChange = { [weak self] mode in self?.setRefreshMode(mode) }
         window.onPauseChange = { [weak self] paused in self?.setPaused(paused) }
         window.onImmediateTranslation = { [weak self] in self?.translateImmediately() }
+        window.onExtractionModeToggle = { [weak self] in
+            Task { @MainActor in
+                guard let self else { return }
+                await self.setTextExtractionMode(self.textExtractionMode == .ax ? .ocr : .ax)
+            }
+        }
+        window.setExtractionMode(textExtractionMode)
         window.setTranslationDirection(translationDirection)
         window.setProtectsNonSourceText(protectsNonSourceText)
         window.onOverlaySelectionDrag = { [weak self] rect, screen, change, finished in
@@ -1078,6 +1164,11 @@ final class SessionCoordinator {
         guard let selectedScreen else { return }
         let target = application.map(CaptureTarget.application) ?? .allContent
         guard target != captureTarget else { updateTargetControl(); return }
+        failureDeduplicator.reset()
+        failureNotice.dismiss()
+        modeTransitionID += 1
+        modeTransitionInProgress = false
+        pendingModeRefresh = false
         windowTrackingTask?.cancel()
         windowTrackingTask = nil
         windowTrackingAnchor = nil
@@ -1085,6 +1176,7 @@ final class SessionCoordinator {
         selectionUpdateTask = nil
         invalidateCapturedContent()
         acceptingFrames = false
+        await modeTransition?.value
         await ax.endSession()
         do {
             try await updateCaptureTarget(target, on: selectedScreen)
@@ -1305,6 +1397,12 @@ final class SessionCoordinator {
         guard acceptingFrames else { return }
         let received = FrameEnvelope(image: image, id: frameID, receivedAt: receivedAt)
         latestCapturedFrame = received
+        guard !modeTransitionInProgress else { return }
+        if pendingModeRefresh {
+            pendingModeRefresh = false
+            translateImmediately()
+            return
+        }
         guard refreshMode == .automatic, !paused else { return }
         if latestFrame != nil { PerformanceProfiler.shared.increment("frame.overwritten") }
         latestFrame = received
@@ -1414,6 +1512,7 @@ final class SessionCoordinator {
         _ frame: FrameEnvelope, mode: OCRMode, roi: CGRect?, followWithRefinement: Bool = false,
         origin: MirrorStatusOrigin = .automatic
     ) {
+        guard !modeTransitionInProgress else { return }
         if usesAXExtraction { scheduleAX(frame, origin:origin); return }
         let activeGeneration = generation
         let activeRevision = contentRevision
@@ -1602,6 +1701,7 @@ final class SessionCoordinator {
         } catch {
             logger.error("OCR failed: \(error.localizedDescription, privacy: .public)")
             if generation == activeGeneration, contentRevision == activeRevision {
+                if !(error is CancellationError) { reportFailure(error, stage: .ocr, userInitiated: origin == .userAction) }
                 showProcessingStatus(.recognitionFailed, frameID: frame.id, origin: origin)
             }
             return
@@ -1611,6 +1711,7 @@ final class SessionCoordinator {
             return
         }
 
+        failureDeduplicator.succeeded(.ocr)
         let recognized = batch.lines
         if PresentationTrace.shared.enabled {
             PresentationTrace.shared.record("ocr.result", [
@@ -1679,6 +1780,8 @@ final class SessionCoordinator {
                     MirrorTranslation(frameID: frame.id, line: $0.line, translatedText: $0.translated)
                 }
             )
+            if !lines.isEmpty && completed.isEmpty { reportFailure(nil, stage: .translation, userInitiated: origin == .userAction) }
+            else { failureDeduplicator.succeeded(.translation) }
             let translatedTextByID = Dictionary(uniqueKeysWithValues: completed.map { ($0.line.id, $0.translated) })
             let translatedIDs = Set(translatedTextByID.keys)
             debugItems = debugItems.map { item in
@@ -1763,6 +1866,8 @@ final class SessionCoordinator {
                 showProcessingStatus(
                     .completed(failures: lines.count - completed.count), frameID: frame.id, origin: origin
                 )
+                if !lines.isEmpty && completed.isEmpty { reportFailure(nil, stage: .translation, userInitiated: origin == .userAction) }
+                else { failureDeduplicator.succeeded(.translation) }
                 recordDebugCaptureText(
                     frameID: frame.id, mode: mode, recognizedLines: recognized,
                     translatableLines: lines, translations: completed
@@ -1772,3 +1877,5 @@ final class SessionCoordinator {
     }
 
 }
+
+private enum SessionCollectionFailure: Error { case failed }

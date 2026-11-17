@@ -1,4 +1,5 @@
 import AppKit
+import NotionAXCore
 import Carbon
 import ServiceManagement
 
@@ -75,6 +76,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
     var onMirrorBackgroundOpacityChange: ((CGFloat) -> Void)?
     var onDisplayModeChange: ((TranslationDisplayMode) -> Void)?
     var onDisplayLanguageChange: ((AppDisplayLanguage) -> Void)?
+    var onExtractionModeChange: ((TextExtractionMode) -> Void)?
+    private let extractionPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+    @objc private func changeExtractionMode() {
+        onExtractionModeChange?(extractionPopup.indexOfSelectedItem == 0 ? .ax : .ocr)
+    }
     var onTranslationDirectionChange: ((TranslationDirection) -> Void)?
     var onNonSourceTextProtectionChange: ((Bool) -> Void)?
     var onOverlayOpacityChange: ((CGFloat) -> Void)?
@@ -272,6 +278,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         overlayIgnoresMouseEvents.state = OverlayIgnoresMouseEvents.load() ? .on : .off
         regionBorderOpacityField.integerValue = Int((RegionBorderOpacity.load() * 100).rounded())
         regionBorderOpacityStepper.integerValue = regionBorderOpacityField.integerValue
+        extractionPopup.selectItem(at: TextExtractionPreference.load() == .ax ? 0 : 1)
         mirrorFollowSize.state = MirrorFollowsSelectionSize.load() ? .on : .off
         targetApplicationTracking.state = TargetApplicationTracking.load() ? .on : .off
         let launchAtLoginEnabled = launchAtLoginStatusProvider.map {
@@ -363,7 +370,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         )
         let sessionControlShortcutSection = makeSection(title: L10n.text("번역 세션 제어"), rows:
             makeToolbarShortcutRows(for: [
-                .applicationCapture, .displayMode, .translationDirection,
+                .applicationCapture, .extractionMode, .displayMode, .translationDirection,
                 .protectNonSourceText,
                 .refreshMode, .modeSpecificDisplayControl, .sessionControlSingleKey,
             ])
@@ -494,6 +501,14 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         ])
         let advancedOCRSection = makeSection(title: L10n.text("고급 OCR"), rows: makeAdvancedOCRRows())
 
+        extractionPopup.removeAllItems()
+        extractionPopup.addItems(withTitles: ["AX", "OCR"])
+        extractionPopup.selectItem(at: TextExtractionPreference.load() == .ax ? 0 : 1)
+        extractionPopup.target = self
+        extractionPopup.action = #selector(changeExtractionMode)
+        let extractionSection = makeSection(title: L10n.text("추출 방식"), rows: [
+            makePreferenceRow(title: L10n.text("AX/OCR 모드"), description: L10n.text("AX는 Notion 단일 앱에서 지원합니다. 다른 앱 또는 모든 앱 대상에서는 OCR을 사용합니다."), control: extractionPopup)
+        ])
         var generalSections: [NSView] = [startupSection, languageAndTranslationSection]
 #if LST_EXCLUDE_DEBUG_FEATURES
         generalSections.append(updateSettingsSection)
@@ -504,7 +519,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
             ("general", L10n.text("일반"), "gearshape", generalSections),
             ("shortcuts", L10n.text("단축키"), "keyboard", shortcutSections),
             ("display", L10n.text("화면 표시"), "rectangle.on.rectangle", [displayModeSection, mirrorDisplaySection, overlayDisplaySection, selectionDisplaySection]),
-            ("captureOCR", L10n.text("캡처 및 OCR"), "viewfinder", [captureSection, updateSection, ocrExecutionSection, refinementConditionSection, languageSection, advancedOCRSection]),
+            ("captureOCR", L10n.text("캡처 및 인식"), "viewfinder", [extractionSection, captureSection, updateSection, ocrExecutionSection, refinementConditionSection, languageSection, advancedOCRSection]),
         ]
 #if !LST_EXCLUDE_DEBUG_FEATURES
         definitions.append((
