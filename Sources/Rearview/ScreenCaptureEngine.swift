@@ -1,6 +1,7 @@
 @preconcurrency import ScreenCaptureKit
 import AppKit
 import CoreImage
+import os
 
 func pixelAlignedCaptureRect(
     selection: CGRect, screenFrame: CGRect, backingScale: CGFloat
@@ -20,6 +21,10 @@ func pixelAlignedCaptureRect(
 }
 
 final class ScreenCaptureEngine: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Sendable {
+    private let operations = CaptureOperationQueue()
+    private let recovery = CaptureStreamRecovery()
+    private var screenObserver: NSObjectProtocol?
+    private let logger = Logger(subsystem: "io.github.bloodybear.rearview", category: "capture")
     private var stream: SCStream?
     private var configuration: SCStreamConfiguration?
     private let queue = DispatchQueue(label: "Rearview.capture", qos: .userInteractive)
@@ -27,8 +32,16 @@ final class ScreenCaptureEngine: NSObject, SCStreamOutput, SCStreamDelegate, @un
     private let ciContext = CIContext(options: [.cacheIntermediates: false])
     var onFailure: (@Sendable (Error) -> Void)?
     func stream(_ stream: SCStream, didStopWithError error: Error) {
-        guard self.stream === stream else { return }
-        onFailure?(error)
+        // Respect an explicit system-menu stop and permission refusal.
+        if !Self.permitsRecovery(after: error) {
+            Task { try? await operations.run { [self] in
+                guard self.stream === stream else { return }
+                recovery.cancel()
+                onFailure?(error)
+            } }
+        } else {
+            requestRecovery(expectedStream: stream)
+        }
     }
     private var onFrame: (@Sendable (CGImage, UInt64, UInt64) -> Void)?
     private var lastDelivery = ContinuousClock.now
@@ -38,7 +51,16 @@ final class ScreenCaptureEngine: NSObject, SCStreamOutput, SCStreamDelegate, @un
     private var currentDisplayID: CGDirectDisplayID?
     private var currentPolicy = CapturePolicy()
 
-    func start(
+    func start(displayID: CGDirectDisplayID, screenFrame: CGRect, backingScale: CGFloat,
+        selection: CGRect, target: CaptureTarget = .allContent, policy: CapturePolicy,
+        onFrame: @escaping @Sendable (CGImage, UInt64, UInt64) -> Void) async throws {
+        recovery.begin()
+        try await operations.run { [self] in
+            try await startSerial(displayID: displayID, screenFrame: screenFrame, backingScale: backingScale, selection: selection, target: target, policy: policy, onFrame: onFrame)
+        }
+    }
+
+    private func startSerial(
         displayID: CGDirectDisplayID,
         screenFrame: CGRect,
         backingScale: CGFloat,
@@ -47,6 +69,12 @@ final class ScreenCaptureEngine: NSObject, SCStreamOutput, SCStreamDelegate, @un
         policy: CapturePolicy,
         onFrame: @escaping @Sendable (CGImage, UInt64, UInt64) -> Void
     ) async throws {
+        if screenObserver == nil {
+            screenObserver = NotificationCenter.default.addObserver(
+                forName: NSApplication.didChangeScreenParametersNotification,
+                object: nil, queue: nil
+            ) { [weak self] _ in self?.requestRecovery() }
+        }
         self.onFrame = onFrame
         currentPolicy = policy
         setDeliveryPolicy(policy, resetClock: true)
@@ -81,12 +109,19 @@ final class ScreenCaptureEngine: NSObject, SCStreamOutput, SCStreamDelegate, @un
         } catch {
             // start() is a transaction: a failure at any phase must not leave
             // a callback, stream, or configuration owned by this engine.
-            await stop()
+            recovery.cancel()
+            await stopSerial()
             throw error
         }
     }
 
     func update(policy: CapturePolicy) async throws {
+        try await operations.run { [self] in
+            try await updateSerial(policy: policy)
+        }
+    }
+
+    private func updateSerial(policy: CapturePolicy) async throws {
         currentPolicy = policy
         guard let stream, let configuration else {
             setDeliveryPolicy(policy, resetClock: true)
@@ -107,7 +142,13 @@ final class ScreenCaptureEngine: NSObject, SCStreamOutput, SCStreamDelegate, @un
         record(policy, target: captureTarget)
     }
 
-    func updateRegion(
+    func updateRegion(selection: CGRect, screenFrame: CGRect, backingScale: CGFloat, displayID: CGDirectDisplayID? = nil) async throws {
+        try await operations.run { [self] in
+            try await updateRegionSerial(selection: selection, screenFrame: screenFrame, backingScale: backingScale, displayID: displayID)
+        }
+    }
+
+    private func updateRegionSerial(
         selection: CGRect, screenFrame: CGRect, backingScale: CGFloat,
         displayID: CGDirectDisplayID? = nil
     ) async throws {
@@ -132,6 +173,12 @@ final class ScreenCaptureEngine: NSObject, SCStreamOutput, SCStreamDelegate, @un
     }
 
     func updateTarget(displayID: CGDirectDisplayID, target: CaptureTarget) async throws {
+        try await operations.run { [self] in
+            try await updateTargetSerial(displayID: displayID, target: target)
+        }
+    }
+
+    private func updateTargetSerial(displayID: CGDirectDisplayID, target: CaptureTarget) async throws {
         guard let stream else {
             captureTarget = target
             return
@@ -147,6 +194,16 @@ final class ScreenCaptureEngine: NSObject, SCStreamOutput, SCStreamDelegate, @un
     }
 
     func stop() async {
+        // Cancel before queuing cleanup: a delayed restart must never resurrect a session.
+        recovery.cancel()
+        try? await operations.run(cancellable: false) { [self] in await stopSerial() }
+    }
+
+    private func stopSerial() async {
+        if let screenObserver {
+            NotificationCenter.default.removeObserver(screenObserver)
+            self.screenObserver = nil
+        }
         if let stream {
             try? await stream.stopCapture()
             try? stream.removeStreamOutput(self, type: .screen)
@@ -172,8 +229,16 @@ final class ScreenCaptureEngine: NSObject, SCStreamOutput, SCStreamDelegate, @un
         didOutputSampleBuffer sampleBuffer: CMSampleBuffer,
         of outputType: SCStreamOutputType
     ) {
-        guard outputType == .screen,
-              sampleBuffer.isValid,
+        guard outputType == .screen else { return }
+        // Stop notifications can have no image buffer. Inspect status before pixel guards.
+        if let attachments = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, createIfNecessary: false)
+            as? [[SCStreamFrameInfo: Any]],
+           let rawStatus = attachments.first?[.status] as? Int,
+           SCFrameStatus(rawValue: rawStatus) == .stopped {
+            if !recovery.isRecovering { requestRecovery(expectedStream: stream) }
+            return
+        }
+        guard sampleBuffer.isValid,
               let pixelBuffer = sampleBuffer.imageBuffer else { return }
         PerformanceProfiler.shared.increment("frame.received")
         let now = ContinuousClock.now
@@ -192,6 +257,44 @@ final class ScreenCaptureEngine: NSObject, SCStreamOutput, SCStreamDelegate, @un
         }
         PerformanceProfiler.shared.end(conversion)
         onFrame?(cgImage, frameID, receivedAt)
+    }
+
+    private func requestRecovery(expectedStream: SCStream? = nil) {
+        let expectedID = expectedStream.map(ObjectIdentifier.init)
+        Task { try? await operations.run { [self] in
+            // Ignore a callback from a previous session before it can cancel a newer retry.
+            guard self.stream != nil,
+                  expectedID == nil || self.stream.map(ObjectIdentifier.init) == expectedID else { return }
+            let failureHandler = onFailure
+            recovery.request(restart: { [weak self] in
+                guard let self else { return }
+                try await self.operations.run { [self] in
+                    guard let stream = self.stream,
+                          expectedID == nil || ObjectIdentifier(stream) == expectedID else { return }
+                    try Task.checkCancellation()
+                    // Keep the latest filter/configuration and the frame sequence. The OS
+                    // may already have stopped this stream after a display disconnect.
+                    try? await stream.stopCapture()
+                    try Task.checkCancellation()
+                    try await stream.startCapture()
+                    try Task.checkCancellation()
+                    self.logger.info("Capture stream recovered after interruption")
+                }
+            }, shouldRetry: Self.permitsRecovery(after:), failed: { [weak self] error in
+                self?.logger.error("Capture stream recovery failed: \(error.localizedDescription, privacy: .public)")
+                failureHandler?(error)
+            })
+        } }
+    }
+
+    static func permitsRecovery(after error: Error) -> Bool {
+        let error = error as NSError
+        guard error.domain == SCStreamErrorDomain else { return true }
+        return ![
+            SCStreamError.Code.userDeclined.rawValue,
+            SCStreamError.Code.userStopped.rawValue,
+            SCStreamError.Code.missingEntitlements.rawValue
+        ].contains(error.code)
     }
 
     private func record(_ policy: CapturePolicy, target: CaptureTarget) {
