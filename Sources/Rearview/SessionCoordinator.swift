@@ -282,7 +282,10 @@ final class SessionCoordinator {
                 guard !Task.isCancelled, self.generation == activeGeneration,
                       self.contentRevision == activeRevision, self.ocrTaskSequence == sequence else { return }
                 self.latestAXFrame = AXFrameSnapshot(snapshot:result,image:frame.image,frameID:frame.id,receivedAt:frame.receivedAt)
-                self.display(MirrorFrame(image:frame.image,translatedItems:[],frameID:frame.id))
+                // Match OCR: atomic updates retain the displayed result until rendering finishes.
+                if !self.translatesAXParagraphs || self.mirrorUpdateStyle == .progressive {
+                    self.display(MirrorFrame(image:frame.image,translatedItems:[],frameID:frame.id))
+                }
                 self.onAXExtraction?(result, frame.image, frame.id)
                 if self.translatesAXParagraphs {
                     let translator = AXParagraphTranslator(broker: self.broker, direction: self.translationDirection)
@@ -387,7 +390,6 @@ final class SessionCoordinator {
             } catch {
                 guard !Task.isCancelled, self.generation == activeGeneration,
                       self.contentRevision == activeRevision, self.ocrTaskSequence == sequence else { return }
-                self.display(MirrorFrame(image:frame.image,translatedItems:[],frameID:frame.id))
                 self.showProcessingStatus(.recognitionFailed,frameID:frame.id,origin:origin)
                 self.onAXExtractionError?(error)
             }

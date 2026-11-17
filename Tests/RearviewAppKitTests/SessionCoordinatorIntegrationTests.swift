@@ -384,7 +384,9 @@ final class SessionCoordinatorIntegrationTests: XCTestCase {
         let first = expectation(description:"first AX"), latest = expectation(description:"newest AX")
         coordinator.onAXExtraction = { _, _, id in
             if id == 10 { first.fulfill() }
-            if id == 12 { latest.fulfill() }
+        }
+        coordinator.onAXTranslation = { value in
+            if value.frame.frameID == 12 { latest.fulfill() }
         }
         let firstImage = makeImage(width:32,height:24,gray:40)
         let newestImage = makeImage(width:32,height:24,gray:40,changedPixel:(0,0,255))
@@ -528,9 +530,18 @@ final class SessionCoordinatorIntegrationTests: XCTestCase {
             await fulfillment(of:[partial],timeout:2)
             XCTAssertEqual(presented.contains(1),style == .progressive)
             await gate.release()
+            if style == .atomic {
+                XCTAssertTrue(output.frames.isEmpty, "Atomic AX must not flash the source while translation is pending")
+            } else {
+                XCTAssertTrue(output.frames.contains { $0.axArtwork == nil })
+            }
             await fulfillment(of:[finished],timeout:2)
             XCTAssertEqual(presented.last,2)
         }
+            if style == .atomic {
+                XCTAssertFalse(output.frames.isEmpty)
+                XCTAssertTrue(output.frames.allSatisfy { $0.axArtwork != nil })
+            }
     }
 
     func testImageBeforeAXRemainsVisibleWhenAXCompletes() async throws {
@@ -643,6 +654,7 @@ final class SessionCoordinatorIntegrationTests: XCTestCase {
             await fulfillment(of:[failed],timeout:2)
             XCTAssertNil(coordinator.latestAXSnapshot)
             XCTAssertTrue(output.statuses.contains(.recognitionFailed))
+            XCTAssertTrue(output.frames.isEmpty, "AX recognition failure must retain the displayed frame, like OCR")
             XCTAssertTrue(translator.calls.isEmpty)
             await coordinator.stop()
         }
