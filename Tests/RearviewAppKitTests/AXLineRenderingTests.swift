@@ -66,7 +66,21 @@ final class AXLineRenderingTests: XCTestCase {
             XCTAssertEqual(glyphBytes[y*glyphs.bytesPerRow+x*4+3],0)
         } }
     }
-    private func render(source: String = "日本語", translation: String = "한국어 👩‍💻 가나다라", heights: [Double] = [18,18], widths: [Double] = [60,60], clip: Bool = false, math: Bool = false, lineStatus: String? = nil, hidden: Bool = false, axRed: Bool = false, pixelScale: Double = 1, logical: Bool = false, expansionRight: Double? = nil, displayRight: Double? = nil) throws -> AXRenderArtwork {
+    func testPopupClipsBothMaskAndGlyphsWithoutChangingLayout() throws {
+        let baseline=try render(widths:[200,200])
+        let masked=try render(widths:[200,200],occlusion:CGRect(x:35,y:0,width:20,height:300))
+        XCTAssertEqual(masked.diagnostics.first { $0.status == "rendered" }?.lineBoxes,
+                       baseline.diagnostics.first { $0.status == "rendered" }?.lineBoxes)
+        for image in [try XCTUnwrap(masked.background),try XCTUnwrap(masked.text)] {
+            let bytes=[UInt8](image.dataProvider!.data! as Data)
+            for y in 0..<image.height { for x in 35..<55 {
+                XCTAssertEqual(bytes[y*image.bytesPerRow+x*4+3],0)
+            } }
+        }
+        XCTAssertFalse(masked.clipRects.isEmpty)
+        XCTAssertTrue(masked.clipRects.allSatisfy { !$0.intersects(CGRect(x:35,y:0,width:20,height:300)) })
+    }
+    private func render(source: String = "日本語", translation: String = "한국어 👩‍💻 가나다라", heights: [Double] = [18,18], widths: [Double] = [60,60], clip: Bool = false, math: Bool = false, lineStatus: String? = nil, hidden: Bool = false, axRed: Bool = false, pixelScale: Double = 1, logical: Bool = false, expansionRight: Double? = nil, displayRight: Double? = nil, occlusion: CGRect? = nil) throws -> AXRenderArtwork {
         let canvasHeight = max(200,heights.count*25+40)
         let ctx = CGContext(data:nil,width:300,height:canvasHeight,bitsPerComponent:8,bytesPerRow:0,space:CGColorSpaceCreateDeviceRGB(),bitmapInfo:CGImageAlphaInfo.premultipliedLast.rawValue)!
         ctx.setFillColor(NSColor.white.cgColor);ctx.fill(CGRect(x:0,y:0,width:300,height:canvasHeight))
@@ -74,6 +88,7 @@ final class AXLineRenderingTests: XCTestCase {
         var paragraph: [String:Any] = ["node":1,"text":source,"lineSourceText":source,"lineRangeStatus":"complete_unverified","box":box,"members":[1],"isCodeBlock":false,"protectNonSourceText":false,
             "lineRanges":heights.enumerated().map { i,h in ["text":"日本語","rangeStart":i*3,"rangeLength":3,"box":["x":10.0,"y":10.0+Double(i)*25,"width":widths[i],"height":h]] as [String:Any] }]
         paragraph["layoutExpansionRight"] = expansionRight
+        if let m=occlusion { paragraph["occlusionBoxes"] = [["x":m.minX,"y":m.minY,"width":m.width,"height":m.height]] }
         if let displayRight { paragraph["displayBoxes"] = [["x":10.0,"y":10.0,"width":displayRight-10,"height":Double(heights.count*25+30)]] }
         var logicalEntries: [[String:Any]] = []
         if logical {

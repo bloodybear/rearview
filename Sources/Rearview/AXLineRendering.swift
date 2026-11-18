@@ -37,6 +37,8 @@ struct AXRenderArtwork: @unchecked Sendable {
     let diagnostics: [AXRenderDiagnostic]
     let elapsed: Double
     var selectionClipRects: [CGRect] = []
+    var itemNodes: [UUID:Int] = [:]
+    var bodyReuseSeconds: Double = 0
 }
 
 // No AX handles or UI objects cross this queue. Native geometry stays immutable;
@@ -70,7 +72,10 @@ enum AXLineRendering {
         let cancellation = AXLayoutCancellation()
         return await withTaskCancellationHandler {
             await withCheckedContinuation { continuation in
-                queue.async { continuation.resume(returning: build(value,isCancelled:{ cancellation.cancelled })) }
+                queue.async {
+                    let built=build(value,isCancelled:{ cancellation.cancelled })
+                    continuation.resume(returning:built.adding(value.retainedBody,size:CGSize(width:value.frame.image.width,height:value.frame.image.height)))
+                }
             }
         } onCancel: { cancellation.cancel() }
     }
@@ -99,7 +104,10 @@ enum AXLineRendering {
             CGRect(x:r.minX/CGFloat(width),y:r.minY/CGFloat(height),width:r.width/CGFloat(width),height:r.height/CGFloat(height))
         }
         func newline(_ text: String) -> Bool { text.rangeOfCharacter(from:.newlines) != nil }
+        var itemNodes: [UUID:Int] = [:]
         for paragraph in value.frame.snapshot.paragraphUnits {
+            let firstItem=items.count
+            defer { for item in items.dropFirst(firstItem) { itemNodes[item.id]=paragraph.node } }
             if isCancelled() { break }
             let entry = value.entries.first { $0.node == paragraph.node }
             let sourceText = paragraph.translationSourceText ?? ""
@@ -473,6 +481,6 @@ enum AXLineRendering {
         }
         debug?.setStrokeColor(NSColor.orange.cgColor)
         for box in clipRects { debug?.stroke(box) }
-        return AXRenderArtwork(background:bg?.makeImage(),text:fg?.makeImage(),debug:debug?.makeImage(),items:items,fragments:fragments,clipRects:clipRects,diagnostics:diagnostics,elapsed:CFAbsoluteTimeGetCurrent()-start,selectionClipRects:selectionClips)
+        return AXRenderArtwork(background:bg?.makeImage(),text:fg?.makeImage(),debug:debug?.makeImage(),items:items,fragments:fragments,clipRects:clipRects,diagnostics:diagnostics,elapsed:CFAbsoluteTimeGetCurrent()-start,selectionClipRects:selectionClips,itemNodes:itemNodes)
     }
 }

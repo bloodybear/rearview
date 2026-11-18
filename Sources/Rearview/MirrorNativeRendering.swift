@@ -222,20 +222,24 @@ private final class NativeMirrorRenderer {
             if let image = ax.text { text.draw(image,in:full) }
             var allRects = rects, allFragments = ax.fragments
             for layer in frame.imageOCRLayers {
+                if layer.displayPixelBoxes?.isEmpty == true { continue }
                 let child = NativeMirrorRenderer()
                 let local = MirrorFrame(image:layer.image,translatedItems:layer.items,frameID:frame.frameID)
                 guard let artwork = child.buildArtwork(for:local) else { continue }
                 // Local OCR layout can expand within its crop, never outside it.
                 background.saveGState(); text.saveGState()
-                background.clip(to:layer.pixelBox); text.clip(to:layer.pixelBox)
+                let allowed=layer.displayPixelBoxes ?? [layer.pixelBox]
+                background.addRects(allowed);background.clip();text.addRects(allowed);text.clip()
                 if let image = artwork.backgroundLayer { background.draw(image,in:layer.pixelBox) }
                 if let image = artwork.textLayer { text.draw(image,in:layer.pixelBox) }
                 background.restoreGState(); text.restoreGState()
                 for (id,rect) in artwork.textRects { allRects[id] = rect.offsetBy(dx:layer.pixelBox.minX,dy:layer.pixelBox.minY) }
-                allFragments += artwork.fragments.map {
-                    NativeMirrorRenderedFragment(itemID:$0.itemID,text:$0.text,
-                        rect:$0.rect.offsetBy(dx:layer.pixelBox.minX,dy:layer.pixelBox.minY),characterOffset:$0.characterOffset)
+                allFragments += artwork.fragments.compactMap { fragment -> NativeMirrorRenderedFragment? in
+                    let box=fragment.rect.offsetBy(dx:layer.pixelBox.minX,dy:layer.pixelBox.minY)
+                    guard let clipped=allowed.map({ $0.intersection(box) }).filter({ !$0.isNull && !$0.isEmpty }).max(by:{ $0.width*$0.height < $1.width*$1.height }) else { return nil }
+                    return NativeMirrorRenderedFragment(itemID:fragment.itemID,text:fragment.text,rect:clipped,characterOffset:fragment.characterOffset)
                 }
+
             }
             return NativeMirrorArtwork(frameID:frame.frameID,imageSize:full.size,
                 backgroundLayer:background.makeImage(),textLayer:text.makeImage(),textRects:allRects,layouts:[:],fragments:allFragments)
@@ -998,7 +1002,7 @@ final class NativeTranslationMirrorView: NSView, NSMenuItemValidation {
         drawSelectionModeDim(for: snapshot, in: imageRect)
         NSGraphicsContext.current?.cgContext.saveGState()
         if let ax = snapshot.axArtwork, let context = NSGraphicsContext.current?.cgContext {
-            context.addRects((ax.clipRects + ax.selectionClipRects + snapshot.imageOCRLayers.map(\.pixelBox)).map { rect in
+            context.addRects((ax.clipRects + ax.selectionClipRects + snapshot.imageOCRLayers.flatMap { $0.displayPixelBoxes ?? [$0.pixelBox] }).map { rect in
                 CGRect(x:imageRect.minX+rect.minX/CGFloat(snapshot.image.width)*imageRect.width,
                        y:imageRect.minY+rect.minY/CGFloat(snapshot.image.height)*imageRect.height,
                        width:rect.width/CGFloat(snapshot.image.width)*imageRect.width,
@@ -1152,7 +1156,17 @@ final class NativeTranslationMirrorView: NSView, NSMenuItemValidation {
                     characterOffset: offset
                 )
             }
-        selectionFragments.append(contentsOf: fragments)
+        if let snapshot=frameSnapshot,
+           let layer=snapshot.imageOCRLayers.first(where:{ $0.items.contains(where:{ $0.id == item.id }) }),
+           let regions=layer.displayPixelBoxes {
+            let size=CGSize(width:snapshot.image.width,height:snapshot.image.height)
+            let allowed=regions.map { r in CGRect(x:imageRect.minX+r.minX/size.width*imageRect.width,
+                y:imageRect.minY+r.minY/size.height*imageRect.height,width:r.width/size.width*imageRect.width,height:r.height/size.height*imageRect.height) }
+            selectionFragments += fragments.compactMap { f in
+                guard let box=allowed.map({ $0.intersection(f.rect) }).filter({ !$0.isNull && !$0.isEmpty }).max(by:{ $0.width*$0.height < $1.width*$1.height }) else { return nil }
+                return SelectionFragment(itemID:f.itemID,text:f.text,rect:box,characterOffset:f.characterOffset)
+            }
+        } else { selectionFragments.append(contentsOf:fragments) }
     }
 
     private func appendRenderedSelectionFragments(for item: MirrorItem, imageRect: CGRect) {

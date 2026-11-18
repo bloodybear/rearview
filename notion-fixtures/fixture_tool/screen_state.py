@@ -142,7 +142,9 @@ def validate(value):
                 need(set(p) == {'scope'}, 'Viewport region accepts only scope')
     if 'overlay' in state:
         p = state['overlay']
-        need(isinstance(p, dict) and {'kind','text'} <= set(p) <= {'kind','text','expectedText'} and p['kind'] in ('menu', 'tooltip')
+        need(isinstance(p, dict) and {'kind','text'} <= set(p) <= {'kind','text','expectedText','targetClass'} and p['kind'] in ('menu', 'tooltip', 'hover', 'popup')
              and isinstance(p['text'], str) and bool(p['text']), 'Invalid overlay')
+        need('targetClass' not in p or (isinstance(p['targetClass'], str) and p['targetClass'].startswith('notion-')), 'Overlay target class must be semantic')
+        need(p['kind'] not in ('hover', 'popup') or bool(p.get('expectedText')), 'Hover/popup needs a pixel witness')
         need('expectedText' not in p or (isinstance(p['expectedText'],str) and bool(p['expectedText'].strip())), 'Invalid overlay expected text')
     need(required_items(state) <= set(state['required']), 'Every v2 screen condition must be required')

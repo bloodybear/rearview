@@ -59,6 +59,9 @@ static func collect(_ request: AXExtractionRequest, window: AXUIElement, cancell
         var row: [String:Any] = ["id":n,"role":role,"value":value,"title":title,"attributes":[String](),"parameterizedAttributes":[String]()]
         if role == "AXTextArea" && !request.collectParentTextDiagnostics { row["valueCollection"] = "omitted_parent_value" }
         if let parent { row["parent"] = parent }
+        if role == "AXWebArea", title != "Tab Bar", let url = get(node,"AXURL") as? URL {
+            row["documentURL"] = url.absoluteString
+        }
         // Semantic layout classes are needed only on container groups. Preserve
         // them for auditing the timeline-only rule; never infer z-order generally.
         if role == "AXGroup" {
@@ -436,7 +439,7 @@ static func collect(_ request: AXExtractionRequest, window: AXUIElement, cancell
     // Lines belong to native translation units, parallel to original AX nodes.
     // Match the same nearest native boundary as render_ax_report.build_paragraphs.
     // Reuse this traversal's handles; never reacquire IDs from a different tree.
-    let units = AXParagraphBuilder.build(nodes: rows, selected: candidates)
+    let units = AXParagraphBuilder.build(nodes: rows, selected: candidates, popupOcclusion:nil)
     let groups = Dictionary(uniqueKeysWithValues: units.map { ($0["node"] as! Int, $0["members"] as! [Int]) })
     var childrenByParent:[Int:[Int]]=[:]
     for id in rows.indices {if let parent=rows[id]["parent"] as? Int{childrenByParent[parent,default:[]].append(id)}}
@@ -562,7 +565,17 @@ static func collect(_ request: AXExtractionRequest, window: AXUIElement, cancell
 
 
     try cancellation.check()
-    var paragraphs = AXParagraphBuilder.build(nodes: rows, selected: candidates)
+    // Reuse the visibility searches already performed for this exact tree.
+    // Cached/hidden dialogs must not punch holes in an unrelated later frame.
+    for id in rows.indices where rows[id]["subrole"] as? String == "AXApplicationDialog" || classes(id).contains("notion-sidebar") {
+        if let root=([id]+ancestorIDs(id)).first(where:{ rows[$0]["role"] as? String == "AXWebArea" }),let membership=visibleRoots[root] {
+            rows[id]["popupVisibleOnly"] = !AXVisibleSelection.excludes(discovered:membership.all.contains(elements[id]),visible:membership.visible.contains(elements[id]))
+        }
+    }
+    let popupStarted=Date()
+    let popupOcclusion = PopupOcclusion(rows:rows)
+    let popupDetectionSeconds=Date().timeIntervalSince(popupStarted)
+    var paragraphs = AXParagraphBuilder.build(nodes: rows, selected: candidates, popupOcclusion:popupOcclusion)
     let colorStarted = Date()
     var colorCalls = 0
     var attributedCache: [Int:NSAttributedString] = [:]
@@ -638,14 +651,18 @@ static func collect(_ request: AXExtractionRequest, window: AXUIElement, cancell
             return !AXVisibleSelection.excludes(discovered:membership.all.contains(elements[id]),visible:membership.visible.contains(elements[id]))
         }, occlusions:{ id in
             let chain = [id]+ancestorIDs(id)
+            let sidebarMasks = popupOcclusion.masks(for:id)
             let menuMasks = rows.indices.filter { classes($0).contains("notion-text-action-menu") && !chain.contains($0) &&
                 ancestorIDs($0).contains(where: { rows[$0]["role"] as? String == "AXWebArea" && chain.contains($0) }) }.compactMap(rowFrame).map(PreviewOcclusion.textEditingMenuPanel)
             guard previewPanels.count == 1, let (root,ids) = previewPanels.first,
                   ids.count == 1, let panelID=ids.first, let panel=rowFrame(panelID),
-                  !([id]+ancestorIDs(id)).contains(root) else { return menuMasks }
-            return menuMasks + [panel]
+                  !([id]+ancestorIDs(id)).contains(root) else { return menuMasks + sidebarMasks }
+            return menuMasks + sidebarMasks + [panel]
         })
-    let metadata: [String: Any] = ["imageRegions":imageRegions,"status": valid ? (partial ? "partial" : "complete") : "failed",
+    let surfaceStarted=Date()
+    let documentSurfaces=AXDocumentSurfaceBuilder.build(rows:rows)
+    let surfaceSeconds=Date().timeIntervalSince(surfaceStarted)
+    let metadata: [String: Any] = ["documentSurfaces":documentSurfaces,"documentSurfaceSeconds":surfaceSeconds, "popupOcclusionSeconds":popupDetectionSeconds, "popupOcclusionPanels":popupOcclusion.diagnostics, "popupOcclusionPolicy":"semantic-dialog-and-floating-sidebar-v2; anonymous-popups-unsupported", "imageRegions":imageRegions,"status": valid ? (partial ? "partial" : "complete") : "failed",
         "targetAndFrameMatch":valid,"coordinateSystem":"screen-top-left-points", "elapsed":Date().timeIntervalSince(started), "colorQueries":colorCalls, "colorQuerySeconds":Date().timeIntervalSince(colorStarted),
         "codeRangeQueries":investigator.calls-codeCallsBefore,"codeRangeSeconds":codeSeconds,
         "parentValueQueries":request.collectParentTextDiagnostics ? rows.filter { $0["role"] as? String == "AXTextArea" }.count : 0,

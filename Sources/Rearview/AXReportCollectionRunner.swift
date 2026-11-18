@@ -21,14 +21,26 @@ import NotionAXReportSupport
                   let region = metadata["selectionRegion"] as? [String:Double],
                   let screen = NSScreen.screens.first else { throw CocoaError(.coderInvalidValue) }
             let savedImages = (try? JSONDecoder().decode([AXImageOCRSavedLayer].self,from:read("image-ocr-layers.json"))) ?? []
-            let imageLayers = savedImages.compactMap { $0.restore(source:image) }
+            let imageLayers = savedImages.compactMap { layer in
+                layer.restore(source:image,savedImage:layer.imageFile.flatMap { NSBitmapImageRep(data:(try? read($0)) ?? Data())?.cgImage })
+            }
             let captured = SessionCoordinator.AXTranslatedFrame(frame:.init(snapshot:snapshot,image:image,frameID:translations.frameID,receivedAt:0),entries:translations.entries)
             fputs("AX review: loaded captured frame\n",stderr)
-            let art = await AXLineRendering.render(captured)
+            var reviewed=captured
+            reviewed.retainedBody=try await AXBodyReportSupport.restore(folder:folder,current:captured)
+            let art = await AXLineRendering.render(reviewed)
             fputs("AX review: layout ready\n",stderr)
             var frame = MirrorFrame(image:image,translatedItems:art.items + imageLayers.flatMap { $0.mappedItems(frameSize:CGSize(width:image.width,height:image.height)) },frameID:translations.frameID)
             frame.axArtwork = art
             frame.imageOCRLayers = imageLayers
+            if let index=CommandLine.arguments.firstIndex(of:"--ax-review-export"),index+1 < CommandLine.arguments.count {
+                let view=NativeTranslationMirrorView(frame:CGRect(x:0,y:0,width:image.width,height:image.height))
+                view.setRenderingActive(true);view.backgroundOpacity=1;view.frameSnapshot=frame
+                guard let rendered=view.compositedImage(),let tiff=rendered.tiffRepresentation,
+                      let png=NSBitmapImageRep(data:tiff)?.representation(using:.png,properties:[:]) else { throw CocoaError(.coderInvalidValue) }
+                try png.write(to:URL(fileURLWithPath:CommandLine.arguments[index+1]))
+                return 0
+            }
             let display = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as! NSNumber
             let selection = appKitSelectionRect(for:CGRect(x:region["x"]!,y:region["y"]!,width:region["width"]!,height:region["height"]!),screenFrame:screen.frame,displayBounds:CGDisplayBounds(display.uint32Value))
             let modeIndex = CommandLine.arguments.firstIndex(of:"--ax-review-display-mode")
@@ -93,6 +105,14 @@ import NotionAXReportSupport
             let repeatIndex = CommandLine.arguments.firstIndex(of:"--ax-repeat")
             let repeatCount = repeatIndex.flatMap { $0+1 < CommandLine.arguments.count ? Int(CommandLine.arguments[$0+1]) : nil } ?? 2
             guard (1...5).contains(repeatCount) else { throw CocoaError(.coderInvalidValue) }
+            let controlIndex=CommandLine.arguments.firstIndex(of:"--ax-report-sequence-control")
+            let control=controlIndex.flatMap { $0+1 < CommandLine.arguments.count ? URL(fileURLWithPath:CommandLine.arguments[$0+1]) : nil }
+            let phaseNames: [String]
+            if let control {
+                phaseNames=try JSONDecoder().decode([String].self,from:Data(contentsOf:control.appendingPathComponent("phases.json")))
+                guard !skip, (1...12).contains(phaseNames.count) else { throw CocoaError(.coderInvalidValue) }
+                coordinator.setRefreshMode(.manual)
+            } else { phaseNames=["capture"] }
             var samples: [[String:Any]] = []
             var translated: SessionCoordinator.AXTranslatedFrame?
             var finishedCount = 0
@@ -105,6 +125,7 @@ import NotionAXReportSupport
             }
             coordinator.onAXTranslationProgress = { translated = $0 }
             coordinator.onAXTranslation = { value in
+                if control != nil { fputs("AX sequence completion frame=\(value.frame.frameID)\n",stderr) }
                 translated = value; finishedCount += 1
                 translationSamples.append(["frameID":value.frame.frameID,
                     "elapsed":max(0,Date().timeIntervalSince(translationStartedAt)-(coordinator.latestAXRenderedFrame?.axArtwork?.elapsed ?? 0)),
@@ -121,6 +142,7 @@ import NotionAXReportSupport
             }
             var collected: AXExtractionSnapshot?, frameID: UInt64?, failure: Error?
             coordinator.onAXExtraction = { snapshot, _, id in
+                if control != nil { fputs("AX sequence extraction frame=\(id)\n",stderr) }
                 collected = snapshot; frameID = id
                 translationStartedAt = Date()
                 presentations = []
@@ -131,92 +153,149 @@ import NotionAXReportSupport
             }
             coordinator.onAXExtractionError = { failure = $0 }
             await coordinator.setTextExtractionMode(.ax)
-            coordinator.setRefreshMode(.automatic)
+            coordinator.setRefreshMode(control == nil ? .automatic : .manual)
             coordinator.setPaused(false)
             // Track the replay's window, not the focused app/window.
             let target = CaptureApplication(processID:input.request.processID,bundleIdentifier:"notion.id",name:"Notion",
                 anchorWindowID:input.request.windowID,anchorWindowFrame:input.request.windowFrame)
             let selection = appKitSelectionRect(for:input.request.selectionRegion,screenFrame:screen.frame,displayBounds:CGDisplayBounds(display.uint32Value))
             try await coordinator.start(screen:screen,selection:selection,captureTarget:.application(target))
-            let deadline = ContinuousClock.now + .seconds(skip ? 60 : 540)
-            var requestedRepeat = 0
-            while finishedCount < repeatCount && failure == nil && ContinuousClock.now < deadline {
-                try await Task.sleep(for:.milliseconds(50))
-                if finishedCount > requestedRepeat && finishedCount < repeatCount {
-                    requestedRepeat = finishedCount
-                    coordinator.translateImmediately()
-                }
-            }
-            if let failure { throw failure }
-            guard let collected else { throw CocoaError(.coderValueNotFound) }
-            let timedOut = finishedCount < repeatCount
-            var exportEntries: [AXParagraphTranslation] = []
-            if !skip {
-                let completed = translated?.frame.frameID == frameID ? translated?.entries ?? [] : []
-                exportEntries = collected.paragraphUnits.map { paragraph in
-                    completed.first { $0.node == paragraph.node } ?? .timedOut(paragraph,direction:direction)
-                }
-            }
-            let output = try input.write(collected,collector:"rearview",frameID:frameID,sessionCollections:samples)
-            var metadata = try JSONSerialization.jsonObject(with:Data(contentsOf:output.appendingPathComponent("metadata.json"))) as! [String:Any]
-            if let frame = coordinator.latestAXRenderedFrame, frame.frameID == frameID, let art = frame.axArtwork {
-                func png(_ image: CGImage?, _ name: String) throws {
-                    guard let image else { return }
-                    let bitmap = NSBitmapImageRep(cgImage:image)
-                    try bitmap.representation(using:.png,properties:[:])?.write(to:output.appendingPathComponent(name))
-                }
-                try png(frame.image,"render-source.png")
-                let view = NativeTranslationMirrorView(frame:CGRect(x:0,y:0,width:frame.image.width,height:frame.image.height))
-                view.setRenderingActive(true); view.backgroundOpacity = 1; view.frameSnapshot = frame
-                if let result = view.compositedImage(), let tiff = result.tiffRepresentation, let bitmap = NSBitmapImageRep(data:tiff) {
-                    try bitmap.representation(using:.png,properties:[:])?.write(to:output.appendingPathComponent("render-translated.png"))
-                }
-                let debugContext = CGContext(data:nil,width:frame.image.width,height:frame.image.height,bitsPerComponent:8,bytesPerRow:0,
-                    space:CGColorSpaceCreateDeviceRGB(),bitmapInfo:CGImageAlphaInfo.premultipliedLast.rawValue)
-                if let debug = art.debug { debugContext?.draw(debug,in:CGRect(x:0,y:0,width:debug.width,height:debug.height)) }
-                for layer in frame.imageOCRLayers {
-                    debugContext?.setStrokeColor(NSColor.systemPurple.cgColor); debugContext?.setLineWidth(2)
-                    debugContext?.stroke(layer.pixelBox)
-                    debugContext?.setStrokeColor(NSColor.systemYellow.cgColor)
-                    for item in layer.items {
-                        let r = item.normalizedRect
-                        debugContext?.stroke(CGRect(x:layer.pixelBox.minX+r.minX*layer.pixelBox.width,
-                            y:layer.pixelBox.minY+r.minY*layer.pixelBox.height,width:r.width*layer.pixelBox.width,height:r.height*layer.pixelBox.height))
+            func exportPhase(targetCount:Int) throws -> (URL,Bool) {
+                if let failure { throw failure }
+                guard let collected else { throw CocoaError(.coderValueNotFound) }
+                let timedOut = finishedCount < targetCount
+                var exportEntries: [AXParagraphTranslation] = []
+                if !skip {
+                    let completed = translated?.frame.frameID == frameID ? translated?.entries ?? [] : []
+                    exportEntries = collected.paragraphUnits.map { paragraph in
+                        completed.first { $0.node == paragraph.node } ?? .timedOut(paragraph,direction:direction)
                     }
                 }
-                try png(debugContext?.makeImage(),"render-debug.png")
-                let imageEncoder = JSONEncoder(); imageEncoder.outputFormatting = [.prettyPrinted,.sortedKeys]
-                try imageEncoder.encode(frame.imageOCRLayers.map(AXImageOCRSavedLayer.init)).write(to:output.appendingPathComponent("image-ocr-layers.json"))
-                try imageEncoder.encode(coordinator.latestAXTranslation?.imageOCR.diagnostics ?? []).write(to:output.appendingPathComponent("image-ocr.json"))
-                try JSONSerialization.data(withJSONObject:["frameID":frame.frameID,
-                    "clipRects":art.clipRects.map { ["x":$0.minX,"y":$0.minY,"width":$0.width,"height":$0.height] },
-                    "imageOCRPixelBoxes":frame.imageOCRLayers.map { ["x":$0.pixelBox.minX,"y":$0.pixelBox.minY,"width":$0.pixelBox.width,"height":$0.pixelBox.height] },
-                    "fragments":art.fragments.map { ["text":$0.text,"offset":$0.characterOffset,"x":$0.rect.minX,"y":$0.rect.minY,"width":$0.rect.width,"height":$0.rect.height] }],options:[.sortedKeys,.prettyPrinted])
-                    .write(to:output.appendingPathComponent("render-geometry.json"))
-                let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted,.sortedKeys]
-                try encoder.encode(art.diagnostics).write(to:output.appendingPathComponent("render-layout.json"))
-                metadata["renderFrameID"] = frame.frameID
-                metadata["renderSeconds"] = art.elapsed
+                let output = try input.write(collected,collector:"rearview",frameID:frameID,sessionCollections:samples)
+                var metadata = try JSONSerialization.jsonObject(with:Data(contentsOf:output.appendingPathComponent("metadata.json"))) as! [String:Any]
+                if let frame = coordinator.latestAXRenderedFrame, frame.frameID == frameID, let art = frame.axArtwork {
+                    func png(_ image: CGImage?, _ name: String) throws {
+                        guard let image else { return }
+                        let bitmap = NSBitmapImageRep(cgImage:image)
+                        try bitmap.representation(using:.png,properties:[:])?.write(to:output.appendingPathComponent(name))
+                    }
+                    try png(frame.image,"render-source.png")
+                    let view = NativeTranslationMirrorView(frame:CGRect(x:0,y:0,width:frame.image.width,height:frame.image.height))
+                    view.setRenderingActive(true); view.backgroundOpacity = 1; view.frameSnapshot = frame
+                    if let result = view.compositedImage(), let tiff = result.tiffRepresentation, let bitmap = NSBitmapImageRep(data:tiff) {
+                        try bitmap.representation(using:.png,properties:[:])?.write(to:output.appendingPathComponent("render-translated.png"))
+                    }
+                    let debugContext = CGContext(data:nil,width:frame.image.width,height:frame.image.height,bitsPerComponent:8,bytesPerRow:0,
+                        space:CGColorSpaceCreateDeviceRGB(),bitmapInfo:CGImageAlphaInfo.premultipliedLast.rawValue)
+                    if let debug = art.debug { debugContext?.draw(debug,in:CGRect(x:0,y:0,width:debug.width,height:debug.height)) }
+                    for layer in frame.imageOCRLayers {
+                        debugContext?.setStrokeColor(NSColor.systemPurple.cgColor); debugContext?.setLineWidth(2)
+                        debugContext?.stroke(layer.pixelBox)
+                        debugContext?.setStrokeColor(NSColor.systemYellow.cgColor)
+                        for item in layer.items {
+                            let r = item.normalizedRect
+                            debugContext?.stroke(CGRect(x:layer.pixelBox.minX+r.minX*layer.pixelBox.width,
+                                y:layer.pixelBox.minY+r.minY*layer.pixelBox.height,width:r.width*layer.pixelBox.width,height:r.height*layer.pixelBox.height))
+                        }
+                    }
+                    try png(debugContext?.makeImage(),"render-debug.png")
+                    let imageEncoder = JSONEncoder(); imageEncoder.outputFormatting = [.prettyPrinted,.sortedKeys]
+                    var savedLayers: [AXImageOCRSavedLayer]=[]
+                    for (index,layer) in frame.imageOCRLayers.enumerated() {
+                        let name="image-ocr-layer-\(index).png"
+                        try png(layer.image,name)
+                        savedLayers.append(AXImageOCRSavedLayer(layer,imageFile:name))
+                    }
+                    try imageEncoder.encode(savedLayers).write(to:output.appendingPathComponent("image-ocr-layers.json"))
+                    try imageEncoder.encode(coordinator.latestAXTranslation?.imageOCR.diagnostics ?? []).write(to:output.appendingPathComponent("image-ocr.json"))
+                    try JSONSerialization.data(withJSONObject:["frameID":frame.frameID,
+                        "clipRects":art.clipRects.map { ["x":$0.minX,"y":$0.minY,"width":$0.width,"height":$0.height] },
+                        "imageOCRPixelBoxes":frame.imageOCRLayers.map { ["x":$0.pixelBox.minX,"y":$0.pixelBox.minY,"width":$0.pixelBox.width,"height":$0.pixelBox.height] },
+                        "fragments":art.fragments.map { ["text":$0.text,"offset":$0.characterOffset,"x":$0.rect.minX,"y":$0.rect.minY,"width":$0.rect.width,"height":$0.rect.height] }],options:[.sortedKeys,.prettyPrinted])
+                        .write(to:output.appendingPathComponent("render-geometry.json"))
+                    let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted,.sortedKeys]
+                    try encoder.encode(art.diagnostics).write(to:output.appendingPathComponent("render-layout.json"))
+                    metadata["renderFrameID"] = frame.frameID
+                    metadata["renderSeconds"] = art.elapsed
+                    metadata["bodyReuseCompositeSeconds"] = art.bodyReuseSeconds
+                }
+                let encoder=JSONEncoder();encoder.outputFormatting=[.prettyPrinted,.sortedKeys]
+                if let diagnostic=translated?.bodyReuseDiagnostic {
+                    metadata["bodyReuse"]=try JSONSerialization.jsonObject(with:encoder.encode(diagnostic))
+                }
+                if let reuse=translated?.retainedBody {
+                    let body=reuse.body
+                    try body.frame.snapshot.nodes.write(to:output.appendingPathComponent("retained-body-rawAx.json"))
+                    try body.frame.snapshot.selected.write(to:output.appendingPathComponent("retained-body-candidate.json"))
+                    try body.frame.snapshot.paragraphs.write(to:output.appendingPathComponent("retained-body-paragraphs.json"))
+                    try body.frame.snapshot.metadata.write(to:output.appendingPathComponent("retained-body-metadata.json"))
+                    try encoder.encode(body.artwork.diagnostics.filter { body.paragraphNodes.contains($0.node) }).write(to:output.appendingPathComponent("retained-body-layout.json"))
+                    try encoder.encode(body.entries).write(to:output.appendingPathComponent("retained-body-translations.json"))
+                    try encoder.encode(Array(body.paragraphNodes).sorted()).write(to:output.appendingPathComponent("retained-body-nodes.json"))
+                    if let png=NSBitmapImageRep(cgImage:body.frame.image).representation(using:.png,properties:[:]) {
+                        try png.write(to:output.appendingPathComponent("retained-body-source.png"))
+                    }
+                }
+                metadata["performanceProfileScope"] = control == nil ? "collection_session" : "report_sequence"
+                metadata["skipTranslation"] = skip
+                metadata["translationSource"] = skip ? "disabled" : "rearview-session"
+                metadata["translationPreparationSeconds"] = preparationSeconds
+                metadata["translationPreparationError"] = broker.preparationError
+                metadata["translationPreparationTimedOut"] = !skip && !broker.isReadyForTranslation && broker.preparationError == nil
+                metadata["translationTimedOut"] = timedOut
+                metadata["translationSessionReady"] = broker.isReadyForTranslation
+                metadata["translationSamples"] = translationSamples
+                if !skip {
+                    let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted,.sortedKeys]
+                    struct Export: Encodable { let frameID: UInt64; let entries: [AXParagraphTranslation] }
+                    try encoder.encode(Export(frameID:frameID ?? 0,entries:exportEntries))
+                        .write(to:output.appendingPathComponent("native-translations.json"),options:.atomic)
+                }
+                try JSONSerialization.data(withJSONObject:metadata,options:[.prettyPrinted,.sortedKeys])
+                    .write(to:output.appendingPathComponent("metadata.json"),options:.atomic)
+                return (output,timedOut || exportEntries.contains { $0.status == "failed" })
             }
-            metadata["skipTranslation"] = skip
-            metadata["translationSource"] = skip ? "disabled" : "rearview-session"
-            metadata["translationPreparationSeconds"] = preparationSeconds
-            metadata["translationPreparationError"] = broker.preparationError
-            metadata["translationPreparationTimedOut"] = !skip && !broker.isReadyForTranslation && broker.preparationError == nil
-            metadata["translationTimedOut"] = timedOut
-            metadata["translationSessionReady"] = broker.isReadyForTranslation
-            metadata["translationSamples"] = translationSamples
-            if !skip {
-                let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted,.sortedKeys]
-                struct Export: Encodable { let frameID: UInt64; let entries: [AXParagraphTranslation] }
-                try encoder.encode(Export(frameID:frameID ?? 0,entries:exportEntries))
-                    .write(to:output.appendingPathComponent("native-translations.json"),options:.atomic)
+            var lastOutput: URL?, allOutputs: [URL]=[], anyFailure=false
+            for (phase,name) in phaseNames.enumerated() {
+                var targetCount=repeatCount
+                if let control {
+                    if phase > 0 {
+                        let gate=control.appendingPathComponent("continue-\(phase).json")
+                        let deadline=ContinuousClock.now + .seconds(540)
+                        while !FileManager.default.fileExists(atPath:gate.path),ContinuousClock.now < deadline {
+                            if FileManager.default.fileExists(atPath:control.appendingPathComponent("abort.json").path) { throw CancellationError() }
+                            try await Task.sleep(for:.milliseconds(50))
+                        }
+                        guard FileManager.default.fileExists(atPath:gate.path) else { throw CocoaError(.fileReadNoSuchFile) }
+                    }
+                    // The external test driver has changed the UI; capture keeps
+                    // running in manual mode. Give it a fresh current frame.
+                    try await Task.sleep(for:.milliseconds(400))
+                    failure=nil;collected=nil;translated=nil;samples=[];translationSamples=[]
+                    targetCount=finishedCount+repeatCount
+                    fputs("AX sequence phase \(phase): completed=\(finishedCount), target=\(targetCount)\n",stderr)
+                    coordinator.translateImmediately()
+                }
+                let deadline=ContinuousClock.now + .seconds(skip ? 60 : 540)
+                var requestedRepeat=finishedCount
+                while finishedCount < targetCount && failure == nil && ContinuousClock.now < deadline {
+                    try await Task.sleep(for:.milliseconds(50))
+                    if finishedCount > requestedRepeat && finishedCount < targetCount {
+                        requestedRepeat=finishedCount;coordinator.translateImmediately()
+                    }
+                }
+                let (folder,failed)=try exportPhase(targetCount:targetCount)
+                lastOutput=folder;allOutputs.append(folder);anyFailure = anyFailure || failed
+                if let control {
+                    try JSONSerialization.data(withJSONObject:["phase":phase,"name":name,"output":folder.path,"failed":failed],options:[.sortedKeys])
+                        .write(to:control.appendingPathComponent("ready-\(phase).json"),options:.atomic)
+                }
+                print(folder.path)
             }
-            try JSONSerialization.data(withJSONObject:metadata,options:[.prettyPrinted,.sortedKeys])
-                .write(to:output.appendingPathComponent("metadata.json"),options:.atomic)
-            if let profile = PerformanceProfiler.shared.stop(translationDirection:direction) {
-                let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted,.sortedKeys]
-                try encoder.encode(profile).write(to:output.appendingPathComponent("translation-profile.json"),options:.atomic)
+            guard let output=lastOutput else { throw CocoaError(.coderValueNotFound) }
+            if let profile=PerformanceProfiler.shared.stop(translationDirection:direction) {
+                let encoder=JSONEncoder();encoder.outputFormatting=[.prettyPrinted,.sortedKeys]
+                for folder in allOutputs { try encoder.encode(profile).write(to:folder.appendingPathComponent("translation-profile.json"),options:.atomic) }
             }
             await coordinator.stop()
             if showsWindow {
@@ -229,8 +308,7 @@ import NotionAXReportSupport
                 while review.isRunning { try await Task.sleep(for:.milliseconds(50)) }
                 guard review.terminationStatus == 0 else { throw CocoaError(.executableRuntimeMismatch) }
             }
-            print(output.path)
-            return timedOut || exportEntries.contains { $0.status == "failed" } ? 2 : 0
+            return anyFailure ? 2 : 0
         } catch {
             await coordinator.stop()
             fputs("AX report collection failed: \(error)\n",stderr)

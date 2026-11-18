@@ -350,11 +350,15 @@ public final class ScenarioRunner {
         if request.scenario.schemaVersion == 2 { await applyBlockDisplays() }
         if let focus = state.focus { await step("focus") { try await self.focus(focus) } }
         if let overlay = state.overlay {
-            if overlay.kind == "menu" { await verifyFinal(item:"backgroundState",includeOverlay:false) }
+            if ["menu","popup"].contains(overlay.kind) { await verifyFinal(item:"backgroundState",includeOverlay:false) }
             await step("overlay") { try await self.applyOverlay(overlay) }
         }
         if let side = state.sidebar, side.mode == "floating" {
             await step("sidebar") { try await self.applySidebar(side) }
+            // Resizing/revealing the sidebar can focus a sidebar control. Restore
+            // the requested nonediting focus without parking the pointer (which
+            // would immediately dismiss the requested floating pane).
+            if state.focus?.mode == "clear" { try? ax.set(web,"AXFocused",kCFBooleanTrue) }
         }
         await stabilizeVisualScrollBaselines()
     }
@@ -792,7 +796,7 @@ public final class ScenarioRunner {
         await step(item) {
             let state = self.request.scenario.state
             if let frame = state.window, !(self.ax.frame(self.window).map { frame.near(Rect($0)) } ?? false) { throw ScenarioFailure("state_drift", "Window changed after application") }
-            if includeOverlay, let overlay = state.overlay, overlay.kind == "menu" {
+            if includeOverlay, let overlay = state.overlay, ["menu","popup"].contains(overlay.kind) {
                 guard self.result.steps.contains(where: { $0.item == "backgroundState" && $0.status == "verified" }), self.overlayVisible(overlay) else {
                     throw ScenarioFailure("state_drift", "Menu or its verified background state is missing")
                 }
@@ -1734,8 +1738,18 @@ private extension ScenarioRunner {
         return rect.offsetBy(dx: -windowFrame.minX, dy: -windowFrame.minY)
     }
     func applyOverlay(_ overlay: OverlayRequest) async throws {
-        let element = try control(overlay.text, in: web)
-        if overlay.kind == "menu" {
+        let element: AXUIElement
+        if let targetClass = overlay.targetClass {
+            guard targetClass.hasPrefix("notion-") else { throw ScenarioFailure("unsupported", "Overlay targets require semantic Notion classes") }
+            let hits=ax.nodes(web).filter { ax.classes($0).contains(targetClass) && (ax.frame($0).map { $0.width>1 && $0.height>1 } ?? false) }
+            guard hits.count == 1 else { throw ScenarioFailure("unsupported", "Overlay semantic target is ambiguous") }
+            element=hits[0]
+        } else if overlay.kind == "hover" {
+            let hits=ax.nodes(web).filter { ["AXLink","AXButton","AXPopUpButton"].contains(ax.text($0,"AXRole")) && ax.label($0)==overlay.text && (ax.frame($0).map { $0.width>1 && $0.height>1 } ?? false) }
+            guard hits.count == 1 else { throw ScenarioFailure("unsupported", "Hover target is ambiguous") }
+            element=hits[0]
+        } else { element = try control(overlay.text, in:web) }
+        if overlay.kind == "menu" || overlay.kind == "popup" {
             try activate(element)
             var opened = false
             for _ in 0..<8 {
@@ -1745,15 +1759,21 @@ private extension ScenarioRunner {
             if !opened { try ax.click(element) }
         }
         else {
-            guard let frame = ax.frame(element) else { throw ScenarioFailure("unsupported", "Tooltip target has no frame") }
+            guard var frame = ax.frame(element) else { throw ScenarioFailure("unsupported", "Tooltip target has no frame") }
+            if overlay.targetClass != nil {
+                let children=ax.children(element).compactMap { ax.frame($0) }.filter { $0.width>1 && $0.height>1 && frame.contains($0) }
+                // Semantic hover roots may include empty space around a single
+                // trigger group. Use that group's center, not viewport center.
+                if children.count == 1 { frame=children[0] }
+            }
             if let page = ax.frame(web) { ax.move(CGPoint(x:page.midX,y:page.minY+60)); try await pause() }
             ax.move(CGPoint(x: frame.midX, y: frame.midY))
         }
-        if overlay.kind == "tooltip", let expected = overlay.expectedText {
+        if ["tooltip","hover","popup"].contains(overlay.kind), let expected = overlay.expectedText {
             while true {
                 try await pause()
                 let (image,_) = try await windowImage()
-                if try imageContains(image,text:expected) { break }
+                if try imageContains(image,text:expected,substring:["hover","popup"].contains(overlay.kind)) { break }
             }
             result.environment["overlayVerification"] = "Vision OCR of selected-window pixels; final proof uses screen.png"
         } else { try await wait { self.overlayVisible(overlay) } }
@@ -1761,20 +1781,25 @@ private extension ScenarioRunner {
     }
     func overlayVisible(_ overlay: OverlayRequest) -> Bool {
         ax.nodes(web).contains { node in
+            (overlay.kind == "popup" && ax.text(node,"AXSubrole") == "AXApplicationDialog") ||
             ax.text(node,"AXRole") == (overlay.kind == "menu" ? "AXMenu" : "AXHelpTag") ||
             (overlay.kind == "menu" && overlay.text == "Actions" &&
              ["AXComboBox", "AXTextField", "AXSearchField"].contains(ax.text(node,"AXRole")) &&
              ax.text(node,"AXPlaceholderValue").replacingOccurrences(of: "...", with: "…") == "Search actions…")
         }
     }
-    func imageContains(_ image: CGImage, text: String) throws -> Bool {
+    func imageContains(_ image: CGImage, text: String, substring: Bool = false) throws -> Bool {
         let request = VNRecognizeTextRequest()
         request.recognitionLevel = .accurate
         request.usesLanguageCorrection = false
-        request.recognitionLanguages = ["en-US"]
+        request.recognitionLanguages = substring ? ["ja-JP","en-US"] : ["en-US"]
         try VNImageRequestHandler(cgImage:image).perform([request])
         func normalized(_ value:String) -> String { value.split(whereSeparator: { $0.isWhitespace }).joined(separator:" ") }
-        return (request.results ?? []).contains { normalized($0.topCandidates(1).first?.string ?? "") == normalized(text) }
+        func compact(_ value:String)->String { value.folding(options:.widthInsensitive,locale:nil).filter { !$0.isWhitespace } }
+        return (request.results ?? []).contains {
+            let actual=$0.topCandidates(1).first?.string ?? ""
+            return substring ? compact(actual).contains(compact(text)) : normalized(actual) == normalized(text)
+        }
     }
     func viewportPixels(_ viewport: AXUIElement) async throws -> String {
         guard let frame = ax.frame(viewport) else { throw ScenarioFailure("capture_failed", "Code viewport disappeared") }
@@ -1884,9 +1909,9 @@ private extension ScenarioRunner {
             guard blockDisplayMatches(display, in: block) else { throw ScenarioFailure("state_drift", "Diagram display mode changed") }
         }
         if includeOverlay, let overlay = state.overlay {
-            if overlay.kind == "tooltip", let text = overlay.expectedText {
+            if ["tooltip","hover","popup"].contains(overlay.kind), let text = overlay.expectedText {
                 guard let source = CGImageSourceCreateWithURL(directory.appendingPathComponent("screen.png") as CFURL,nil),
-                      let image = CGImageSourceCreateImageAtIndex(source,0,nil), try imageContains(image,text:text) else {
+                      let image = CGImageSourceCreateImageAtIndex(source,0,nil), try imageContains(image,text:text,substring:["hover","popup"].contains(overlay.kind)) else {
                     throw ScenarioFailure("state_drift", "Requested tooltip text is absent from the captured window pixels")
                 }
             } else if !overlayVisible(overlay) {

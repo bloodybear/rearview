@@ -25,6 +25,7 @@ struct AXImageOCRLayer: @unchecked Sendable {
     let pixelBox: CGRect // full-frame, bottom-left pixels
     let items: [MirrorItem] // crop-local normalized coordinates
     let debugItems: [OCRDebugItem]
+    var displayPixelBoxes: [CGRect]? = nil
 }
 struct AXImageOCRResult: Sendable {
     var layers: [AXImageOCRLayer] = []
@@ -292,6 +293,8 @@ extension AXImageOCRLayer {
 // Saved reports rebuild the same native views without invoking OCR or models.
 struct AXImageOCRSavedLayer: Codable {
     let pixelBox: CGRect
+    let displayPixelBoxes: [CGRect]?
+    let imageFile: String?
     let items: [Item]
     struct Fragment: Codable { let text: String; let box: CGRect }
     struct Item: Codable {
@@ -302,8 +305,10 @@ struct AXImageOCRSavedLayer: Codable {
         let background, foreground: [Double]
         let fragments: [Fragment]
     }
-    init(_ layer: AXImageOCRLayer) {
+    init(_ layer: AXImageOCRLayer, imageFile: String? = nil) {
+        self.imageFile=imageFile
         pixelBox = layer.pixelBox
+        displayPixelBoxes = layer.displayPixelBoxes
         func color(_ c:RGBAColor) -> [Double] { [c.red,c.green,c.blue,c.alpha] }
         items = layer.items.map { item in
             Item(id:item.id,text:item.translatedText,translated:item.isTranslated,box:item.normalizedRect,
@@ -312,15 +317,15 @@ struct AXImageOCRSavedLayer: Codable {
                     .map { Fragment(text:$0.text,box:$0.normalizedRect) })
         }
     }
-    func restore(source: CGImage) -> AXImageOCRLayer? {
+    func restore(source: CGImage, savedImage: CGImage? = nil) -> AXImageOCRLayer? {
         let top = CGRect(x:pixelBox.minX,y:CGFloat(source.height)-pixelBox.maxY,width:pixelBox.width,height:pixelBox.height)
-        guard let image = source.cropping(to:top) else { return nil }
+        guard let image = savedImage ?? source.cropping(to:top) else { return nil }
         func color(_ values:[Double]) -> RGBAColor { RGBAColor(red:values[0],green:values[1],blue:values[2],alpha:values[3]) }
         guard items.allSatisfy({ $0.background.count == 4 && $0.foreground.count == 4 }) else { return nil }
         return .init(image:image,pixelBox:pixelBox,items:items.map {
             MirrorItem(id:$0.id,translatedText:$0.text,presentation:$0.translated ? .translated : .selectionOnly,
                 normalizedRect:$0.box,background:color($0.background),foreground:color($0.foreground),
                 sourceSelectionFragments:$0.fragments.map { .init(text:$0.text,normalizedRect:$0.box) })
-        },debugItems:[])
+        },debugItems:[],displayPixelBoxes:displayPixelBoxes)
     }
 }

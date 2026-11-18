@@ -3,6 +3,9 @@ import Foundation
 public enum AXParagraphBuilder {
     // Also used for saved-input parity checks, without an AX process or markers.
     public static func build(nodes: [[String: Any]], selected: [[String: Any]]) -> [[String: Any]] {
+        build(nodes:nodes,selected:selected,popupOcclusion:PopupOcclusion(rows:nodes))
+    }
+    package static func build(nodes:[[String:Any]], selected:[[String:Any]], popupOcclusion:PopupOcclusion?) -> [[String:Any]] {
         let byID = Dictionary(uniqueKeysWithValues: nodes.map { ($0["id"] as! Int, $0) })
         func ancestors(_ id: Int) -> [Int] {
             var result: [Int] = [], current = byID[id]?["parent"] as? Int
@@ -225,7 +228,8 @@ public enum AXParagraphBuilder {
                       let menuID = menu["id"] as? Int,
                       let root = ancestors(menuID).first(where: { byID[$0]?["role"] as? String == "AXWebArea" }) else { return false }
                 return memberIDs.allSatisfy { member in
-                    let chain = [member] + ancestors(member)
+                    let owner = byID[member]?["controlTextOwner"] as? Int
+                    let chain = [member] + ancestors(member) + (owner.map { [$0] + ancestors($0) } ?? [])
                     return chain.contains(root) && !chain.contains(menuID) && !chain.contains(where: {
                         (byID[$0]?["domClasses"] as? [String] ?? []).contains("notion-overlay-container")
                     })
@@ -234,7 +238,9 @@ public enum AXParagraphBuilder {
                 let f = box(menu["frame"])
                 return f.width > 1 && f.height > 1 && [f.minX,f.minY,f.width,f.height].allSatisfy(\.isFinite) ? rect(PreviewOcclusion.textEditingMenuPanel(f)) : nil
             }
-            if !masks.isEmpty { unit["occlusionBoxes"] = masks }
+            let memberMasks = memberIDs.map { popupOcclusion?.masks(for:$0) ?? [] }
+            let popupMasks = (memberMasks.first ?? []).filter { mask in memberMasks.allSatisfy { $0.contains(mask) } }.map(rect)
+            if !(masks + popupMasks).isEmpty { unit["occlusionBoxes"] = masks + popupMasks }
             let f = box(unit["box"])
             return f.width > 0 && f.height > 0 ? unit : nil
         }

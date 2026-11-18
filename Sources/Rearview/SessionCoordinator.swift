@@ -125,9 +125,12 @@ final class SessionCoordinator {
     struct AXTranslatedFrame: Sendable {
         let frame: AXFrameSnapshot
         let entries: [AXParagraphTranslation]
+        var retainedBody: AXBodyReuse? = nil
+        var bodyReuseDiagnostic: AXBodyReuseDiagnostic? = nil
         var imageOCR = AXImageOCRResult()
     }
     private let imageOCRProcessor = AXImageOCRProcessor()
+    private let bodyRetention = AXBodyRetention()
     private enum AXWorkResult: Sendable {
         case paragraph(Int, AXParagraphTranslation)
         case images(AXImageOCRProcessor.Completion)
@@ -295,7 +298,7 @@ final class SessionCoordinator {
     private func axPresentation(_ value: AXTranslatedFrame, artwork: AXRenderArtwork) -> MirrorFrame {
         let size = CGSize(width:value.frame.image.width,height:value.frame.image.height)
         var frame = MirrorFrame(image:value.frame.image,
-            translatedItems:artwork.items + value.imageOCR.layers.flatMap { $0.mappedItems(frameSize:size) },
+            translatedItems:artwork.items + ((value.retainedBody?.imageLayers ?? []) + value.imageOCR.layers).flatMap { $0.mappedItems(frameSize:size) },
             ocrDebugItems:value.imageOCR.layers.flatMap { layer in
                 layer.debugItems.map { item in
                     OCRDebugItem(id:item.id,status:item.status,rawText:item.rawText,confidence:item.confidence,
@@ -304,7 +307,7 @@ final class SessionCoordinator {
                 }
             },frameID:value.frame.frameID)
         frame.axArtwork = artwork
-        frame.imageOCRLayers = value.imageOCR.layers
+        frame.imageOCRLayers = (value.retainedBody?.imageLayers ?? []) + value.imageOCR.layers
         return frame
     }
 
@@ -329,12 +332,23 @@ final class SessionCoordinator {
                       self.contentRevision == activeRevision, self.ocrTaskSequence == sequence else { return }
                 if result.status == .failed { throw SessionCollectionFailure.failed }
                 self.failureDeduplicator.succeeded(.ax)
+                let bodyScope=AXBodyScope(generation:activeGeneration,processID:request.processID,windowID:request.windowID,
+                    window:request.windowFrame,selection:request.selectionRegion,pixels:CGSize(width:frame.image.width,height:frame.image.height),
+                    direction:String(describing:self.translationDirection),protection:self.protectsNonSourceText)
+                let (retainedBody,reuseDiagnostic)=self.bodyRetention.resolve(snapshot:result,scope:bodyScope)
                 self.latestAXFrame = AXFrameSnapshot(snapshot:result,image:frame.image,frameID:frame.id,receivedAt:frame.receivedAt)
                 // Match OCR: atomic updates retain the displayed result until rendering finishes.
-                if !self.translatesAXParagraphs || self.mirrorUpdateStyle == .progressive {
+                if !self.translatesAXParagraphs || (self.mirrorUpdateStyle == .progressive && retainedBody == nil) {
                     self.display(MirrorFrame(image:frame.image,translatedItems:[],frameID:frame.id))
                 }
                 self.onAXExtraction?(result, frame.image, frame.id)
+                if self.translatesAXParagraphs, retainedBody != nil, let captured=self.latestAXFrame {
+                    let visible=AXTranslatedFrame(frame:captured,entries:[],retainedBody:retainedBody,bodyReuseDiagnostic:reuseDiagnostic)
+                    let artwork=await AXLineRendering.render(visible)
+                    guard !Task.isCancelled, self.generation == activeGeneration,self.contentRevision == activeRevision,self.ocrTaskSequence == sequence else { return }
+                    let presentation=self.axPresentation(visible,artwork:artwork)
+                    self.latestAXRenderedFrame=presentation;self.display(presentation);self.onAXPresentation?(visible)
+                }
                 if self.translatesAXParagraphs {
                     let translator = AXParagraphTranslator(broker: self.broker, direction: self.translationDirection)
                     let imageJobs = AXImageOCRProcessor.jobs(snapshot:result,image:frame.image,selection:request.selectionRegion)
@@ -394,11 +408,11 @@ final class SessionCoordinator {
                                 let allParagraphs = completed.count == result.paragraphUnits.count
                                 let visibleEntries = self.mirrorUpdateStyle == .progressive || allParagraphs
                                     ? completed.sorted { $0.0 < $1.0 }.map { $0.1 } : []
-                                let progress = AXTranslatedFrame(frame:captured,entries:completed.sorted { $0.0 < $1.0 }.map { $0.1 },imageOCR:imageOCR)
+                                let progress = AXTranslatedFrame(frame:captured,entries:completed.sorted { $0.0 < $1.0 }.map { $0.1 },retainedBody:retainedBody,bodyReuseDiagnostic:reuseDiagnostic,imageOCR:imageOCR)
                                 self.onAXTranslationProgress?(progress)
                                 if imageCompleted || allParagraphs || (self.mirrorUpdateStyle == .progressive &&
                                     (artwork == nil || ContinuousClock.now-lastPresentation >= .milliseconds(50))) {
-                                    let visible = AXTranslatedFrame(frame:captured,entries:visibleEntries,imageOCR:imageOCR)
+                                    let visible = AXTranslatedFrame(frame:captured,entries:visibleEntries,retainedBody:retainedBody,bodyReuseDiagnostic:reuseDiagnostic,imageOCR:imageOCR)
                                     if artwork == nil || renderedParagraphs != visibleEntries.count {
                                         artwork = await AXLineRendering.render(visible)
                                         renderedParagraphs = visibleEntries.count
@@ -421,7 +435,7 @@ final class SessionCoordinator {
                     guard !Task.isCancelled, self.generation == activeGeneration,
                           self.contentRevision == activeRevision, self.ocrTaskSequence == sequence,
                           let captured = self.latestAXFrame else { return }
-                    let translated = AXTranslatedFrame(frame:captured,entries:entries,imageOCR:imageOCR)
+                    let translated = AXTranslatedFrame(frame:captured,entries:entries,retainedBody:retainedBody,bodyReuseDiagnostic:reuseDiagnostic,imageOCR:imageOCR)
                     let artwork = await AXLineRendering.render(translated)
                     guard !Task.isCancelled, self.generation == activeGeneration,
                           self.contentRevision == activeRevision, self.ocrTaskSequence == sequence else { return }
@@ -429,6 +443,7 @@ final class SessionCoordinator {
                     self.latestAXRenderedFrame = rendered
                     self.display(rendered)
                     self.onAXPresentation?(translated)
+                    self.bodyRetention.store(value:translated,artwork:artwork,scope:bodyScope)
                     self.latestAXTranslation = translated
                     let attempts = entries.filter { ["failed", "translated", "partial"].contains($0.status) }
                     if !attempts.isEmpty && attempts.allSatisfy({ $0.status == "failed" }) && imageOCR.layers.isEmpty { self.reportFailure(nil, stage: .translation, userInitiated: origin == .userAction) }
@@ -444,6 +459,7 @@ final class SessionCoordinator {
             } catch {
                 guard !Task.isCancelled, self.generation == activeGeneration,
                       self.contentRevision == activeRevision, self.ocrTaskSequence == sequence else { return }
+                if let axError=error as? AXExtractionError, [.windowMappingFailed,.windowChanged,.targetTerminated].contains(axError) { self.bodyRetention.reset() }
                 self.showProcessingStatus(.recognitionFailed,frameID:frame.id,origin:origin)
                 self.reportFailure(error, stage: .ax, userInitiated: origin == .userAction)
                 self.onAXExtractionError?(error)
@@ -549,6 +565,7 @@ final class SessionCoordinator {
         pendingModeRefresh = false
         failureNotice.dismiss()
         failureDeduplicator.reset()
+        bodyRetention.reset()
         imageOCRProcessor.reset()
         latestAXFrame = nil
         latestAXTranslation = nil; latestAXRenderedFrame = nil
@@ -610,6 +627,7 @@ final class SessionCoordinator {
     func setTranslationDirection(_ direction: TranslationDirection) {
         guard translationDirection != direction else { return }
         translationDirection = direction
+        bodyRetention.reset()
         imageOCRProcessor.reset()
         latestAXFrame = nil; latestAXTranslation = nil; latestAXRenderedFrame = nil
         direction.save()
@@ -629,6 +647,7 @@ final class SessionCoordinator {
     func setProtectsNonSourceText(_ enabled: Bool) {
         guard protectsNonSourceText != enabled else { return }
         protectsNonSourceText = enabled
+        bodyRetention.reset()
         imageOCRProcessor.reset()
         latestAXFrame = nil; latestAXTranslation = nil; latestAXRenderedFrame = nil
         TranslationTextProtection.save(enabled)
@@ -922,6 +941,7 @@ final class SessionCoordinator {
     }
 
     private func suspendAutomaticProcessing() {
+        bodyRetention.reset()
         imageOCRProcessor.reset()
         latestAXFrame = nil
         latestAXTranslation = nil; latestAXRenderedFrame = nil
@@ -1370,6 +1390,7 @@ final class SessionCoordinator {
     }
 
     private func invalidateCapturedContent() {
+        bodyRetention.reset()
         imageOCRProcessor.reset()
         latestAXFrame = nil
         latestAXTranslation = nil; latestAXRenderedFrame = nil

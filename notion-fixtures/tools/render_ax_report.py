@@ -361,6 +361,46 @@ def render(folder):
                     continue
                 review += f'<details><summary>{d["node"]}/{d.get("segment", "")} · {html.escape(d["status"])}</summary><div style="max-width:100%;overflow:auto"><div style="position:relative;overflow:hidden;width:{(right-left)*2}px;height:{(bottom-top)*2}px"><img loading="lazy" src="render-translated.png" style="position:absolute;max-width:none;width:{image_width*2}px;height:{image_height*2}px;left:{-left*2}px;top:{-top*2}px"></div></div></details>'
             review += '</details>'
+        retained_path = folder/'retained-body-paragraphs.json'
+        if retained_path.exists():
+            retained = json.loads(retained_path.read_text())['units']
+            retained_ids = set(json.loads((folder/'retained-body-nodes.json').read_text()))
+            retained = [p for p in retained if p['node'] in retained_ids]
+            entries = {e['node']: e for e in json.loads((folder/'retained-body-translations.json').read_text())}
+            info = metadata.get('bodyReuse', {})
+            review += '<details open><summary>이전 본문 재사용 · 원본 프레임 '+html.escape(str(info.get('sourceFrameID')))+' (현재 AX 관측과 별도)</summary>'
+            review += '<p>창·세션 정보로 재사용했습니다. 픽셀 일치는 검사하지 않았습니다. 현재 팝업 영역은 표시에서 제외됩니다.</p>'
+            review += '<details><summary>재사용 출처와 현재 가림 박스</summary><pre>'+html.escape(json.dumps(info,ensure_ascii=False,indent=2))+'</pre></details>'
+            region = metadata['selectionRegion']
+            raw_retained = {n['id']: n for n in json.loads((folder/'retained-body-rawAx.json').read_text())}
+            review += '<details><summary>이전 문단(초록)·노드(빨강)·라인(파랑) 박스와 현재 팝업(회색)</summary><div style="position:relative;max-width:1100px"><img loading="lazy" src="render-translated.png" style="display:block;width:100%">'
+            review += f'<svg style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none" viewBox="{region["x"]} {region["y"]} {region["width"]} {region["height"]}">'
+            def retained_rect(box, color, label, fill='none'):
+                return f'<rect x="{box["x"]}" y="{box["y"]}" width="{box["width"]}" height="{box["height"]}" fill="{fill}" stroke="{color}" stroke-width="1"><title>{html.escape(label)}</title></rect>'
+            for p in retained:
+                review += retained_rect(p['box'], 'green', '이전 문단 '+str(p['node']))
+                for node in set(p.get('members', []) + p.get('lineSourceNodes', [])):
+                    node_box = raw_retained.get(node, {}).get('frame')
+                    if node_box:
+                        review += retained_rect(node_box, 'red', '이전 노드 '+str(node))
+                for line in p.get('lineRanges', []):
+                    review += retained_rect(line['box'], 'blue', line.get('text',''))
+            for surface in metadata.get('documentSurfaces', []):
+                if surface.get('url') == info.get('documentURL'):
+                    for box in surface.get('dialogBoxes', []):
+                        review += retained_rect(box, '#555', '현재 팝업', '#8884')
+            sx, sy = metadata.get('pixelsPerPointX', 1), metadata.get('pixelsPerPointY', 1)
+            for mask in info.get('inheritedPanels') or []:
+                (x, y), (w, h) = mask
+                box = dict(x=region['x']+x/sx, y=region['y']+region['height']-(y+h)/sy, width=w/sx, height=h/sy)
+                review += retained_rect(box, 'purple', '이전 부모 팝업 경계 재사용', '#9462')
+            review += '</svg></div></details>'
+            if info.get('inheritedPanels'):
+                review += '<p>보라색 경계: 현재 패널이 이전 패널의 네 변 안쪽에 놓여, AX에서 사라진 부모 패널의 가림 경계를 유지했습니다. 실제 DOM 부모 관계를 확인한 결과는 아닙니다.</p>'
+            for p in retained:
+                review += '<details><summary>이전 문단 '+str(p['node'])+' · '+html.escape(p.get('text','')[:90])+'</summary>'
+                review += '<p>'+html.escape(entries.get(p['node'],{}).get('translation') or '')+'</p><pre>'+html.escape(json.dumps(p,ensure_ascii=False,indent=2))+'</pre></details>'
+            review += '<p><a href="retained-body-source.png">이전 원본 캡처</a> · <a href="retained-body-rawAx.json">이전 AX 관측</a> · <a href="retained-body-paragraphs.json">이전 문단·노드·라인 관계</a></p></details>'
         review += image_ocr_review(folder, metadata)
         review += '</details>'
         page = page.replace('</style>', '</style>'+review, 1)

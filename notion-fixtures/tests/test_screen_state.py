@@ -22,6 +22,16 @@ def scenario():
 
 
 class ScreenStateTests(unittest.TestCase):
+    def test_popup_replay_requires_pixel_witness_and_semantic_target(self):
+        value = scenario()
+        value['state']['overlay'] = dict(kind='hover', text='Document outline', targetClass='notion-floating-table-of-contents', expectedText='N01')
+        value['state']['required'].append('overlay')
+        validate(value)
+        for change in [dict(expectedText=''), dict(targetClass='x1n2onr6')]:
+            broken = copy.deepcopy(value)
+            broken['state']['overlay'].update(change)
+            with self.assertRaises(FixtureError): validate(broken)
+
     def test_required_presentation_and_source_versions(self):
         value = scenario()
         validate(value)

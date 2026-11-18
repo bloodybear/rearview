@@ -41,6 +41,7 @@ public struct RegionRequest: Codable, Equatable, Sendable {
     public var target: String?
 }
 public struct OverlayRequest: Codable, Equatable, Sendable {
+    public var targetClass: String?
     public var kind: String
     public var text: String
     public var expectedText: String?

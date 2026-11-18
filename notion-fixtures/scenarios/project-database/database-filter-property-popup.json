@@ -1,0 +1,66 @@
+{
+  "schemaVersion": 2,
+  "id": "database-filter-property-popup",
+  "name": "Database filter property popup",
+  "version": 1,
+  "fixtureId": "project-database",
+  "fixtureVersion": "1b799a290d6987b170044914a450a732314c895194999f7322fec8f136a4c86c",
+  "fixtureVersions": {
+    "project-database": "1b799a290d6987b170044914a450a732314c895194999f7322fec8f136a4c86c"
+  },
+  "state": {
+    "coordinateSystem": "screen-top-left-points",
+    "window": {
+      "x": 0,
+      "y": 60,
+      "width": 1024,
+      "height": 700
+    },
+    "zoomPercent": 100,
+    "sidebar": {
+      "mode": "closed"
+    },
+    "presentation": {
+      "mode": "none"
+    },
+    "focus": {
+      "mode": "clear"
+    },
+    "scrolls": [
+      {
+        "scope": "main",
+        "axis": "y",
+        "mode": "start"
+      },
+      {
+        "scope": "database",
+        "axis": "x",
+        "mode": "anchor",
+        "anchor": {
+          "text": "備考",
+          "blockClass": "notion-table-view-header-row"
+        },
+        "offset": -8
+      }
+    ],
+    "databaseView": "表：複数行で折り返し",
+    "required": [
+      "target",
+      "window",
+      "sidebar",
+      "focus",
+      "screenshot",
+      "finalState",
+      "databaseView",
+      "presentation",
+      "scroll.0",
+      "scroll.1",
+      "overlay"
+    ],
+    "overlay": {
+      "kind": "popup",
+      "text": "Filter",
+      "expectedText": "Add advanced filter"
+    }
+  }
+}

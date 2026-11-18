@@ -148,6 +148,20 @@ private actor TestAXProvider: SessionAXProvider {
     func endSession() async {}
 }
 
+private actor RetentionAXProvider: SessionAXProvider {
+    var phase=0
+    func endSession() async {}
+    func collect(_ request:AXExtractionRequest) async throws -> AXExtractionSnapshot {
+        phase += 1
+        let r=request.selectionRegion
+        func rect(_ b:CGRect)->[String:Double] { ["x":b.minX,"y":b.minY,"width":b.width,"height":b.height] }
+        let box=rect(CGRect(x:r.minX+10,y:r.minY+10,width:150,height:20))
+        let body=phase == 1 || phase == 4
+        let panels=(phase == 3 ? [CGRect(x:r.minX+20,y:r.minY,width:20,height:100),CGRect(x:r.minX+70,y:r.minY,width:20,height:100)] : [CGRect(x:r.minX+20,y:r.minY,width:20,height:100)])
+        return try AXExtractionSnapshot(nodes:body ? [["id":1,"role":"AXStaticText","value":"日本語","title":"","frame":box]]:[],selected:[],paragraphs:body ? [["node":1,"text":"日本語","box":box,"lineSourceText":"日本語","lineRangeStatus":"complete_unverified","members":[1],"lineRanges":[["text":"日本語","rangeStart":0,"rangeLength":3,"box":box]],"isCodeBlock":false,"protectNonSourceText":false]]:[],metadata:["status":"complete","selectionRegion":rect(r),"documentSurfaces":[["node":0,"url":"https://example.test/page","frame":rect(request.windowFrame),"bodyNodes":body ? [1]:[],"dialogBoxes":body ? []:panels.map(rect)]]])
+    }
+}
+
 @MainActor
 private final class TestTranslationProvider: SessionTranslationProvider {
     var translations: [String: String]
@@ -458,6 +472,39 @@ final class SessionCoordinatorIntegrationTests: XCTestCase {
             await gate.release()
             for _ in 0..<30 { await Task.yield() }
             XCTAssertFalse(output.frames.contains { !$0.imageOCRLayers.isEmpty },invalidate)
+        }
+    }
+
+    func testPopupBodyReuseAcrossSessionFramesWithoutRetranslationOrSourceFlash() async throws {
+        for style in [MirrorUpdateStyle.atomic,.progressive] {
+            let capture=TestCaptureProvider(),output=TestOutputSink(),broker=TestTranslationProvider(translations:["日本語":"한국어"])
+            let coordinator=SessionCoordinator(broker:broker,capture:capture,targetResolver:TestTargetResolver(),
+                ocr:TestOCRProvider(batch:makeBatch(lines:[])),ax:RetentionAXProvider(),outputSink:output,createsOutputWindow:false)
+            coordinatorsUnderTest.append(coordinator)
+            let (screen,selection)=try makeScreenAndSelection()
+            await coordinator.setTextExtractionMode(.ax)
+            try await coordinator.start(screen:screen,selection:selection,mirrorUpdateStyle:style,captureTarget:.application(
+                CaptureApplication(processID:123,bundleIdentifier:"notion.id",name:"Notion",anchorWindowID:42,anchorWindowFrame:screen.frame)))
+            coordinator.setRefreshMode(.manual)
+            for phase in 1...4 {
+                let done=expectation(description:"retention phase \(phase)")
+                coordinator.onAXTranslation = { value in
+                    XCTAssertEqual(value.retainedBody != nil,phase == 2 || phase == 3)
+                    done.fulfill()
+                }
+                capture.emit(makeImage(width:320,height:200,gray:40),frameID:UInt64(100+phase))
+                for _ in 0..<5 { await Task.yield() }
+                let before=output.frames.count
+                coordinator.translateImmediately()
+                await fulfillment(of:[done],timeout:3)
+                XCTAssertFalse(coordinator.latestAXRenderedFrame?.axArtwork?.items.isEmpty ?? true)
+                if phase == 2 || phase == 3 {
+                    XCTAssertEqual(broker.calls.count,1)
+                    XCTAssertTrue(output.frames.dropFirst(before).allSatisfy { $0.axArtwork != nil },"Reused body must not flash the source")
+                }
+            }
+            XCTAssertEqual(broker.calls.count,2)
+            await coordinator.stop()
         }
     }
 
