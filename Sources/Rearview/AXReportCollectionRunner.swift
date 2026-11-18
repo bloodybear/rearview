@@ -214,6 +214,7 @@ import NotionAXReportSupport
                         "fragments":art.fragments.map { ["text":$0.text,"offset":$0.characterOffset,"x":$0.rect.minX,"y":$0.rect.minY,"width":$0.rect.width,"height":$0.rect.height] }],options:[.sortedKeys,.prettyPrinted])
                         .write(to:output.appendingPathComponent("render-geometry.json"))
                     let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted,.sortedKeys]
+                    try encoder.encode(art.fullTextHover).write(to:output.appendingPathComponent("full-text-hover.json"))
                     try encoder.encode(art.diagnostics).write(to:output.appendingPathComponent("render-layout.json"))
                     metadata["renderFrameID"] = frame.frameID
                     metadata["renderSeconds"] = art.elapsed

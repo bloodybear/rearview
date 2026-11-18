@@ -39,6 +39,7 @@ struct AXRenderArtwork: @unchecked Sendable {
     var selectionClipRects: [CGRect] = []
     var itemNodes: [UUID:Int] = [:]
     var bodyReuseSeconds: Double = 0
+    var fullTextHover: [AXFullTextHover] = []
 }
 
 // No AX handles or UI objects cross this queue. Native geometry stays immutable;
@@ -60,6 +61,16 @@ private struct AXLogicalRenderPart {
     let itemText: String
     let offset: Int
     var code: AXCodeSegment? = nil
+}
+struct AXFullTextHover: Codable, Sendable {
+    let itemID: UUID
+    let text: String
+    let boxes: [CGRect]
+    static func isClipped(_ box: CGRect, by clips: [CGRect]) -> Bool {
+        let inner = box.insetBy(dx:min(0.5,box.width/4),dy:min(0.5,box.height/4))
+        if clips.contains(where: { $0.contains(inner) }) { return false }
+        return !clips.reduce([inner]) { rest, clip in rest.flatMap { AXBodyRetention.subtract($0,clip) } }.isEmpty
+    }
 }
 enum AXLineRendering {
     static func layoutBox(_ box: CGRect, expansionRight: Double?) -> CGRect {
@@ -104,10 +115,37 @@ enum AXLineRendering {
             CGRect(x:r.minX/CGFloat(width),y:r.minY/CGFloat(height),width:r.width/CGFloat(width),height:r.height/CGFloat(height))
         }
         func newline(_ text: String) -> Bool { text.rangeOfCharacter(from:.newlines) != nil }
+        func isCut(_ box: CGRect, _ clips: [CGRect]) -> Bool {
+            AXFullTextHover.isClipped(box,by:clips)
+        }
+        var hover: [AXFullTextHover] = []
         var itemNodes: [UUID:Int] = [:]
         for paragraph in value.frame.snapshot.paragraphUnits {
             let firstItem=items.count
-            defer { for item in items.dropFirst(firstItem) { itemNodes[item.id]=paragraph.node } }
+            let firstHover=hover.count
+            defer {
+                for item in items.dropFirst(firstItem) { itemNodes[item.id]=paragraph.node }
+                if !paragraph.isCodeBlock, hover.count > firstHover {
+                    let entry = value.entries.first { $0.node == paragraph.node }
+                    let full: String
+                    if let content = paragraph.inlineContent {
+                        full = content.map { part in
+                            if part.kind != "text" { return part.text ?? "" }
+                            if let logical = entry?.logicalSegments {
+                                return logical.filter { $0.sourcePart == part.id }.map { ($0.translation ?? $0.source)+$0.delimiter }.joined()
+                            }
+                            return entry?.segments?.first { $0.id == part.id }?.translation ?? part.text ?? ""
+                        }.joined()
+                    } else if let logical = entry?.logicalSegments {
+                        full = logical.map { ($0.translation ?? $0.source)+$0.delimiter }.joined()
+                    } else { full = entry?.translation ?? paragraph.translationSourceText ?? paragraph.text }
+                    let lineBoxes = (paragraph.inlineContent?.flatMap { $0.lineRanges ?? [] } ?? paragraph.lineRanges).map { pixel($0.box.cgRect) }
+                    let hoverBoxes = lineBoxes.flatMap { line in paragraph.displayRegions.map { pixel($0.cgRect).intersection(bounds).intersection(line) }.filter { !$0.isNull && !$0.isEmpty } }
+                    for index in firstHover..<hover.count {
+                        hover[index] = .init(itemID:hover[index].itemID,text:full,boxes:hoverBoxes)
+                    }
+                }
+            }
             if isCancelled() { break }
             let entry = value.entries.first { $0.node == paragraph.node }
             let sourceText = paragraph.translationSourceText ?? ""
@@ -118,6 +156,8 @@ enum AXLineRendering {
             func preserve(_ source: String, lines: [AXLine], itemID: UUID = UUID(), itemText: String? = nil, offset: Int = 0) {
                 let ns = source as NSString
                 var selected: [NativeMirrorRenderedFragment] = []
+                var cut = false
+                var visible: [CGRect] = []
                 for line in lines {
                     let start = line.segmentRangeStart ?? line.rangeStart
                     guard start >= 0, line.rangeLength > 0, start <= ns.length,
@@ -125,12 +165,14 @@ enum AXLineRendering {
                           ns.substring(with:NSRange(location:start,length:line.rangeLength)) == line.text else { continue }
                     let box = pixel(line.box.cgRect)
                     guard box.width.isFinite, box.height.isFinite, box.width > 0, box.height > 0 else { continue }
+                    visible += clips.map { $0.intersection(box) }.filter { !$0.isNull && !$0.isEmpty }
                     var local = 0
                     let text = line.text as NSString
                     while local < text.length {
                         let range = text.rangeOfComposedCharacterSequence(at:local)
                         let r = CGRect(x:box.minX+box.width*CGFloat(local)/CGFloat(text.length),y:box.minY,
                             width:box.width*CGFloat(range.length)/CGFloat(text.length),height:box.height)
+                        if !cut && !text.substring(with:range).trimmingCharacters(in:.whitespacesAndNewlines).isEmpty && isCut(r, clips) { cut = true }
                         if clips.contains(where: { $0.intersects(r) }) {
                             selected.append(.init(itemID:itemID,text:text.substring(with:range),rect:r,characterOffset:offset+start+local))
                         }
@@ -138,6 +180,7 @@ enum AXLineRendering {
                     }
                 }
                 guard !selected.isEmpty else { return }
+                if cut { hover.append(.init(itemID:itemID,text:itemText ?? source,boxes:visible)) }
                 fragments += selected
                 if !items.contains(where: { $0.id == itemID }) {
                     items.append(MirrorItem(id:itemID,translatedText:itemText ?? source,presentation:.selectionOnly,
@@ -197,14 +240,18 @@ enum AXLineRendering {
                         parts.append(.init(segment:run.id,text:outputs[index],lines:lines,fontLines:paragraph.lineRanges,
                             source:sourceText,logical:nil,itemID:itemID,itemText:itemText,offset:offset,code:run))
                     } else {
+                        var codeCut = false
+                        var codeHoverBoxes: [CGRect] = []
                         for piece in run.pieces {
                             guard let raw = piece.box, piece.status == "complete" else { continue }
                             let box = pixel(raw.cgRect), text = piece.text as NSString
+                            codeHoverBoxes += clips.map { $0.intersection(box) }.filter { !$0.isNull && !$0.isEmpty }
                             var local = 0
                             while local < text.length {
                                 let range = text.rangeOfComposedCharacterSequence(at:local)
                                 let r = CGRect(x:box.minX+box.width*CGFloat(local)/CGFloat(text.length),y:box.minY,
                                     width:box.width*CGFloat(range.length)/CGFloat(text.length),height:box.height)
+                                if !codeCut && !text.substring(with:range).trimmingCharacters(in:.whitespacesAndNewlines).isEmpty && isCut(r,clips) { codeCut = true }
                                 if clips.contains(where: { $0.intersects(r) }) {
                                     fragments.append(.init(itemID:itemID,text:text.substring(with:range),rect:r,
                                         characterOffset:offset+piece.rangeStart-run.rangeStart+local))
@@ -212,6 +259,7 @@ enum AXLineRendering {
                                 local = NSMaxRange(range)
                             }
                         }
+                        if codeCut && !codeHoverBoxes.isEmpty { hover.append(.init(itemID:itemID,text:run.text,boxes:codeHoverBoxes)) }
                         diagnostics.append(.init(node:paragraph.node,segment:run.id,
                             status:run.translates ? (paintFailures[run.id] ?? (run.status != "complete" ? "code_geometry_unavailable" : translated?.status ?? "translation_pending")) : "preserved_source",
                             box:pixel(paragraph.box.cgRect),sourceRangeStart:run.rangeStart,sourceRangeLength:run.rangeLength,
@@ -328,10 +376,13 @@ enum AXLineRendering {
                 var hiddenWrapSpaceOffsets: [Int] = []
                 let itemID = part.itemID
                 var clipped = false
+                var glyphCut = false
+                var hoverBoxes: [CGRect] = []
                 for (index,rect) in rects.enumerated() {
                     if isCancelled() { break }
                     let allowed = clips.map { $0.intersection(rect) }.filter { !$0.isNull && !$0.isEmpty }
                     clipRects += allowed
+                    hoverBoxes += allowed
                     let area = allowed.reduce(CGFloat(0)) { $0+$1.width*$1.height }
                     clipped = clipped || area+0.01 < rect.width*rect.height
                     for clip in allowed {
@@ -417,6 +468,7 @@ enum AXLineRendering {
                         let a = CTLineGetOffsetForStringIndex(ctLine,offset,nil)
                         let b = CTLineGetOffsetForStringIndex(ctLine,NSMaxRange(character),nil)
                         let box = CGRect(x:rect.minX+min(a,b)*scale,y:baseline-descent,width:max(0.1,abs(b-a)*scale),height:ascent+descent)
+                        if !glyphCut && !string.substring(with:character).trimmingCharacters(in:.whitespacesAndNewlines).isEmpty && isCut(box,clips) { glyphCut = true }
                         if allowed.contains(where: { $0.intersects(box) }) {
                             fragments.append(.init(itemID:itemID,text:string.substring(with:character),rect:box,characterOffset:part.offset+offset))
                         }
@@ -424,6 +476,7 @@ enum AXLineRendering {
                     }
                     location = end
                 }
+                if glyphCut && !hoverBoxes.isEmpty { hover.append(.init(itemID:itemID,text:part.code == nil ? part.itemText : part.text,boxes:hoverBoxes)) }
                 if addedItems.insert(itemID).inserted && !items.contains(where: { $0.id == itemID }) {
                     items.append(MirrorItem(id:itemID,translatedText:part.itemText,presentation:.translated,
                         normalizedRect:normalized(pixel(paragraph.box.cgRect)),background:colors.background,foreground:colors.foreground))
@@ -481,6 +534,6 @@ enum AXLineRendering {
         }
         debug?.setStrokeColor(NSColor.orange.cgColor)
         for box in clipRects { debug?.stroke(box) }
-        return AXRenderArtwork(background:bg?.makeImage(),text:fg?.makeImage(),debug:debug?.makeImage(),items:items,fragments:fragments,clipRects:clipRects,diagnostics:diagnostics,elapsed:CFAbsoluteTimeGetCurrent()-start,selectionClipRects:selectionClips,itemNodes:itemNodes)
+        return AXRenderArtwork(background:bg?.makeImage(),text:fg?.makeImage(),debug:debug?.makeImage(),items:items,fragments:fragments,clipRects:clipRects,diagnostics:diagnostics,elapsed:CFAbsoluteTimeGetCurrent()-start,selectionClipRects:selectionClips,itemNodes:itemNodes,fullTextHover:hover)
     }
 }

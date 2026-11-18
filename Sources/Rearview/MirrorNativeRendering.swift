@@ -105,6 +105,7 @@ private final class NativeMirrorRenderer {
 
     var image: CGImage? { compositeImage }
     var renderedTextRects: [UUID: CGRect] { artwork?.textRects ?? [:] }
+    var imageFullTextHover: [AXFullTextHover] = []
     var renderedFragments: [NativeMirrorRenderedFragment] { artwork?.fragments ?? [] }
 
     fileprivate func layoutMetrics(for id: UUID) -> (
@@ -210,6 +211,7 @@ private final class NativeMirrorRenderer {
 
     private func buildArtwork(for frame: MirrorFrame) -> NativeMirrorArtwork? {
         artworkBuildCount += 1
+        imageFullTextHover = []
         if let ax = frame.axArtwork {
             let rects = Dictionary(uniqueKeysWithValues: ax.items.map { ($0.id, mirrorItemRect(normalizedRect:$0.normalizedRect,imageRect:CGRect(x:0,y:0,width:frame.image.width,height:frame.image.height))) })
             guard !frame.imageOCRLayers.isEmpty else {
@@ -234,6 +236,13 @@ private final class NativeMirrorRenderer {
                 if let image = artwork.textLayer { text.draw(image,in:layer.pixelBox) }
                 background.restoreGState(); text.restoreGState()
                 for (id,rect) in artwork.textRects { allRects[id] = rect.offsetBy(dx:layer.pixelBox.minX,dy:layer.pixelBox.minY) }
+                for item in layer.items {
+                    let glyphs = artwork.fragments.filter { $0.itemID == item.id }.map { $0.rect.offsetBy(dx:layer.pixelBox.minX,dy:layer.pixelBox.minY) }
+                    if glyphs.contains(where:{ AXFullTextHover.isClipped($0,by:allowed) }) {
+                        let visible = glyphs.flatMap { glyph in allowed.map { $0.intersection(glyph) }.filter { !$0.isNull && !$0.isEmpty } }
+                        if !visible.isEmpty { imageFullTextHover.append(.init(itemID:item.id,text:item.translatedText,boxes:visible)) }
+                    }
+                }
                 allFragments += artwork.fragments.compactMap { fragment -> NativeMirrorRenderedFragment? in
                     let box=fragment.rect.offsetBy(dx:layer.pixelBox.minX,dy:layer.pixelBox.minY)
                     guard let clipped=allowed.map({ $0.intersection(box) }).filter({ !$0.isNull && !$0.isEmpty }).max(by:{ $0.width*$0.height < $1.width*$1.height }) else { return nil }
@@ -767,7 +776,125 @@ private final class NativeMirrorRenderer {
 }
 
 @MainActor
-final class NativeTranslationMirrorView: NSView, NSMenuItemValidation {
+private final class FullTextPopoverTextView: NSTextView {
+    private var clicked = false
+    override var acceptsFirstResponder: Bool { clicked }
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if clicked, event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command {
+            switch event.charactersIgnoringModifiers?.lowercased() {
+            case "a": selectAll(nil); return true
+            case "c": copy(nil); return true
+            default: break
+            }
+        }
+        return super.performKeyEquivalent(with:event)
+    }
+    override func mouseDown(with event: NSEvent) {
+        clicked = true
+        window?.makeKey()
+        window?.makeFirstResponder(self)
+        super.mouseDown(with:event)
+    }
+}
+
+@MainActor
+final class NativeTranslationMirrorView: NSView, NSMenuItemValidation, NSPopoverDelegate {
+    var fullTextHoverEnabled = true { didSet { if !fullTextHoverEnabled { closeFullText() } } }
+    private var fullTextTracking: NSTrackingArea?
+    private var fullTextTask: Task<Void, Never>?
+    private var fullTextID: UUID?
+    private var fullTextDismissTask: Task<Void,Never>?
+    private var fullTextPopover: NSPopover?
+    private var fullTextMonitor: Any?
+    var fullTextPopoverTextForTesting: String? {
+        guard let scroll = fullTextPopover?.contentViewController?.view as? NSScrollView else { return nil }
+        return (scroll.documentView as? NSTextView)?.string
+    }
+    private var fullTextWindowObservers: [NSObjectProtocol] = []
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        closeFullText()
+        fullTextWindowObservers.forEach { NotificationCenter.default.removeObserver($0) }
+        fullTextWindowObservers = []
+        guard let window else { return }
+        for name in [NSWindow.willMoveNotification, NSWindow.didResizeNotification, NSWindow.didMiniaturizeNotification, NSWindow.willCloseNotification] {
+            fullTextWindowObservers.append(NotificationCenter.default.addObserver(forName:name,object:window,queue:.main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.closeFullText() }
+            })
+        }
+    }
+    func popoverDidClose(_ notification: Notification) {
+        fullTextTask?.cancel(); fullTextTask = nil
+        fullTextDismissTask?.cancel(); fullTextDismissTask = nil
+        if let fullTextMonitor { NSEvent.removeMonitor(fullTextMonitor); self.fullTextMonitor = nil }
+        fullTextPopover = nil; fullTextID = nil
+    }
+    private func closeFullText() {
+        fullTextDismissTask?.cancel(); fullTextDismissTask = nil
+        fullTextTask?.cancel(); fullTextTask = nil
+        if let fullTextMonitor { NSEvent.removeMonitor(fullTextMonitor); self.fullTextMonitor = nil }
+        fullTextPopover?.close(); fullTextPopover = nil; fullTextID = nil
+    }
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let fullTextTracking { removeTrackingArea(fullTextTracking) }
+        let area = NSTrackingArea(rect:.zero,options:[.mouseMoved,.mouseEnteredAndExited,.activeAlways,.inVisibleRect],owner:self)
+        addTrackingArea(area); fullTextTracking = area
+    }
+    private func deferFullTextDismiss() {
+        fullTextDismissTask?.cancel()
+        fullTextDismissTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds:200_000_000)
+            guard !Task.isCancelled, let self else { return }
+            if let popupWindow = self.fullTextPopover?.contentViewController?.view.window,
+               popupWindow.frame.contains(NSEvent.mouseLocation) { return }
+            self.closeFullText()
+        }
+    }
+    override func mouseExited(with event: NSEvent) { deferFullTextDismiss() }
+    override func mouseMoved(with event: NSEvent) {
+        guard fullTextHoverEnabled, NSEvent.pressedMouseButtons == 0,
+              let snapshot = frameSnapshot, let ax = snapshot.axArtwork else { closeFullText(); return }
+        let image = currentImageRect()
+        guard image.width > 0, image.height > 0 else { closeFullText(); return }
+        let p = convert(event.locationInWindow,from:nil)
+        let pixel = CGPoint(x:(p.x-image.minX)*CGFloat(snapshot.image.width)/image.width,
+                            y:(p.y-image.minY)*CGFloat(snapshot.image.height)/image.height)
+        guard let target = (ax.fullTextHover + renderer.imageFullTextHover).last(where:{ $0.boxes.contains { $0.contains(pixel) } }) else { deferFullTextDismiss(); return }
+        fullTextDismissTask?.cancel()
+        guard target.itemID != fullTextID else { return }
+        closeFullText(); fullTextID = target.itemID
+        fullTextTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds:500_000_000)
+            guard !Task.isCancelled, let self, self.fullTextID == target.itemID else { return }
+            let text = FullTextPopoverTextView(frame:NSRect(x:0,y:0,width:456,height:200))
+            text.isEditable = false; text.isSelectable = true
+            text.font = .systemFont(ofSize:14); text.string = target.text
+            text.textContainerInset = NSSize(width:12,height:12)
+            text.textContainer?.containerSize = NSSize(width:456,height:CGFloat.greatestFiniteMagnitude)
+            text.layoutManager?.ensureLayout(for:text.textContainer!)
+            let height = min((self.window?.screen?.visibleFrame.height ?? 800)*0.6,
+                             max(48,(text.layoutManager?.usedRect(for:text.textContainer!).height ?? 100)+24))
+            let scroll = NSScrollView(frame:NSRect(x:0,y:0,width:480,height:height))
+            scroll.hasVerticalScroller = true; scroll.documentView = text
+            text.setFrameSize(NSSize(width:480,height:max(height,text.layoutManager!.usedRect(for:text.textContainer!).height+24)))
+            let controller = NSViewController(); controller.view = scroll
+            let popup = NSPopover(); popup.delegate = self; popup.behavior = .transient; popup.contentViewController = controller
+            self.fullTextPopover = popup
+            self.fullTextMonitor = NSEvent.addLocalMonitorForEvents(matching:[.mouseMoved,.keyDown]) { [weak self] event in
+                guard let self else { return event }
+                if event.type == .keyDown && event.keyCode == 53 { self.closeFullText(); return nil }
+                if event.type == .mouseMoved {
+                    let overPopup = self.fullTextPopover?.contentViewController?.view.window?.frame.contains(NSEvent.mouseLocation) == true
+                    let overSource = self.window.map { $0.frame.contains(NSEvent.mouseLocation) } ?? false
+                    if overPopup { self.fullTextDismissTask?.cancel() }
+                    else if !overSource { self.deferFullTextDismiss() }
+                }
+                return event
+            }
+            popup.show(relativeTo:NSRect(x:p.x,y:p.y,width:1,height:1),of:self,preferredEdge:.minY)
+        }
+    }
     var onSelectionSessionBegin: (() -> Void)?
     var onSelectionSessionEnd: (() -> Void)?
     var onCopy: (() -> Void)?
@@ -792,6 +919,7 @@ final class NativeTranslationMirrorView: NSView, NSMenuItemValidation {
 
     var frameSnapshot: MirrorFrame? {
         didSet {
+            closeFullText()
             if transformFinished {
                 interactiveTransform = nil
                 transformReferenceBounds = .zero
@@ -877,10 +1005,12 @@ final class NativeTranslationMirrorView: NSView, NSMenuItemValidation {
     func setRenderingActive(_ active: Bool) {
         guard renderingActive != active else { return }
         renderingActive = active
+        if !active { closeFullText() }
         if active { renderCurrentFrame() }
     }
 
     func beginResize(edge: RegionBorderController.Edge) {
+        closeFullText()
         if case let .resize(current)? = interactiveTransform, current == edge { return }
         transformReferenceBounds = bounds
         transformReferenceImageRect = currentImageRect()
@@ -891,6 +1021,7 @@ final class NativeTranslationMirrorView: NSView, NSMenuItemValidation {
     }
 
     func moveImage(by delta: CGPoint) {
+        closeFullText()
         if case .move? = interactiveTransform {
             interactiveTransform = .move(delta)
         } else {
@@ -1255,6 +1386,7 @@ final class NativeTranslationMirrorView: NSView, NSMenuItemValidation {
     }
 
     override func mouseDown(with event: NSEvent) {
+        closeFullText()
         if ocrDebugOverlayEnabled, let snapshot = frameSnapshot {
             let point = convert(event.locationInWindow, from: nil)
             let imageRect = imageRect(for: CGSize(width: snapshot.image.width, height: snapshot.image.height))

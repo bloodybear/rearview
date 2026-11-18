@@ -158,10 +158,19 @@ extension AXRenderArtwork {
         }
         func clipped(_ rects:[CGRect])->[CGRect] { rects.flatMap { r in allowed.map { $0.intersection(r) }.filter { !$0.isNull && !$0.isEmpty } } }
         let bg=composite(old.background,background),fg=composite(old.text,text),dbg=composite(old.debug,debug)
+        var hover = fullTextHover
+        for item in old.items where retainedIDs.contains(item.id) && visible.contains(item.id) {
+            let original = old.fragments.filter { $0.itemID == item.id }
+            let wasCut = old.fullTextHover.contains { $0.itemID == item.id }
+            if wasCut || original.contains(where: { AXFullTextHover.isClipped($0.rect,by:allowed) }) {
+                let boxes = clipped(old.clipRects + old.selectionClipRects).filter { box in original.contains { $0.rect.intersects(box) } }
+                if !boxes.isEmpty { hover.append(.init(itemID:item.id,text:old.fullTextHover.first { $0.itemID == item.id }?.text ?? item.translatedText,boxes:boxes)) }
+            }
+        }
         let seconds=CFAbsoluteTimeGetCurrent()-started
         return AXRenderArtwork(background:bg,text:fg,debug:dbg,
             items:old.items.filter { visible.contains($0.id) }+items,fragments:fragments+self.fragments,
             clipRects:clipped(old.clipRects)+clipRects,diagnostics:diagnostics,elapsed:elapsed+seconds,
-            selectionClipRects:clipped(old.selectionClipRects)+selectionClipRects,itemNodes:itemNodes,bodyReuseSeconds:seconds)
+            selectionClipRects:clipped(old.selectionClipRects)+selectionClipRects,itemNodes:itemNodes,bodyReuseSeconds:seconds,fullTextHover:hover)
     }
 }

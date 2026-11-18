@@ -938,6 +938,7 @@ final class TranslationOverlayPanel: NSPanel {
             selectionModeEnabled: selectionModeEnabled,
             ignoresMouseEvents: ignoresSelectionMouseEvents
         )
+        translationView.fullTextHoverEnabled = !ignoresSelectionMouseEvents
         container.allowsBackgroundInteraction = allowsTranslationInteraction
         ignoresMouseEvents = !(saveRevealButton.isHidden == false || allowsTranslationInteraction)
 

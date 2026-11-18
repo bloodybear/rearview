@@ -349,6 +349,12 @@ def render(folder):
         for d in diagnostics:
             review += '<tr>'+''.join('<td>'+html.escape(str(v))+'</td>' for v in [str(d['node'])+'/'+str(d.get('segment','')),d['status'],round(d['fontSize'],2),round(d['commonScale'],3),[round(x,3) for x in d['lineScales']],d['clipped'],d.get('backgroundColor'),d.get('foregroundColor'),d.get('foregroundSource'),round(d['foregroundContrast'],2) if d.get('foregroundContrast') is not None else None])+'</tr>'
         review += '</table><a href="render-layout.json">배치 데이터</a></details>'
+        if (folder/'full-text-hover.json').exists():
+            hover = json.loads((folder/'full-text-hover.json').read_text())
+            review += '<details><summary>잘림 전문 팝업 대상</summary>'
+            for target in hover:
+                review += '<pre>' + html.escape(target['text']) + '</pre><code>' + html.escape(json.dumps(target['boxes'])) + '</code>'
+            review += '<p><a href="full-text-hover.json">호버 영역 데이터</a></p></details>'
         source_png = folder/'render-source.png'
         if source_png.exists():
             image_width, image_height = struct.unpack('>II', source_png.read_bytes()[16:24])

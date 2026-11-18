@@ -6,6 +6,45 @@ import CoreText
 @testable import NotionAXCore
 
 final class AXLineRenderingTests: XCTestCase {
+    @MainActor func testHoverDelayPassThroughAndFrameReplacement() async throws {
+        let ctx = CGContext(data:nil,width:300,height:100,bitsPerComponent:8,bytesPerRow:0,space:CGColorSpaceCreateDeviceRGB(),bitmapInfo:CGImageAlphaInfo.premultipliedLast.rawValue)!
+        let view = NativeTranslationMirrorView(frame:CGRect(x:0,y:0,width:300,height:100))
+        let window = NSWindow(contentRect:view.bounds,styleMask:[.borderless],backing:.buffered,defer:false)
+        window.contentView = view
+        NSApp.activate(ignoringOtherApps:true)
+        window.makeKeyAndOrderFront(nil)
+        var frame = MirrorFrame(image:ctx.makeImage()!,translatedItems:[],frameID:1)
+        var art = try render()
+        art.fullTextHover = [.init(itemID:UUID(),text:"잘린 전문",boxes:[CGRect(x:0,y:0,width:300,height:100)])]
+        frame.axArtwork = art; view.frameSnapshot = frame
+        let event = NSEvent.mouseEvent(with:.mouseMoved,location:NSPoint(x:50,y:50),modifierFlags:[],timestamp:0,windowNumber:window.windowNumber,context:nil,eventNumber:1,clickCount:0,pressure:0)!
+        view.fullTextHoverEnabled = false; view.mouseMoved(with:event)
+        try await Task.sleep(nanoseconds:800_000_000)
+        XCTAssertNil(view.fullTextPopoverTextForTesting)
+        view.fullTextHoverEnabled = true; view.mouseMoved(with:event)
+        XCTAssertNil(view.fullTextPopoverTextForTesting)
+        try await Task.sleep(nanoseconds:800_000_000)
+        XCTAssertEqual(view.fullTextPopoverTextForTesting,"잘린 전문")
+        view.frameSnapshot = frame
+        XCTAssertNil(view.fullTextPopoverTextForTesting)
+        window.orderOut(nil)
+    }
+    func testFullTextHoverRequiresClippedCharactersAndVisibleAnchor() throws {
+        let normal = try render(translation:"한",heights:[18],widths:[60])
+        XCTAssertTrue(normal.fullTextHover.isEmpty)
+        let clipped = try render(translation:"한국어 번역문 전문",heights:[18],widths:[60],clip:true)
+        XCTAssertEqual(clipped.fullTextHover.first?.text,"한국어 번역문 전문")
+        XCTAssertFalse(clipped.fullTextHover.first?.boxes.isEmpty ?? true)
+        XCTAssertTrue(try render(hidden:true).fullTextHover.isEmpty)
+    }
+    func testFullTextClipUsesUnionAndToleratesSubpixelEdges() {
+        let box = CGRect(x:0,y:0,width:20,height:10)
+        XCTAssertFalse(AXFullTextHover.isClipped(box,by:[CGRect(x:0,y:0,width:10,height:10),CGRect(x:10,y:0,width:10,height:10)]))
+        XCTAssertFalse(AXFullTextHover.isClipped(box,by:[CGRect(x:0.4,y:0,width:20,height:10)]))
+        XCTAssertTrue(AXFullTextHover.isClipped(box,by:[CGRect(x:1,y:0,width:19,height:10)]))
+        XCTAssertTrue(AXFullTextHover.isClipped(box,by:[]))
+    }
+
     @MainActor func testNonSourceParagraphHasSelectionWithoutPainting() throws {
         let ctx = CGContext(data:nil,width:300,height:100,bitsPerComponent:8,bytesPerRow:0,space:CGColorSpaceCreateDeviceRGB(),bitmapInfo:CGImageAlphaInfo.premultipliedLast.rawValue)!
         let paragraph: [String:Any] = ["node":1,"text":"English","lineSourceText":"English","lineRangeStatus":"complete_unverified","box":["x":10,"y":10,"width":100,"height":18],"members":[1],"isCodeBlock":false,"protectNonSourceText":false,"lineRanges":[["text":"English","rangeStart":0,"rangeLength":7,"box":["x":10,"y":10,"width":70,"height":18]]]]
