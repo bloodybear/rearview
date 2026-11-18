@@ -112,6 +112,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        DiagnosticBundleWriter.cleanupOrphans()
+        installStatusItem()
         _ = synchronizeLaunchAtLogin()
         if permissionClient.preflight() {
             startScreenCapturePermissionProbe()
@@ -241,6 +243,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func installStatusItem() {
+        guard statusItem == nil else { return }
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         rebuildStatusMenu()
     }
@@ -273,6 +276,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem.menu = makeStatusMenu()
     }
 
+    @objc private func exportDiagnostics() { coordinator.exportDiagnostics() }
+
     private func makeStatusMenu() -> NSMenu {
         let menu = NSMenu()
         let selectionItem = menu.addItem(
@@ -301,6 +306,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         setDebugMenuItemsVisible(DebugFeatures.load())
 #endif
         menu.addItem(.separator())
+        menu.addItem(withTitle: L10n.text("진단 자료 내보내기…"), action: #selector(exportDiagnostics), keyEquivalent: "")
         menu.addItem(withTitle: L10n.text("Rearview 정보…"), action: #selector(showAbout), keyEquivalent: "")
         menu.addItem(withTitle: L10n.text("종료"), action: #selector(quit), keyEquivalent: "")
         menu.items.forEach { item in

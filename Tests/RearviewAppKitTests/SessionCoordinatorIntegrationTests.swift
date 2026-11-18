@@ -111,6 +111,7 @@ private final class TestOCRProvider: SessionOCRProvider, @unchecked Sendable {
 }
 
 private actor TestAXProvider: SessionAXProvider {
+    var requestID:UUID?
     var calls = 0
     let gate: TestGate?
     let failure: AXExtractionError?
@@ -122,6 +123,7 @@ private actor TestAXProvider: SessionAXProvider {
     }
     func collect(_ request: AXExtractionRequest) async throws -> AXExtractionSnapshot {
         calls += 1
+        requestID=request.diagnosticRequestID
         if let gate { await gate.wait() }
         if let failure { throw failure }
         // Intentionally ignores cancellation to test stale-result rejection.
@@ -145,6 +147,7 @@ private actor TestAXProvider: SessionAXProvider {
         if let snapshot { return snapshot }
         return try AXExtractionSnapshot(nodes:[],selected:[],paragraphs:[],metadata:["status":"partial","reason":"injected_limit"])
     }
+    func diagnosticSnapshot() async -> AXCollectionDiagnostics? { .init(fields:["requestID":requestID?.uuidString ?? "unknown","stage":"injected-collection","accessibilityTrusted":"true"],queryResults:["AXChildren:-25204":1]) }
     func endSession() async {}
 }
 
@@ -256,6 +259,8 @@ final class SessionCoordinatorIntegrationTests: XCTestCase {
         XCTAssertEqual(output.frames.last?.translatedItems.count,0)
         XCTAssertTrue(translator.calls.isEmpty)
         XCTAssertTrue(output.statuses.contains(.completed(failures:1)))
+        let diagnostic=coordinator.diagnosticSnapshot()
+        XCTAssertTrue(diagnostic.frames.contains { $0.summary["status"]=="partial" && $0.documents["ax-paragraphs.json"] != nil })
     }
 
     private func translatedAXFixture() throws -> AXExtractionSnapshot {
@@ -704,6 +709,11 @@ final class SessionCoordinatorIntegrationTests: XCTestCase {
             XCTAssertTrue(output.frames.isEmpty, "AX recognition failure must retain the displayed frame, like OCR")
             XCTAssertTrue(output.statuses.contains(.recognitionFailed))
             XCTAssertTrue(translator.calls.isEmpty)
+            let diagnostic=coordinator.diagnosticSnapshot()
+            XCTAssertNotNil(diagnostic.failed)
+            XCTAssertTrue(diagnostic.frames.contains { $0.documents["ax-access.json"] != nil })
+            XCTAssertTrue(diagnostic.frames.contains { $0.documents["error-ax.json"] != nil })
+            XCTAssertEqual(diagnostic.state["lastFailureStage"],"ax")
             await coordinator.stop()
         }
     }
@@ -737,6 +747,30 @@ final class SessionCoordinatorIntegrationTests: XCTestCase {
 
     }
 
+    func testDiagnosticsPreserveOCRFilteringAndTranslationWithoutExtraCalls() async throws {
+        let japanese=makeLine(sourceText:"設定"),english=makeLine(sourceText:"English")
+        let capture=TestCaptureProvider(),output=TestOutputSink(),translator=TestTranslationProvider(translations:["設定":"설정"])
+        let coordinator=try await makeCoordinator(capture:capture,ocr:TestOCRProvider(batch:makeBatch(lines:[japanese,english])),translator:translator,output:output)
+        let done=expectation(description:"display")
+        output.onDisplay={ _ in done.fulfill() }
+        capture.emit(makeImage(width:100,height:100,gray:40),frameID:88)
+        await fulfillment(of:[done],timeout:2)
+        let snapshot=coordinator.diagnosticSnapshot()
+        let record=try XCTUnwrap(snapshot.frames.first { $0.frameID==88 })
+        XCTAssertEqual(record.summary["mode"],"ocr")
+        XCTAssertNotNil(record.summary["ocrMode"])
+        let document=try XCTUnwrap(record.documents.first { $0.key.hasSuffix("-runtime.json") }?.value)
+        let text=String(decoding:try document.encode(),as:UTF8.self)
+        XCTAssertTrue(text.contains("設定"));XCTAssertTrue(text.contains("English"))
+        XCTAssertEqual(translator.calls,["設定"])
+        let before=translator.calls
+        let folder=FileManager.default.temporaryDirectory.appendingPathComponent("diagnostic-integration-\(UUID())")
+        defer { try? FileManager.default.removeItem(at:folder) }
+        _=try await Task.detached { try DiagnosticBundleWriter.writeFolder(snapshot,options:.init(),to:folder) }.value
+        XCTAssertEqual(translator.calls,before)
+        XCTAssertEqual(snapshot.displayed,record.id)
+    }
+
     func testFailedStartStopsCaptureAndLeavesSessionInactive() async throws {
         let capture = TestCaptureProvider(startError: TestSessionError.captureStart)
         let ocr = TestOCRProvider(batch: makeBatch(lines: []))
@@ -764,6 +798,10 @@ final class SessionCoordinatorIntegrationTests: XCTestCase {
         // stops the failed generation as well.
         XCTAssertEqual(capture.stopCount, 2)
         XCTAssertTrue(output.frames.isEmpty)
+        let diagnostic=coordinator.diagnosticSnapshot()
+        XCTAssertTrue(diagnostic.frames.isEmpty)
+        XCTAssertEqual(diagnostic.state["lastFailureStage"],"capture")
+        XCTAssertNotNil(diagnostic.contentEnvironment["error-capture"])
     }
 
     func testTranslationFailureKeepsSourceOnlyMirrorItem() async throws {

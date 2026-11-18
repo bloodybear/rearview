@@ -73,8 +73,8 @@ final class OCRService: @unchecked Sendable {
         let selectionGeometrySource: OCRSelectionGeometrySource?
     }
 
-    struct RejectedCandidate: Sendable {
-        struct Alternative: Sendable {
+    struct RejectedCandidate: Codable, Sendable {
+        struct Alternative: Codable, Sendable {
             let text: String
             let confidence: Float
         }

@@ -1522,7 +1522,7 @@ private extension ClosedRange where Bound == Float {
     func clamp(_ value: Float) -> Float { Swift.min(upperBound, Swift.max(lowerBound, value)) }
 }
 
-struct RecognizedTextFragment: Sendable, Equatable {
+struct RecognizedTextFragment: Codable, Sendable, Equatable {
     let text: String
     /// Vision normalized coordinates, with a bottom-left origin.
     let normalizedRect: CGRect
@@ -1621,6 +1621,7 @@ func makeMirrorItems(
 }
 
 struct MirrorFrame {
+    var diagnosticContext: DiagnosticFrameContext? = nil
     var axArtwork: AXRenderArtwork? = nil
     var imageOCRLayers: [AXImageOCRLayer] = []
     let image: CGImage
@@ -1636,7 +1637,7 @@ struct MirrorFrame {
     }
 }
 
-enum OCRDebugStatus: String, Sendable {
+enum OCRDebugStatus: String, Codable, Sendable {
     case noCandidate = "No Candidate"
     case lowConfidence = "Low Confidence"
     case nonJapanese = "Non-Japanese"
@@ -1656,7 +1657,7 @@ enum OCRDebugStatus: String, Sendable {
     }
 }
 
-struct OCRDebugItem: Sendable, Identifiable {
+struct OCRDebugItem: Codable, Sendable, Identifiable {
     let id: UUID
     let status: OCRDebugStatus
     let rawText: String?
@@ -1678,7 +1679,7 @@ struct OCRDebugItem: Sendable, Identifiable {
     }
 }
 
-struct RGBAColor: Sendable, Equatable {
+struct RGBAColor: Codable, Sendable, Equatable {
     let red: CGFloat
     let green: CGFloat
     let blue: CGFloat

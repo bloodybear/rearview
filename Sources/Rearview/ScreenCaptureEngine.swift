@@ -22,6 +22,7 @@ func pixelAlignedCaptureRect(
 
 final class ScreenCaptureEngine: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Sendable {
     private let operations = CaptureOperationQueue()
+    var onDiagnosticEvent: (@Sendable (String) -> Void)?
     private let recovery = CaptureStreamRecovery()
     private var screenObserver: NSObjectProtocol?
     private let logger = Logger(subsystem: "io.github.bloodybear.rearview", category: "capture")
@@ -266,6 +267,7 @@ final class ScreenCaptureEngine: NSObject, SCStreamOutput, SCStreamDelegate, @un
             guard self.stream != nil,
                   expectedID == nil || self.stream.map(ObjectIdentifier.init) == expectedID else { return }
             let failureHandler = onFailure
+            self.onDiagnosticEvent?("recovery.requested")
             recovery.request(restart: { [weak self] in
                 guard let self else { return }
                 try await self.operations.run { [self] in
@@ -278,9 +280,11 @@ final class ScreenCaptureEngine: NSObject, SCStreamOutput, SCStreamDelegate, @un
                     try Task.checkCancellation()
                     try await stream.startCapture()
                     try Task.checkCancellation()
+                    self.onDiagnosticEvent?("recovery.succeeded")
                     self.logger.info("Capture stream recovered after interruption")
                 }
             }, shouldRetry: Self.permitsRecovery(after:), failed: { [weak self] error in
+                self?.onDiagnosticEvent?("recovery.failed")
                 self?.logger.error("Capture stream recovery failed: \(error.localizedDescription, privacy: .public)")
                 failureHandler?(error)
             })

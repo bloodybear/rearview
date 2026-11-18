@@ -11,7 +11,9 @@ package class AXTextAccess {
         recordAXQuery()
         queryCount += 1
         var value: CFTypeRef?
-        return AXUIElementCopyAttributeValue(e, name as CFString, &value) == .success ? value : nil
+        let result=AXUIElementCopyAttributeValue(e, name as CFString, &value)
+        recordAXResult(name,result)
+        return result == .success ? value : nil
     }
 
     func param(_ e: AXUIElement, _ name: String, _ input: CFTypeRef) -> CFTypeRef? {
@@ -19,7 +21,9 @@ package class AXTextAccess {
         recordAXQuery()
         queryCount += 1
         var value: CFTypeRef?
-        return AXUIElementCopyParameterizedAttributeValue(e, name as CFString, input, &value) == .success ? value : nil
+        let result=AXUIElementCopyParameterizedAttributeValue(e, name as CFString, input, &value)
+        recordAXResult(name,result)
+        return result == .success ? value : nil
     }
 
     func asElement(_ value: CFTypeRef?) -> AXUIElement? {
@@ -43,7 +47,9 @@ package class AXTextAccess {
         recordAXQuery()
         queryCount += 1
         var raw: CFArray?
-        guard AXUIElementCopyMultipleAttributeValues(element, names as CFArray, [], &raw) == .success,
+        let result=AXUIElementCopyMultipleAttributeValues(element, names as CFArray, [], &raw)
+        recordAXResult("multipleAttributes",result)
+        guard result == .success,
               let values = raw as? [Any] else { return [:] }
         return Dictionary(uniqueKeysWithValues: zip(names, values))
     }

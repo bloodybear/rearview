@@ -173,7 +173,10 @@ import NotionAXReportSupport
                 }
                 let output = try input.write(collected,collector:"rearview",frameID:frameID,sessionCollections:samples)
                 var metadata = try JSONSerialization.jsonObject(with:Data(contentsOf:output.appendingPathComponent("metadata.json"))) as! [String:Any]
-                if let frame = coordinator.latestAXRenderedFrame, frame.frameID == frameID, let art = frame.axArtwork {
+                if var frame = coordinator.latestAXRenderedFrame, frame.frameID == frameID, let art = frame.axArtwork {
+                    if CommandLine.arguments.contains("--export-diagnostics"),let id=coordinator.diagnostics.current {
+                        frame.diagnosticContext=DiagnosticFrameContext(coordinator.diagnostics,id:id)
+                    }
                     func png(_ image: CGImage?, _ name: String) throws {
                         guard let image else { return }
                         let bitmap = NSBitmapImageRep(cgImage:image)
@@ -297,6 +300,12 @@ import NotionAXReportSupport
             if let profile=PerformanceProfiler.shared.stop(translationDirection:direction) {
                 let encoder=JSONEncoder();encoder.outputFormatting=[.prettyPrinted,.sortedKeys]
                 for folder in allOutputs { try encoder.encode(profile).write(to:folder.appendingPathComponent("translation-profile.json"),options:.atomic) }
+            }
+            if CommandLine.arguments.contains("--export-diagnostics") {
+                let snapshot=coordinator.diagnosticSnapshot()
+                _=try await Task.detached(priority:.utility) {
+                    try DiagnosticBundleWriter.write(snapshot,options:.init(),destination:output.appendingPathComponent("diagnostics.zip"))
+                }.value
             }
             await coordinator.stop()
             if showsWindow {

@@ -74,6 +74,7 @@ package final class RangeInvestigator {
             let error: AXError
             if let input { error = AXUIElementCopyParameterizedAttributeValue(element, key as CFString, input, &output) }
             else { error = AXUIElementCopyAttributeValue(element, key as CFString, &output) }
+            recordAXResult(key,error)
             return error == .success ? output : nil
         }
         // Walk from the node's valid original end, not a possibly invalid

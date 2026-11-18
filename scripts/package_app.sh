@@ -118,6 +118,10 @@ swift build -c "$BUILD_CONFIGURATION" --disable-sandbox \
 /bin/cp "$ROOT/.build/$BUILD_CONFIGURATION/Rearview" \
   "$APP/Contents/MacOS/Rearview"
 /bin/cp "$ROOT/Resources/Info.plist" "$APP/Contents/Info.plist"
+SOURCE_REVISION="$(git describe --always --dirty)"
+BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+/usr/libexec/PlistBuddy -c "Add :RearviewSourceRevision string $SOURCE_REVISION" "$APP/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Add :RearviewBuildDate string $BUILD_DATE" "$APP/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $APP_VERSION" \
   "$APP/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $APP_BUILD" \

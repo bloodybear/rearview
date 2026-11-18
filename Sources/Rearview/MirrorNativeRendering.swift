@@ -1,7 +1,7 @@
 import AppKit
 import CoreText
 
-struct NativeMirrorRenderedFragment: Sendable {
+struct NativeMirrorRenderedFragment: Codable, Sendable {
     let itemID: UUID
     let text: String
     let rect: CGRect
@@ -104,6 +104,8 @@ private final class NativeMirrorRenderer {
     private(set) var lastCompositeWasRebuilt = false
 
     var image: CGImage? { compositeImage }
+    var diagnosticBackground:CGImage? { artwork?.backgroundLayer }
+    var diagnosticText:CGImage? { artwork?.textLayer }
     var renderedTextRects: [UUID: CGRect] { artwork?.textRects ?? [:] }
     var imageFullTextHover: [AXFullTextHover] = []
     var renderedFragments: [NativeMirrorRenderedFragment] { artwork?.fragments ?? [] }
@@ -1108,6 +1110,7 @@ final class NativeTranslationMirrorView: NSView, NSMenuItemValidation, NSPopover
                 in: imageRect, from: .zero, operation: .copy, fraction: 1
             )
         }
+        snapshot.diagnosticContext?.recorder?.mark("display.drawn",id:snapshot.diagnosticContext?.id,["hasComposite":String(imageToDraw != nil),"showsCapturedImage":String(showsCapturedImage),"windowVisible":String(window?.isVisible ?? false),"liveResize":String(window?.inLiveResize ?? false)])
         if ocrDebugOverlayEnabled {
             if let debug = snapshot.axArtwork?.debug {
                 NSImage(cgImage:debug,size:imageRect.size).draw(in:imageRect)
@@ -1162,6 +1165,18 @@ final class NativeTranslationMirrorView: NSView, NSMenuItemValidation, NSPopover
             itemCount: snapshot.translatedItems.count
         )
         renderer.render(frame: snapshot, backgroundOpacity: backgroundOpacity)
+        if let context=snapshot.diagnosticContext,let recorder=context.recorder,recorder.enabled,recorder.matches(context.id) {
+            recorder.mark(renderer.image == nil ? "render.failed":"render.composited",id:context.id,["backgroundOpacity":String(Double(backgroundOpacity))])
+            recorder.image("composite.png",renderer.image,to:context.id)
+            recorder.image("native-background.png",renderer.diagnosticBackground,to:context.id)
+            recorder.image("native-text.png",renderer.diagnosticText,to:context.id)
+            let layouts=snapshot.translatedItems.compactMap { item -> DiagnosticNativeLayout? in
+                guard let value=renderer.layoutMetrics(for:item.id) else { return nil }
+                return .init(id:item.id,box:value.frame,fontSize:value.fontSize,horizontalScale:value.horizontalScale,lineCount:value.lineCount,text:value.text)
+            }
+            recorder.add("native-layout.json",document:.init(layouts,estimatedBytes:layouts.count*2048),to:context.id)
+            recorder.add("native-fragments.json",document:.init(renderer.renderedFragments,estimatedBytes:renderer.renderedFragments.count*192),to:context.id)
+        }
         PerformanceProfiler.shared.end(token)
         PerformanceProfiler.shared.increment(
             renderer.lastArtworkWasRebuilt

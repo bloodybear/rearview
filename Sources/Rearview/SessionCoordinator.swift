@@ -1,3 +1,6 @@
+import ApplicationServices
+import Security
+
 import NotionAXCore
 import AppKit
 import os
@@ -111,6 +114,7 @@ final class SessionCoordinator {
         case queryFailed
     }
 
+    let diagnostics = DiagnosticRecorder()
     private let broker: any SessionTranslationProvider
     private let capture: any SessionCaptureProvider
     private let targetResolver: any SessionTargetResolver
@@ -148,6 +152,7 @@ final class SessionCoordinator {
     private var failureDeduplicator = SessionFailureDeduplicator()
     var onFailure: ((SessionFailure) -> Void)?
     private func reportFailure(_ error: Error?, stage: SessionFailure.Stage, userInitiated: Bool = false) {
+        diagnostics.error(error,stage:stage.rawValue,id:diagnostics.current)
         let failure = SessionFailure.make(error, stage: stage)
         guard failureDeduplicator.shouldPresent(failure, userInitiated: userInitiated) else { return }
         onFailure?(failure)
@@ -237,6 +242,7 @@ final class SessionCoordinator {
         self.ax = ax
         self.outputSink = outputSink
         self.createsOutputWindow = createsOutputWindow
+        (broker as? TranslationBroker)?.diagnosticRecorder=diagnostics
     }
 
     var usesAXExtraction: Bool {
@@ -250,6 +256,7 @@ final class SessionCoordinator {
     private var pendingModeRefresh = false
     private let persistsExtractionMode: Bool
     func setTextExtractionMode(_ mode: TextExtractionMode) async {
+        diagnostics.event("mode.change", ["requested":mode == .ax ? "ax":"ocr"])
         guard mode != textExtractionMode else { return }
         textExtractionMode = mode
         if persistsExtractionMode { TextExtractionPreference.save(mode) }
@@ -315,6 +322,8 @@ final class SessionCoordinator {
         let activeGeneration = generation, activeRevision = contentRevision
         ocrTaskSequence &+= 1
         let sequence = ocrTaskSequence
+        let diagnosticID = beginDiagnosticFrame(frame, task:sequence)
+        let diagnosticContext=diagnosticID.map { DiagnosticFrameContext(diagnostics,id:$0) }
         ocrTaskRevision = activeRevision
         showProcessingStatus(.recognizing, frameID:frame.id, origin:origin)
         ocrTask = Task { [weak self] in
@@ -325,11 +334,18 @@ final class SessionCoordinator {
                     _ = self.processPendingAutomaticFrameIfPossible()
                 }
             }
+            var diagnosticRequestID:UUID?
             do {
                 let request = try self.axRequest()
+                diagnosticRequestID=request.diagnosticRequestID
+                let axStarted=Date()
                 let result = try await self.ax.collect(request)
+                self.recordAXDiagnostic(result,id:diagnosticID)
+                let access=await self.ax.diagnosticSnapshot()
+                self.recordAXAccessDiagnostic(access,requestID:request.diagnosticRequestID,id:diagnosticID)
+                self.diagnostics.mark("ax.finished",id:diagnosticID,["seconds":String(Date().timeIntervalSince(axStarted)),"status":result.status.rawValue])
                 guard !Task.isCancelled, self.generation == activeGeneration,
-                      self.contentRevision == activeRevision, self.ocrTaskSequence == sequence else { return }
+                      self.contentRevision == activeRevision, self.ocrTaskSequence == sequence else { self.diagnostics.event("result.discarded",frame:diagnosticID,["reason":"stale_or_cancelled"]); return }
                 if result.status == .failed { throw SessionCollectionFailure.failed }
                 self.failureDeduplicator.succeeded(.ax)
                 let bodyScope=AXBodyScope(generation:activeGeneration,processID:request.processID,windowID:request.windowID,
@@ -366,15 +382,15 @@ final class SessionCoordinator {
                                 try await withThrowingTaskGroup(of:Void.self) { group in
                                     if !imageJobs.isEmpty {
                                         group.addTask {
-                                            _ = try await processor.process(snapshot:result,image:frame.image,
+                                            _ = try await DiagnosticTaskScope.$context.withValue(diagnosticContext) { try await processor.process(snapshot:result,image:frame.image,
                                                 selection:request.selectionRegion,ocr:ocr,broker:broker,settings:settings,direction:direction,
-                                                onCompletion: { continuation.yield(.images($0)) })
+                                                onCompletion: { continuation.yield(.images($0)) }) }
                                         }
                                     }
                                     for (index, paragraph) in result.paragraphUnits.enumerated() {
                                         let request = AXTranslationRequest(paragraph:paragraph)
                                         group.addTask {
-                                            let value = try await translator.translate(request,node:paragraph.node)
+                                            let value = try await DiagnosticTaskScope.$context.withValue(diagnosticContext) { try await translator.translate(request,node:paragraph.node) }
                                             continuation.yield(.paragraph(index,value))
                                         }
                                     }
@@ -409,6 +425,7 @@ final class SessionCoordinator {
                                 let visibleEntries = self.mirrorUpdateStyle == .progressive || allParagraphs
                                     ? completed.sorted { $0.0 < $1.0 }.map { $0.1 } : []
                                 let progress = AXTranslatedFrame(frame:captured,entries:completed.sorted { $0.0 < $1.0 }.map { $0.1 },retainedBody:retainedBody,bodyReuseDiagnostic:reuseDiagnostic,imageOCR:imageOCR)
+                                self.recordAXTranslationDiagnostic(progress,id:diagnosticID)
                                 self.onAXTranslationProgress?(progress)
                                 if imageCompleted || allParagraphs || (self.mirrorUpdateStyle == .progressive &&
                                     (artwork == nil || ContinuousClock.now-lastPresentation >= .milliseconds(50))) {
@@ -438,12 +455,13 @@ final class SessionCoordinator {
                     let translated = AXTranslatedFrame(frame:captured,entries:entries,retainedBody:retainedBody,bodyReuseDiagnostic:reuseDiagnostic,imageOCR:imageOCR)
                     let artwork = await AXLineRendering.render(translated)
                     guard !Task.isCancelled, self.generation == activeGeneration,
-                          self.contentRevision == activeRevision, self.ocrTaskSequence == sequence else { return }
+                          self.contentRevision == activeRevision, self.ocrTaskSequence == sequence else { self.diagnostics.event("result.discarded",frame:diagnosticID,["reason":"stale_or_cancelled"]); return }
                     let rendered = self.axPresentation(translated,artwork:artwork)
                     self.latestAXRenderedFrame = rendered
                     self.display(rendered)
                     self.onAXPresentation?(translated)
                     self.bodyRetention.store(value:translated,artwork:artwork,scope:bodyScope)
+                    self.recordAXTranslationDiagnostic(translated,id:diagnosticID)
                     self.latestAXTranslation = translated
                     let attempts = entries.filter { ["failed", "translated", "partial"].contains($0.status) }
                     if !attempts.isEmpty && attempts.allSatisfy({ $0.status == "failed" }) && imageOCR.layers.isEmpty { self.reportFailure(nil, stage: .translation, userInitiated: origin == .userAction) }
@@ -457,8 +475,10 @@ final class SessionCoordinator {
                     self.showProcessingStatus(.completed(failures:result.status == .complete ? 0 : 1),frameID:frame.id,origin:origin)
                 }
             } catch {
+                if let requestID=diagnosticRequestID { self.recordAXAccessDiagnostic(await self.ax.diagnosticSnapshot(),requestID:requestID,id:diagnosticID) }
+                self.diagnostics.error(error,stage:"ax",id:diagnosticID)
                 guard !Task.isCancelled, self.generation == activeGeneration,
-                      self.contentRevision == activeRevision, self.ocrTaskSequence == sequence else { return }
+                      self.contentRevision == activeRevision, self.ocrTaskSequence == sequence else { self.diagnostics.event("result.discarded",frame:diagnosticID,["reason":"stale_or_cancelled"]); return }
                 if let axError=error as? AXExtractionError, [.windowMappingFailed,.windowChanged,.targetTerminated].contains(axError) { self.bodyRetention.reset() }
                 self.showProcessingStatus(.recognitionFailed,frameID:frame.id,origin:origin)
                 self.reportFailure(error, stage: .ax, userInitiated: origin == .userAction)
@@ -476,6 +496,7 @@ final class SessionCoordinator {
         debugCaptureTranscript: DebugCaptureTextTranscript? = nil
     ) async throws {
         await stop()
+        diagnostics.begin()
         self.selection = selection
         self.selectedScreen = screen
         mirrorDockingState = initialDockingState ?? MirrorDockingState.load()
@@ -502,6 +523,8 @@ final class SessionCoordinator {
             self.availableApplications = captureTarget.application.map { [$0] } ?? []
         }
         self.captureTarget = resolvedTarget
+        diagnostics.update(["lastAttemptTargetBundleID":resolvedTarget.application?.bundleIdentifier ?? "all","lastAttemptSelection":String(describing:selection)])
+        refreshDiagnosticState()
         generation += 1
         let activeGeneration = generation
         contentRevision += 1
@@ -523,6 +546,9 @@ final class SessionCoordinator {
 
         do {
             if let engine = capture as? ScreenCaptureEngine {
+                engine.onDiagnosticEvent = { [weak self] name in
+                    Task { @MainActor in self?.diagnostics.event("capture."+name) }
+                }
                 engine.onFailure = { [weak self] error in
                     Task { @MainActor in
                         guard let self, self.generation == activeGeneration, self.isSessionActive else { return }
@@ -560,6 +586,7 @@ final class SessionCoordinator {
     }
 
     func stop() async {
+        diagnostics.stop()
         modeTransitionID += 1
         modeTransitionInProgress = false
         pendingModeRefresh = false
@@ -777,6 +804,7 @@ final class SessionCoordinator {
     }
 
     func setRefreshMode(_ mode: RefreshMode) {
+        diagnostics.event("refresh.change", ["mode":mode.rawValue])
         guard refreshMode != mode else { return }
         refreshMode = mode
         mode.save()
@@ -792,6 +820,7 @@ final class SessionCoordinator {
     }
 
     func setPaused(_ value: Bool) {
+        diagnostics.event("pause.change", ["paused":String(value)])
         guard paused != value else { return }
         paused = value
         if value { suspendAutomaticProcessing() }
@@ -918,7 +947,119 @@ final class SessionCoordinator {
         debugCaptureTranscript.record(frameID: frameID, mode: mode, lines: records)
     }
 
-    private func display(_ frame: MirrorFrame) {
+    func diagnosticSnapshot() -> DiagnosticSnapshot {
+        refreshDiagnosticState()
+        var code:SecCode?
+        if SecCodeCopySelf([], &code)==errSecSuccess,let code {
+            var info:CFDictionary?
+            var staticCode:SecStaticCode?
+            if SecCodeCopyStaticCode(code,[],&staticCode)==errSecSuccess,let staticCode,SecCodeCopySigningInformation(staticCode,SecCSFlags(rawValue:kSecCSSigningInformation),&info)==errSecSuccess,let fields=info as? [String:Any] {
+                diagnostics.update(["signingIdentifier":fields[kSecCodeInfoIdentifier as String] as? String ?? "unknown","signingTeam":fields[kSecCodeInfoTeamIdentifier as String] as? String ?? "unknown"])
+                if let digest=fields[kSecCodeInfoUnique as String] as? Data { diagnostics.update(["codeDirectoryHash":digest.map { String(format:"%02x",$0) }.joined()]) }
+            }
+        }
+        return diagnostics.snapshot()
+    }
+    func exportDiagnostics() {
+        DiagnosticExportController.shared.present(diagnosticSnapshot())
+    }
+    private func refreshDiagnosticState() {
+        var state: [String:String] = [
+            "appVersion":Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown",
+            "build":Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "unknown",
+            "sourceRevision":Bundle.main.infoDictionary?["RearviewSourceRevision"] as? String ?? "unknown",
+            "buildDate":Bundle.main.infoDictionary?["RearviewBuildDate"] as? String ?? "unknown",
+            "bundleID":Bundle.main.bundleIdentifier ?? "unknown",
+            "os":ProcessInfo.processInfo.operatingSystemVersionString,
+            "architecture":Self.diagnosticArchitecture,
+            "requestedMode":textExtractionMode == .ax ? "ax":"ocr", "effectiveMode":usesAXExtraction ? "ax":"ocr",
+            "accessibilityTrusted":String(AXIsProcessTrusted()), "screenCapturePreflight":String(CGPreflightScreenCaptureAccess()),
+            "translationDirection":translationDirection.rawValue,"protectsNonSourceText":String(protectsNonSourceText),
+            "generation":String(generation),"revision":String(contentRevision),"task":String(ocrTaskSequence),
+            "paused":String(paused),"refreshMode":refreshMode.rawValue,"displayMode":displayMode.rawValue,
+            "createsOutputWindow":String(createsOutputWindow),"mirrorWindowExists":String(mirror != nil),"mirrorWindowVisible":String(mirror?.isVisible ?? false),"mirrorWindowFrame":String(describing:mirror?.frame),
+            "updateStyle":String(describing:mirrorUpdateStyle),"acceptingFrames":String(acceptingFrames),"workInFlight":String(ocrTask != nil),
+            "targetBundleID":captureTarget.application?.bundleIdentifier ?? "all",
+            "captureFPS":String(capturePolicy.targetFPS),"ocrIntervalMilliseconds":String(capturePolicy.realtimeOCRIntervalMilliseconds),
+            "refinement":String(describing:refinementOCRPolicy),"selection":String(describing:selection),
+            "screenFrame":String(describing:selectedScreen?.frame),"screenScale":String(describing:selectedScreen?.backingScaleFactor),
+            "overlaySettings":String(describing:overlaySettings),"tracking":String(targetApplicationTracking),
+            "ocrRealtime":String(describing:ocrSettings[.realtime]),"ocrRefinement":String(describing:ocrSettings[.refinement])]
+        if let broker=broker as? TranslationBroker {
+            state["translationSessionReady"]=String(broker.isReadyForTranslation)
+            state["translationPreparationFailed"]=String(broker.preparationError != nil)
+            if let error=broker.preparationError { diagnostics.update([:],content:["translationPreparationError":error]) }
+        }
+        if let app=captureTarget.application,let process=NSRunningApplication(processIdentifier:app.processID),let url=process.bundleURL {
+            state["targetVersion"]=Bundle(url:url)?.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown"
+        }
+        diagnostics.update(state,content:["appPath":Bundle.main.bundlePath])
+    }
+    private static var diagnosticArchitecture:String {
+#if arch(arm64)
+        "arm64"
+#else
+        "x86_64"
+#endif
+    }
+    private func beginDiagnosticFrame(_ frame:FrameEnvelope,task:UInt64) -> UUID? {
+        diagnostics.update(["generation":String(generation),"revision":String(contentRevision),"task":String(task)])
+        let id=diagnostics.startFrame(image:frame.image,frameID:frame.id,receivedAt:frame.receivedAt,generation:generation,revision:contentRevision,task:task,mode:usesAXExtraction ? "ax":"ocr")
+        diagnostics.mark("frame.geometry",id:id,["selection":String(describing:selection),"screenFrame":String(describing:selectedScreen?.frame),"screenScale":String(describing:selectedScreen?.backingScaleFactor),"targetBundleID":captureTarget.application?.bundleIdentifier ?? "all","targetProcessID":String(captureTarget.application?.processID ?? 0),"targetWindowID":String(captureTarget.application?.anchorWindowID ?? 0)])
+        return id
+    }
+    private func recordAXAccessDiagnostic(_ access:AXCollectionDiagnostics?,requestID:UUID,id:UUID?) {
+        guard let access else { diagnostics.omit("ax-access:provider_unavailable",to:id);return }
+        // A cancelled traversal may finish after a newer one was queued. Never attach that newer traversal's diagnostics.
+        guard access.fields["requestID"] == nil || access.fields["requestID"] == requestID.uuidString else {
+            diagnostics.omit("ax-access:superseded_request",to:id);return
+        }
+        diagnostics.add("ax-access.json",document:.init(access,estimatedBytes:16384),to:id)
+        diagnostics.mark("ax.access",id:id,access.fields.mapKeysWithAXPrefix())
+    }
+    private func recordAXDiagnostic(_ result:AXExtractionSnapshot,id:UUID?) {
+        for (name,data) in [("ax-nodes.json",result.nodes),("ax-selected.json",result.selected),("ax-paragraphs.json",result.paragraphs),("ax-metadata.json",result.metadata)] {
+            diagnostics.add(name,document:.init(data:data),to:id)
+        }
+        if let metadata=(try? JSONSerialization.jsonObject(with:result.metadata)) as? [String:Any] {
+            var counts:[String:String]=[:]
+            for key in ["totalAXCalls","rangeCalls","rangeElapsed","rangeLimitReached","truncated","elapsed","initializationSeconds","windowMappingSeconds"] {
+                if let value=metadata[key] as? NSNumber { counts[key]=value.stringValue }
+            }
+            diagnostics.mark("ax.counts",id:id,counts)
+        }
+        diagnostics.mark("ax.extracted",id:id,["nodes":String(result.observations.count),"paragraphs":String(result.paragraphUnits.count),"status":result.status.rawValue])
+    }
+    private func recordAXTranslationDiagnostic(_ value:AXTranslatedFrame,id:UUID?) {
+        let estimate=value.entries.reduce(0) { $0+$1.source.utf8.count*12+4096 }
+        diagnostics.add("ax-translations.json",document:.init(value.entries,estimatedBytes:estimate),to:id)
+        diagnostics.add("image-ocr.json",document:.init(value.imageOCR.diagnostics,estimatedBytes:estimate),to:id)
+        if let reuse=value.bodyReuseDiagnostic { diagnostics.add("body-reuse.json",document:.init(reuse,estimatedBytes:4096),to:id) }
+        if let retained=value.retainedBody {
+            recordRetainedDiagnostic(retained,id:id)
+        }
+    }
+    private func recordRetainedDiagnostic(_ value:AXBodyReuse,id:UUID?) {
+        let snapshot=value.body.frame.snapshot
+        for (name,data) in [("retained-nodes.json",snapshot.nodes),("retained-selected.json",snapshot.selected),("retained-paragraphs.json",snapshot.paragraphs),("retained-metadata.json",snapshot.metadata)] {
+            diagnostics.add(name,document:.init(data:data),to:id)
+        }
+        diagnostics.image("retained-source.png",value.body.frame.image,to:id)
+        diagnostics.add("retained-translations.json",document:.init(value.body.entries,estimatedBytes:value.body.entries.count*8192),to:id)
+        diagnostics.add("retained-regions.json",document:.init(value.regions,estimatedBytes:value.regions.count*128),to:id)
+        diagnostics.add("retained-panels.json",document:.init(value.panels,estimatedBytes:value.panels.count*128),to:id)
+    }
+    private func recordOCRDiagnostic(_ batch:OCRService.RecognitionBatch,mode:OCRMode,roi:CGRect?,purpose:OCRDiagnosticPurpose,id:UUID?,seconds:Double) {
+        let estimate=batch.lines.reduce(0) { $0+$1.sourceText.utf8.count*4+4096 }+batch.confidenceRejected.count*2048
+        diagnostics.add("ocr-\(mode.rawValue)-\(purpose.rawValue).json",document:.init(DiagnosticOCRBatch(batch,mode:mode,roi:roi,direction:translationDirection),estimatedBytes:estimate),to:id)
+        diagnostics.mark("ocr.finished",id:id,["ocrMode":mode.rawValue,"raw":String(batch.rawObservationCount),"accepted":String(batch.lines.count),"missingCandidate":String(batch.missingCandidateCount),"confidenceRejected":String(batch.confidenceRejected.count),"seconds":String(seconds)])
+    }
+
+    private func display(_ original: MirrorFrame) {
+        var frame=original
+        let id=diagnostics.find(frameID:frame.frameID,generation:generation,revision:contentRevision)
+        if let id { frame.diagnosticContext=DiagnosticFrameContext(diagnostics,id:id) }
+        diagnostics.submitted(frame,id:id)
         mirror?.display(frame)
         outputSink?.display(frame)
     }
@@ -927,11 +1068,15 @@ final class SessionCoordinator {
         _ status: MirrorProcessingStatus, frameID: UInt64,
         origin: MirrorStatusOrigin = .automatic
     ) {
+        diagnostics.update(["processingStatus":String(describing:status)])
+        diagnostics.event("processing.status",frame:diagnostics.find(frameID:frameID,generation:generation,revision:contentRevision),["status":String(describing:status),"frameID":String(frameID)])
         mirror?.showProcessingStatus(status, frameID: frameID, origin: origin)
         outputSink?.showProcessingStatus(status, frameID: frameID)
     }
 
     private func cancelProcessingStatus() {
+        diagnostics.update(["processingStatus":"cancelled"])
+        diagnostics.event("processing.cancel")
         mirror?.cancelProcessingStatus()
         outputSink?.cancelProcessingStatus()
     }
@@ -1181,6 +1326,7 @@ final class SessionCoordinator {
     }
 
     func setApplicationCapture(_ application: CaptureApplication?) async {
+        diagnostics.event("target.change", ["target":application?.bundleIdentifier ?? "all"])
         guard let selectedScreen else { return }
         let target = application.map(CaptureTarget.application) ?? .allContent
         guard target != captureTarget else { updateTargetControl(); return }
@@ -1386,10 +1532,12 @@ final class SessionCoordinator {
         }
         try await capture.updateTarget(displayID: number.uint32Value, target: target)
         captureTarget = target
+        refreshDiagnosticState()
         updateTargetControl()
     }
 
     private func invalidateCapturedContent() {
+        diagnostics.event("content.invalidate", ["generation":String(generation),"revision":String(contentRevision)])
         bodyRetention.reset()
         imageOCRProcessor.reset()
         latestAXFrame = nil
@@ -1418,6 +1566,8 @@ final class SessionCoordinator {
         guard acceptingFrames else { return }
         let received = FrameEnvelope(image: image, id: frameID, receivedAt: receivedAt)
         latestCapturedFrame = received
+        diagnostics.event("capture.received", ["frameID":String(frameID),"receivedAt":String(receivedAt),"width":String(image.width),"height":String(image.height)])
+        if diagnostics.current == nil { _ = diagnostics.startFrame(image:image,frameID:frameID,receivedAt:receivedAt,generation:generation,revision:contentRevision,task:ocrTaskSequence,mode:usesAXExtraction ? "ax":"ocr") }
         guard !modeTransitionInProgress else { return }
         if pendingModeRefresh {
             pendingModeRefresh = false
@@ -1451,6 +1601,7 @@ final class SessionCoordinator {
 
     private func prepareFrame(_ frame: FrameEnvelope) -> FrameChange {
         let change = changes.analyze(frame.image)
+        diagnostics.event("change.analyzed", ["frameID":String(frame.id),"ratio":String(change.changedRatio),"kind":String(describing:change.motion.kind)])
         PerformanceProfiler.shared.increment("change.tilesPercent", by: Int(change.changedRatio * 100))
         if change.changedRatio > 0 {
             lastMotion = .now
@@ -1488,10 +1639,12 @@ final class SessionCoordinator {
                 return
             }
             guard lastRealtimeOCR.duration(to: now) >= capturePolicy.realtimeOCRInterval else {
+                diagnostics.event("frame.queued", ["frameID":String(frame.id)])
                 pendingAutomaticFrame.store(frame)
                 return
             }
             guard ocrTask == nil else {
+                diagnostics.event("frame.queued", ["frameID":String(frame.id)])
                 pendingAutomaticFrame.store(frame)
                 PerformanceProfiler.shared.increment("ocr.realtimeSkippedInFlight")
                 return
@@ -1539,6 +1692,7 @@ final class SessionCoordinator {
         let activeRevision = contentRevision
         ocrTaskSequence &+= 1
         let taskSequence = ocrTaskSequence
+        let diagnosticID = beginDiagnosticFrame(frame,task:taskSequence)
         PresentationTrace.shared.record("schedule", [
             "frame": frame.id, "mode": mode.rawValue,
             "origin": String(describing: origin), "generation": activeGeneration,
@@ -1559,7 +1713,7 @@ final class SessionCoordinator {
             guard let self else { return }
             await self.executeOCR(
                 frame, mode: mode, roi: roi, generation: activeGeneration,
-                revision: activeRevision, origin: origin
+                revision: activeRevision, origin: origin, diagnosticID:diagnosticID
             )
             if self.generation == activeGeneration, self.ocrTaskRevision == activeRevision,
                self.ocrTaskSequence == taskSequence {
@@ -1657,8 +1811,9 @@ final class SessionCoordinator {
     }
 
     private func performOCR(
-        _ frame: FrameEnvelope, mode: OCRMode, roi: CGRect?, purpose: OCRDiagnosticPurpose
+        _ frame: FrameEnvelope, mode: OCRMode, roi: CGRect?, purpose: OCRDiagnosticPurpose, diagnosticID:UUID? = nil
     ) async throws -> OCRService.RecognitionBatch {
+        let diagnosticStart=Date()
         let stage: ProfileStage = mode == .realtime ? .ocrRealtime : .ocrRefinement
         let span = PerformanceProfiler.shared.begin(
             stage, frameID: frame.id, mode: mode.rawValue
@@ -1670,6 +1825,7 @@ final class SessionCoordinator {
                 includeRejectedAlternatives: benchmarkDiagnostics && purpose == .initialComparison,
                 settings: settings, direction: translationDirection
             )
+            recordOCRDiagnostic(batch,mode:mode,roi:roi,purpose:purpose,id:diagnosticID,seconds:Date().timeIntervalSince(diagnosticStart))
             PerformanceProfiler.shared.end(span)
             PerformanceProfiler.shared.increment("ocr.rawObservations", by: batch.rawObservationCount)
             PerformanceProfiler.shared.increment("ocr.missingCandidate", by: batch.missingCandidateCount)
@@ -1712,14 +1868,15 @@ final class SessionCoordinator {
 
     private func executeOCR(
         _ frame: FrameEnvelope, mode: OCRMode, roi: CGRect?, generation activeGeneration: Int,
-        revision activeRevision: Int, origin: MirrorStatusOrigin
+        revision activeRevision: Int, origin: MirrorStatusOrigin, diagnosticID:UUID?
     ) async {
         let batch: OCRService.RecognitionBatch
         do {
             batch = try await performOCR(
-                frame, mode: mode, roi: roi, purpose: .runtime
+                frame, mode: mode, roi: roi, purpose: .runtime, diagnosticID:diagnosticID
             )
         } catch {
+            diagnostics.error(error,stage:"ocr",id:diagnosticID)
             logger.error("OCR failed: \(error.localizedDescription, privacy: .public)")
             if generation == activeGeneration, contentRevision == activeRevision {
                 if !(error is CancellationError) { reportFailure(error, stage: .ocr, userInitiated: origin == .userAction) }
@@ -1728,6 +1885,7 @@ final class SessionCoordinator {
             return
         }
         guard generation == activeGeneration, contentRevision == activeRevision else {
+            diagnostics.event("result.discarded",frame:diagnosticID,["reason":"stale_ocr"])
             PerformanceProfiler.shared.increment("ocr.staleResult")
             return
         }
@@ -1766,9 +1924,13 @@ final class SessionCoordinator {
         let translationTasks: [Task<TranslationResult?, Never>] = lines.map { line in
             Task { [broker] in
                 do {
-                    let translated = try await broker.translate(line.sourceText)
+                    let started=Date()
+                    let translated = try await DiagnosticTaskScope.$context.withValue(diagnosticID.map { DiagnosticFrameContext(self.diagnostics,id:$0) }) { try await broker.translate(line.sourceText) }
+                    self.diagnostics.add("translation-\(line.id).json",document:.init(["source":line.sourceText,"translation":translated,"status":"translated","seconds":String(Date().timeIntervalSince(started))],estimatedBytes:(line.sourceText.utf8.count+translated.utf8.count)*4+256),to:diagnosticID)
                     return TranslationResult(line: line, translated: translated)
                 } catch {
+                    self.diagnostics.error(error,stage:"translation",id:diagnosticID)
+                    self.diagnostics.add("translation-\(line.id).json",document:.init(["source":line.sourceText,"status":"failed","error":String(describing:error)],estimatedBytes:line.sourceText.utf8.count*4+4096),to:diagnosticID)
                     PerformanceProfiler.shared.increment("translation.lineFailure")
                     PerformanceProfiler.shared.increment("translation.failure")
                     return nil

@@ -4,6 +4,7 @@ import ScreenCaptureKit
 // Keep the application entry point synchronous: AppKit owns the main run
 // loop, and asynchronous developer commands run as jobs on that loop.
 @MainActor func runAsyncCommand(_ command: @escaping @MainActor () async -> Int32) -> Never {
+    DiagnosticBundleWriter.cleanupOrphans()
     let app = NSApplication.shared
     app.setActivationPolicy(.accessory)
     Task { @MainActor in
@@ -25,6 +26,20 @@ if CommandLine.arguments.contains("--self-test") {
 }
 
 #if !LST_EXCLUDE_DEBUG_FEATURES
+if CommandLine.arguments.contains("--diagnostic-export-ui") {
+    runAsyncCommand {
+        let coordinator=SessionCoordinator(broker:TranslationBroker(),createsOutputWindow:false)
+        DiagnosticExportController.shared.present(coordinator.diagnosticSnapshot())
+        while DiagnosticExportController.shared.isExporting { try? await Task.sleep(for:.milliseconds(50)) }
+        return 0
+    }
+}
+if CommandLine.arguments.contains("--diagnostic-ocr-smoke") {
+    runAsyncCommand { await DiagnosticSmokeRunner.runOCR() }
+}
+if CommandLine.arguments.contains("--review-diagnostics") {
+    runAsyncCommand { await DiagnosticReviewRunner.run() }
+}
 if CommandLine.arguments.contains("--review-ax-report") {
     runAsyncCommand { await AXReportCollectionRunner.reviewSaved() }
 }

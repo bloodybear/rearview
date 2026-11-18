@@ -9,7 +9,9 @@ package func get(_ e: AXUIElement, _ key: String) -> CFTypeRef? {
     if (Thread.current.threadDictionary["rearview.ax.cancellation"] as? AXCancellation)?.isCancelled == true { return nil }
     recordAXQuery()
     var value: CFTypeRef?
-    return AXUIElementCopyAttributeValue(e, key as CFString, &value) == .success ? value : nil
+    let result=AXUIElementCopyAttributeValue(e, key as CFString, &value)
+    recordAXResult(key,result)
+    return result == .success ? value : nil
 }
 package func frame(_ e: AXUIElement) -> CGRect? {
     guard let p = get(e, "AXPosition"), let s = get(e, "AXSize"), CFGetTypeID(p) == AXValueGetTypeID(), CFGetTypeID(s) == AXValueGetTypeID() else { return nil }
@@ -29,6 +31,17 @@ package func isTinyTextFrame(_ frame: CGRect) -> Bool {
     frame.width <= minimumUsefulTextExtent || frame.height <= minimumUsefulTextExtent
 }
 
+// Notion parks inactive tab WebAreas outside the tracked window. Their frames
+// can overlap its edge by 1pt. Check the window, not the user's crop, so a
+// narrow crop in the tab bar does not suppress the active document's metadata.
+package func isParkedNotionDocument(_ frame: CGRect, window: CGRect) -> Bool {
+    guard !frame.isEmpty, !window.isEmpty,
+          [frame.minX, frame.minY, frame.width, frame.height,
+           window.minX, window.minY, window.width, window.height].allSatisfy(\.isFinite) else { return false }
+    let overlap = frame.intersection(window)
+    return overlap.isNull || isTinyTextFrame(overlap)
+}
+
 package func rect(_ r: CGRect) -> [String: Double] { ["x":r.minX,"y":r.minY,"width":r.width,"height":r.height] }
 
 package enum AXCollector {
@@ -46,15 +59,24 @@ static func collect(_ request: AXExtractionRequest, window: AXUIElement, cancell
     Thread.current.threadDictionary["rearview.ax.cancellation"] = cancellation
     defer { Thread.current.threadDictionary.removeObject(forKey:"rearview.ax.cancellation") }
     var elements: [AXUIElement] = []
+    var parkedDocumentCount = 0
     let investigator = RangeInvestigator(deadline: deadline, cancellation: cancellation)
-    var stack: [(AXUIElement,Int,Int?)] = [(window,0,nil)], seen: [AXUIElement] = [], rows: [[String:Any]] = [], candidates: [[String:Any]] = []
-    while let (node,depth,parent) = stack.popLast() {
+    var stack: [(node: AXUIElement, depth: Int, parent: Int?, insideWebArea: Bool)] = [(window,0,nil,false)], seen: [AXUIElement] = [], rows: [[String:Any]] = [], candidates: [[String:Any]] = []
+    while let (node,depth,parent,insideWebArea) = stack.popLast() {
         try cancellation.check()
-        if rows.count >= 3500 || Date() > deadline { stack.append((node,depth,parent)); break }
+        if rows.count >= 3500 || Date() > deadline { stack.append((node,depth,parent,insideWebArea)); break }
         if seen.contains(where:{CFEqual($0,node)}) { continue }; seen.append(node)
         let n = rows.count
         let role = get(node,"AXRole") as? String ?? ""
-        let value = role == "AXTextArea" && !request.collectParentTextDiagnostics ? "" : get(node,"AXValue") as? String ?? "", title = get(node,"AXTitle") as? String ?? ""
+        let isWebArea = role == "AXWebArea"
+        let title = get(node,"AXTitle") as? String ?? ""
+        let isRootDocument = isWebArea && !insideWebArea && title != "Tab Bar"
+        let rootDocumentFrame = isRootDocument ? frame(node) : nil
+        if let rootDocumentFrame, isParkedNotionDocument(rootDocumentFrame, window: before) {
+            parkedDocumentCount += 1
+            continue
+        }
+        let value = role == "AXTextArea" && !request.collectParentTextDiagnostics ? "" : get(node,"AXValue") as? String ?? ""
         try cancellation.check()
         var row: [String:Any] = ["id":n,"role":role,"value":value,"title":title,"attributes":[String](),"parameterizedAttributes":[String]()]
         if role == "AXTextArea" && !request.collectParentTextDiagnostics { row["valueCollection"] = "omitted_parent_value" }
@@ -70,7 +92,9 @@ static func collect(_ request: AXExtractionRequest, window: AXUIElement, cancell
             var metadata: CFArray?
             try cancellation.check()
             recordAXQuery()
-            if AXUIElementCopyMultipleAttributeValues(node, ["AXDOMClassList", "AXSubrole"] as CFArray, [], &metadata) == .success,
+            let metadataResult=AXUIElementCopyMultipleAttributeValues(node, ["AXDOMClassList", "AXSubrole"] as CFArray, [], &metadata)
+            recordAXResult("AXDOMClassList+AXSubrole",metadataResult)
+            if metadataResult == .success,
                let values = metadata as? [Any], values.count == 2 {
                 row["domClasses"] = values[0] as? [String] ?? []
                 if let subrole = values[1] as? String { row["subrole"] = subrole }
@@ -89,7 +113,7 @@ static func collect(_ request: AXExtractionRequest, window: AXUIElement, cancell
         // geometry is unused: no frame, full-range bounds or line API requests.
         // See AX_MATH_POLICY.md before changing this exclusion or migrating it.
         let excludedMath = row["mathOwner"] != nil
-        let nodeFrame = excludedMath ? nil : frame(node)
+        let nodeFrame = excludedMath ? nil : (isRootDocument ? rootDocumentFrame : frame(node))
         // Visible UI surfaces have independent viewports. Reuse the observed
         // AX classes/frames: no new queries and no global window-wide selection.
         // In particular, a page preview is a sibling of the main document, not
@@ -136,13 +160,14 @@ static func collect(_ request: AXExtractionRequest, window: AXUIElement, cancell
             try cancellation.check()
             recordAXQuery()
             let error = AXUIElementCopyParameterizedAttributeValue(node,"AXBoundsForRange" as CFString,AXValueCreate(.cfRange,&range)!,&bounds)
+            recordAXResult("AXBoundsForRange",error)
             row["boundsForFullRangeError"] = error.rawValue
             if let bounds, CFGetTypeID(bounds) == AXValueGetTypeID() { var r = CGRect.zero; if AXValueGetValue(bounds as! AXValue,.cgRect,&r) { row["boundsForFullRange"] = rect(r) } }
         }
         elements.append(node)
         rows.append(row)
         let children = get(node,"AXChildren") as? [AXUIElement] ?? []
-        if depth < 40 { stack.append(contentsOf:children.reversed().map{($0,depth+1,n)}) }
+        if depth < 40 { stack.append(contentsOf:children.reversed().map{($0,depth+1,n,insideWebArea || isWebArea)}) }
         else if !children.isEmpty { row["depthLimitReached"] = true; rows[n] = row }
     }
     // Second pass uses the observed tree only: no additional AX calls. Prefer
@@ -198,6 +223,7 @@ static func collect(_ request: AXExtractionRequest, window: AXUIElement, cancell
             try cancellation.check()
             recordAXQuery()
             let error = AXUIElementCopyParameterizedAttributeValue(elements[rootID],"AXUIElementsForSearchPredicate" as CFString,predicate as CFDictionary,&found)
+            recordAXResult("AXUIElementsForSearchPredicate",error)
             guard error == .success, let matches = found as? [AXUIElement], matches.count < 10000 else {
                 // An incomplete search must not masquerade as successful filtering.
                 throw NSError(domain:"AX visibility search unavailable or truncated at WebArea \(rootID), visibleOnly=\(visibleOnly), error=\(error.rawValue)",code:1)
@@ -588,7 +614,9 @@ static func collect(_ request: AXExtractionRequest, window: AXUIElement, cancell
             if cancellation.isCancelled || Date() > deadline { return nil }
             var result: CFTypeRef?
             colorCalls += 1; recordAXQuery()
-            return AXUIElementCopyParameterizedAttributeValue(elements[n],key as CFString,argument,&result) == .success ? result : nil
+            let error=AXUIElementCopyParameterizedAttributeValue(elements[n],key as CFString,argument,&result)
+            recordAXResult(key,error)
+            return error == .success ? result : nil
         }
         // Chromium's integer-range string can have no style attributes. Its
         // original element marker range carries style; validate native text
@@ -667,7 +695,7 @@ static func collect(_ request: AXExtractionRequest, window: AXUIElement, cancell
         "codeRangeQueries":investigator.calls-codeCallsBefore,"codeRangeSeconds":codeSeconds,
         "parentValueQueries":request.collectParentTextDiagnostics ? rows.filter { $0["role"] as? String == "AXTextArea" }.count : 0,
         "totalAXCalls":Thread.current.threadDictionary["rearview.ax.queryCount"] as? Int ?? 0,"rangeCalls":investigator.calls,"rangeElapsed":investigator.elapsed,"rangeLimitReached":investigator.limitReached,
-        "truncated":truncated,"coverageLimitations":coverageLimitations,"visibleSearches":visibleSearches,
+        "truncated":truncated,"parkedDocumentCount":parkedDocumentCount,"coverageLimitations":coverageLimitations,"visibleSearches":visibleSearches,
         "visibleSearchElapsed":visibleSearchElapsed,"controlTextResolution":controlTextResolution,
         "selectionPolicy":"ax-visible-only-plus-timeline-pinned-list-v1", "limits":["nodes":3500,"depth":40,"seconds":15],
         "collectedAt":ISO8601DateFormatter().string(from:started), "windowFrame":rect(before), "selectionRegion":rect(request.selectionRegion)]

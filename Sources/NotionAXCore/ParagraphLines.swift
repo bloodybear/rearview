@@ -20,6 +20,7 @@ package final class Queries {
  guard !investigator.cancellation.isCancelled, Date()<investigator.deadline,investigator.calls<investigator.maxCalls else{investigator.limitReached=true;return nil}
  recordAXQuery();investigator.calls+=1;var value:CFTypeRef?
  let err=input.map{AXUIElementCopyParameterizedAttributeValue(e,k as CFString,$0,&value)} ?? AXUIElementCopyAttributeValue(e,k as CFString,&value)
+ recordAXResult(k,err)
  return err == .success ? value:nil
  }
  func whole(_ e:AXUIElement)->AXTextMarkerRange?{if let cached=wholeCache[e]{return cached};guard let r=get(e,"AXTextMarkerRangeForUIElement",e),CFGetTypeID(r)==AXTextMarkerRangeGetTypeID() else{return nil};let range=r as! AXTextMarkerRange;wholeCache[e]=range;return range}

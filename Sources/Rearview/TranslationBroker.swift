@@ -22,7 +22,9 @@ final class TranslationBroker: ObservableObject {
         let direction: TranslationDirection
         let options: TranslationRequestOptions
     }
+    weak var diagnosticRecorder: DiagnosticRecorder?
     private struct Pending {
+        let diagnosticContext:DiagnosticFrameContext?
         let id: UUID
         let key: RequestKey
         let plan: TranslationPlan
@@ -75,6 +77,23 @@ final class TranslationBroker: ObservableObject {
         try await translate(source, options: .init(protectsNonSourceText: protectsNonSourceText, context: "ocr"))
     }
     func translate(_ source: String, options: TranslationRequestOptions) async throws -> String {
+        guard let context=DiagnosticTaskScope.context,context.recorder?.enabled == true else { return try await performTranslate(source,options:options) }
+        let requestID=UUID(),started=Date()
+        var record=["source":source,"context":options.context,"protectsNonSourceText":String(options.protectsNonSourceText),"preservesCodeSyntax":String(options.preservesCodeSyntax),"direction":direction.rawValue]
+        record["status"]="pending"
+        context.recorder?.event("translation.request",frame:context.id,["request":requestID.uuidString])
+        context.recorder?.add("request-\(requestID).json",document:.init(record,estimatedBytes:source.utf8.count*4+1024),to:context.id)
+        defer {
+            record["seconds"]=String(Date().timeIntervalSince(started))
+            context.recorder?.add("request-\(requestID).json",document:.init(record,estimatedBytes:record.values.reduce(0) { $0+$1.utf8.count*4 }+512),to:context.id)
+        }
+        do {
+            let result=try await performTranslate(source,options:options)
+            record["output"]=result;record["status"]="completed"
+            return result
+        } catch { record["status"]=error is CancellationError ? "cancelled":"failed";record["error"]=String(describing:error);throw error }
+    }
+    private func performTranslate(_ source:String,options:TranslationRequestOptions) async throws -> String {
         try Task.checkCancellation()
         PerformanceProfiler.shared.increment("translation.requested")
         // Preserve AX text exactly; the legacy OCR API keeps its trimming behavior.
@@ -98,7 +117,7 @@ final class TranslationBroker: ObservableObject {
                 } else {
                     requestID = UUID()
                     requests[key] = requestID
-                    queue.append(Pending(id: requestID, key: key,
+                    queue.append(Pending(diagnosticContext:DiagnosticTaskScope.context,id: requestID, key: key,
                         plan: LanguageProtector.makeTranslationPlan(for: text, direction: direction,
                             protectNonSourceText: options.protectsNonSourceText,
                             preserveCodeSyntax: options.preservesCodeSyntax),
@@ -140,7 +159,9 @@ final class TranslationBroker: ObservableObject {
     func run(prepare: () async throws -> Void, model: ([String]) async throws -> [String]) async {
         let activeGeneration = sessionGeneration
         preparationError = nil
+        diagnosticRecorder?.event("translation.prepare.start")
         do { try await prepare() } catch {
+            diagnosticRecorder?.event("translation.prepare.failed", ["code":String((error as NSError).code)])
             if activeGeneration == sessionGeneration {
                 preparationError = String(describing:error)
                 failPending(error)
@@ -149,6 +170,7 @@ final class TranslationBroker: ObservableObject {
         }
         guard activeGeneration == sessionGeneration, !Task.isCancelled else { return }
         sessionReady = true
+        diagnosticRecorder?.event("translation.prepare.ready")
         defer {
             if activeGeneration == sessionGeneration {
                 sessionReady = false
@@ -178,8 +200,14 @@ final class TranslationBroker: ObservableObject {
                     PerformanceProfiler.shared.increment("translation.modelCall")
                     PerformanceProfiler.shared.increment("translation.modelBatchSegments", by: missing.count)
                     let output: [String]
-                    do { output = try await model(missing.map(\.source)); PerformanceProfiler.shared.end(token) }
-                    catch { PerformanceProfiler.shared.end(token); throw error }
+                    let diagnosticModelID=UUID(),modelStarted=Date()
+                    do {
+                        output = try await model(missing.map(\.source)); PerformanceProfiler.shared.end(token)
+                        recordModelBatch(batch,id:diagnosticModelID,sources:missing.map(\.source),outputs:output,error:nil,started:modelStarted)
+                    } catch {
+                        recordModelBatch(batch,id:diagnosticModelID,sources:missing.map(\.source),outputs:[],error:error,started:modelStarted)
+                        PerformanceProfiler.shared.end(token);throw error
+                    }
                     guard Self.canCommitResults(activeGeneration: activeGeneration, currentGeneration: sessionGeneration,
                         isCancelled: Task.isCancelled) else { return }
                     guard activePolicy == policyGeneration else { continue }
@@ -209,6 +237,15 @@ final class TranslationBroker: ObservableObject {
                 guard activePolicy == policyGeneration else { continue }
                 batch.forEach { finish($0, result: .failure(error)) }
             }
+        }
+    }
+    private func recordModelBatch(_ batch:[Pending],id:UUID,sources:[String],outputs:[String],error:Error?,started:Date) {
+        let data=DiagnosticModelBatch(id:id,sources:sources,outputs:outputs,error:error.map { String(describing:$0) },seconds:Date().timeIntervalSince(started))
+        var recorded=Set<UUID>()
+        for request in batch {
+            guard let context=request.diagnosticContext,recorded.insert(context.id).inserted else { continue }
+            context.recorder?.add("model-\(id).json",document:.init(data,estimatedBytes:(sources+outputs).reduce(0) { $0+$1.utf8.count*4 }+1024),to:context.id)
+            context.recorder?.event("translation.model.finished",frame:context.id,["modelBatch":id.uuidString,"count":String(sources.count),"seconds":String(data.seconds),"failed":String(error != nil)])
         }
     }
     private func failPending(_ error: Error) {
@@ -262,4 +299,11 @@ struct TranslationBridgeView: View {
     private var translationHost: some View {
         Color.clear.frame(width: 1, height: 1)
     }
+}
+
+private struct DiagnosticModelBatch:Codable {
+    let id:UUID
+    let sources,outputs:[String]
+    let error:String?
+    let seconds:Double
 }

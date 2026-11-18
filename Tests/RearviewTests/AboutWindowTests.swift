@@ -112,8 +112,12 @@ struct AboutWindowTests {
         #expect(visibleItems.last?.title == quitTitle)
 
         if let aboutIndex = menu.items.firstIndex(where: { $0.title == aboutTitle }) {
-            #expect(aboutIndex > 0)
-            #expect(menu.items[aboutIndex - 1].isSeparatorItem)
+            guard aboutIndex >= 2 else {
+                Issue.record("Diagnostics menu section is missing")
+                return
+            }
+            #expect(menu.items[aboutIndex - 2].isSeparatorItem)
+            #expect(menu.items[aboutIndex - 1].title == L10n.text("진단 자료 내보내기…"))
             #expect(aboutIndex + 1 < menu.items.count)
             #expect(menu.items[aboutIndex + 1].title == quitTitle)
         } else {
