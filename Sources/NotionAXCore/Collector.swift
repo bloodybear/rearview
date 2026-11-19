@@ -74,6 +74,7 @@ static func collect(_ request: AXExtractionRequest, window: AXUIElement, cancell
         row["boundsForFullRangeError"] = error.rawValue
         if let bounds, CFGetTypeID(bounds) == AXValueGetTypeID() { var r = CGRect.zero; if AXValueGetValue(bounds as! AXValue,.cgRect,&r) { row["boundsForFullRange"] = rect(r) } }
     }
+    let omitUnusedAttributes = !request.collectParentTextDiagnostics
     let traversalStarted = ContinuousClock.now
     let controlRoles = ["AXButton", "AXPopUpButton", "AXRadioButton"]
     var deferredValues: [Int] = []
@@ -89,7 +90,8 @@ static func collect(_ request: AXExtractionRequest, window: AXUIElement, cancell
         let n = rows.count
         let role = get(node,"AXRole") as? String ?? ""
         let isWebArea = role == "AXWebArea"
-        let title = get(node,"AXTitle") as? String ?? ""
+        let needsTitle = !omitUnusedAttributes || isWebArea || controlRoles.contains(role)
+        var title = needsTitle ? get(node,"AXTitle") as? String ?? "" : ""
         let isRootDocument = isWebArea && !insideWebArea && title != "Tab Bar"
         let rootDocumentFrame = isRootDocument ? frame(node) : nil
         if let rootDocumentFrame, isParkedNotionDocument(rootDocumentFrame, window: before) {
@@ -133,6 +135,17 @@ static func collect(_ request: AXExtractionRequest, window: AXUIElement, cancell
         // See AX_MATH_POLICY.md before changing this exclusion or migrating it.
         let excludedMath = row["mathOwner"] != nil
         let nodeFrame = excludedMath ? nil : (isRootDocument ? rootDocumentFrame : frame(node))
+        let tinyFrame = nodeFrame.map(isTinyTextFrame) == true
+        // Some control titles are used to group their visible text children.
+        // Retain math observations and the original tiny-text classification.
+        if !needsTitle {
+            if excludedMath || tinyFrame {
+                title = get(node,"AXTitle") as? String ?? ""
+                row["title"] = title
+            } else {
+                row["titleCollection"] = "omitted_unused_attribute"
+            }
+        }
         // Visible UI surfaces have independent viewports. Reuse the observed
         // AX classes/frames: no new queries and no global window-wide selection.
         // In particular, a page preview is a sibling of the main document, not
@@ -161,7 +174,11 @@ static func collect(_ request: AXExtractionRequest, window: AXUIElement, cancell
             } == true
         let deferValue = request.visibleFirst && !request.collectParentTextDiagnostics && outsideStaticText
         if outsideStaticText && !deferValue { outsideValueQueries += 1 }
-        let value = deferValue || (role == "AXTextArea" && !request.collectParentTextDiagnostics)
+        let omitValue = omitUnusedAttributes && !excludedMath && !tinyFrame &&
+            row["surfaceKind"] as? String != "sidebar" &&
+            (role == "AXGroup" || role == "AXWindow" || role == "AXWebArea")
+        if omitValue { row["valueCollection"] = "omitted_unused_attribute" }
+        let value = omitValue || deferValue || (role == "AXTextArea" && !request.collectParentTextDiagnostics)
             ? "" : get(node, "AXValue") as? String ?? ""
         row["value"] = value
         if deferValue {
