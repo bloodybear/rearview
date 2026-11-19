@@ -29,7 +29,6 @@ final class ScreenCaptureEngine: NSObject, SCStreamOutput, SCStreamDelegate, @un
     private var stream: SCStream?
     private var configuration: SCStreamConfiguration?
     private let queue = DispatchQueue(label: "Rearview.capture", qos: .userInteractive)
-    private let stateLock = NSLock()
     private let ciContext = CIContext(options: [.cacheIntermediates: false])
     var onFailure: (@Sendable (Error) -> Void)?
     func stream(_ stream: SCStream, didStopWithError error: Error) {
@@ -45,8 +44,6 @@ final class ScreenCaptureEngine: NSObject, SCStreamOutput, SCStreamDelegate, @un
         }
     }
     private var onFrame: (@Sendable (CGImage, UInt64, UInt64) -> Void)?
-    private var lastDelivery = ContinuousClock.now
-    private var deliveryInterval: Duration = .milliseconds(30)
     private var nextFrameID: UInt64 = 0
     private var captureTarget: CaptureTarget = .allContent
     private var currentDisplayID: CGDirectDisplayID?
@@ -78,7 +75,6 @@ final class ScreenCaptureEngine: NSObject, SCStreamOutput, SCStreamDelegate, @un
         }
         self.onFrame = onFrame
         currentPolicy = policy
-        setDeliveryPolicy(policy, resetClock: true)
         do {
             let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
             guard let display = content.displays.first(where: { $0.displayID == displayID }) else {
@@ -125,7 +121,6 @@ final class ScreenCaptureEngine: NSObject, SCStreamOutput, SCStreamDelegate, @un
     private func updateSerial(policy: CapturePolicy) async throws {
         currentPolicy = policy
         guard let stream, let configuration else {
-            setDeliveryPolicy(policy, resetClock: true)
             record(policy, target: captureTarget)
             return
         }
@@ -139,7 +134,6 @@ final class ScreenCaptureEngine: NSObject, SCStreamOutput, SCStreamDelegate, @un
             configuration.minimumFrameInterval = previousInterval
             throw error
         }
-        setDeliveryPolicy(policy, resetClock: true)
         record(policy, target: captureTarget)
     }
 
@@ -242,11 +236,6 @@ final class ScreenCaptureEngine: NSObject, SCStreamOutput, SCStreamDelegate, @un
         guard sampleBuffer.isValid,
               let pixelBuffer = sampleBuffer.imageBuffer else { return }
         PerformanceProfiler.shared.increment("frame.received")
-        let now = ContinuousClock.now
-        guard shouldDeliver(at: now) else {
-            PerformanceProfiler.shared.increment("frame.throttled")
-            return
-        }
         nextFrameID &+= 1
         let frameID = nextFrameID
         let receivedAt = DispatchTime.now().uptimeNanoseconds
@@ -331,21 +320,6 @@ final class ScreenCaptureEngine: NSObject, SCStreamOutput, SCStreamDelegate, @un
                 display: display, including: [application], exceptingWindows: []
             )
         }
-    }
-
-    private func setDeliveryPolicy(_ policy: CapturePolicy, resetClock: Bool) {
-        stateLock.lock()
-        deliveryInterval = policy.deliveryInterval
-        if resetClock { lastDelivery = .now - policy.deliveryInterval }
-        stateLock.unlock()
-    }
-
-    private func shouldDeliver(at now: ContinuousClock.Instant) -> Bool {
-        stateLock.lock()
-        defer { stateLock.unlock() }
-        guard lastDelivery.duration(to: now) >= deliveryInterval else { return false }
-        lastDelivery = now
-        return true
     }
 }
 

@@ -1304,10 +1304,6 @@ struct CapturePolicy: Equatable, Sendable {
             forKey: Self.realtimeOCRIntervalMillisecondsKey
         )
     }
-
-    var deliveryInterval: Duration {
-        .milliseconds(Int64((1_000.0 / Double(targetFPS)).rounded(.down)))
-    }
 }
 
 enum OCRExecutionStrategy: String, CaseIterable, Sendable {
