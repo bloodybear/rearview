@@ -38,7 +38,7 @@ final class TranslationBroker: ObservableObject {
     private var requests: [RequestKey: UUID] = [:]
     private var waiters: [UUID: [Waiter]] = [:]
     private var cache: [RequestKey: String] = [:]
-    private var segmentCache: [RequestKey: String] = [:]
+    private let segmentCache = TranslationSegmentCache<RequestKey>(capacity: 2_048)
     private(set) var preparationError: String?
     private var sessionReady = false
     private var sessionGeneration = 0
@@ -183,13 +183,17 @@ final class TranslationBroker: ObservableObject {
             let activePolicy = policyGeneration
             do {
                 var missing: [RequestKey] = [], seen = Set<RequestKey>()
+                // Keep batch results alive even when inserting a miss evicts a hit used below.
+                var batchResults: [RequestKey: String] = [:]
                 for pending in batch {
                     PerformanceProfiler.shared.recordElapsed(.translationQueue, startedAt: pending.enqueuedAt,
                         itemCount: 1, characterCount: pending.plan.translatableCharacterCount)
                     for segment in pending.plan.segments where segment.kind == .translate {
                         let key = RequestKey(source: segment.text, direction: pending.key.direction, options: pending.key.options)
-                        if segmentCache[key] != nil { PerformanceProfiler.shared.increment("translation.segmentCacheHit") }
-                        else if seen.insert(key).inserted {
+                        if let cached = segmentCache.value(for: key) {
+                            batchResults[key] = cached
+                            PerformanceProfiler.shared.increment("translation.segmentCacheHit")
+                        } else if seen.insert(key).inserted {
                             PerformanceProfiler.shared.increment("translation.segmentCacheMiss"); missing.append(key)
                         } else { PerformanceProfiler.shared.increment("translation.segmentBatchDuplicate") }
                     }
@@ -213,8 +217,8 @@ final class TranslationBroker: ObservableObject {
                     guard activePolicy == policyGeneration else { continue }
                     guard output.count == missing.count else { throw TranslatorError.translationSessionUnavailable }
                     for (key, text) in zip(missing, output) {
-                        trimCacheIfNeeded(&segmentCache, maximumCount: 2_048, removalCount: 512)
-                        segmentCache[key] = text
+                        segmentCache.insert(text, for: key)
+                        batchResults[key] = text
                         PerformanceProfiler.shared.increment("translation.segmentTranslated")
                     }
                 }
@@ -225,7 +229,7 @@ final class TranslationBroker: ObservableObject {
                     var output = ""
                     for segment in pending.plan.segments {
                         if segment.kind == .preserve { output += segment.text }
-                        else if let text = segmentCache[RequestKey(source: segment.text,
+                        else if let text = batchResults[RequestKey(source: segment.text,
                             direction: pending.key.direction, options: pending.key.options)] { output += text }
                         else { throw TranslatorError.translationSessionUnavailable }
                     }
