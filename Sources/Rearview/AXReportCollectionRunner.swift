@@ -68,7 +68,8 @@ import NotionAXReportSupport
         guard ["ja-ko","ko-ja"].contains(directionValue) else { return 1 }
         let direction: TranslationDirection = directionValue == "ja-ko" ? .japaneseToKorean : .koreanToJapanese
         let broker = TranslationBroker(direction:direction)
-        let coordinator = SessionCoordinator(broker:broker,createsOutputWindow:false,
+        let measureLiveDraw = CommandLine.arguments.contains("--ax-measure-live-draw")
+        let coordinator = SessionCoordinator(broker:broker,createsOutputWindow:measureLiveDraw,
             translatesAXParagraphs:!skip,initialTranslationDirection:direction)
         var worker: Task<Void,Never>?
         var translationSession: TranslationSession?
@@ -121,6 +122,8 @@ import NotionAXReportSupport
             var presentations: [[String:Any]] = []
             coordinator.onAXPresentation = { value in
                 presentations.append(["seconds":Date().timeIntervalSince(translationStartedAt),
+                    "frameID":value.frame.frameID,
+                    "sinceCaptureMs":Double(DispatchTime.now().uptimeNanoseconds - value.frame.receivedAt)/1e6,
                     "paragraphs":value.entries.count,"imageRegions":value.imageOCR.diagnostics.count])
             }
             coordinator.onAXTranslationProgress = { translated = $0 }
@@ -240,6 +243,7 @@ import NotionAXReportSupport
                         try png.write(to:output.appendingPathComponent("retained-body-source.png"))
                     }
                 }
+                metadata["liveDrawMeasurement"] = measureLiveDraw
                 metadata["performanceProfileScope"] = control == nil ? "collection_session" : "report_sequence"
                 metadata["skipTranslation"] = skip
                 metadata["translationSource"] = skip ? "disabled" : "rearview-session"

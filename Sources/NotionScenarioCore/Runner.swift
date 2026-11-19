@@ -274,9 +274,9 @@ public final class ScenarioRunner {
     }
     private func sidebar() -> (Bool, AXUIElement)? {
         for n in ax.nodes(window) where ax.text(n, "AXRole") == "AXButton" {
-            let label = ax.text(n, "AXDescription")
-            if label == "Close Sidebar" { return (true, n) }
-            if label == "Open Sidebar" { return (false, n) }
+            let label = ax.text(n, "AXDescription").lowercased()
+            if label == "close sidebar" { return (true, n) }
+            if label == "open sidebar" || label == "lock sidebar open" { return (false, n) }
         }
         return nil
     }

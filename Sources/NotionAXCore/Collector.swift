@@ -58,13 +58,33 @@ static func collect(_ request: AXExtractionRequest, window: AXUIElement, cancell
     defer { Thread.current.threadDictionary.removeObject(forKey:"rearview.ax.queryCount") }
     Thread.current.threadDictionary["rearview.ax.cancellation"] = cancellation
     defer { Thread.current.threadDictionary.removeObject(forKey:"rearview.ax.cancellation") }
+    var sidebarBoundsQueries = 0
+    let pruningEnabled = request.pruneOffscreenBranches && !request.collectParentTextDiagnostics
+    let captureViewport = before.intersection(request.selectionRegion)
+    var prunedBranches = 0
+    var outsideValueQueries = 0
+    func readSidebarBounds(_ node: AXUIElement, value: String, row: inout [String: Any]) throws {
+        sidebarBoundsQueries += 1
+        var range = CFRange(location:0,length:(value as NSString).length)
+        var bounds: CFTypeRef?
+        try cancellation.check()
+        recordAXQuery()
+        let error = AXUIElementCopyParameterizedAttributeValue(node,"AXBoundsForRange" as CFString,AXValueCreate(.cfRange,&range)!,&bounds)
+        recordAXResult("AXBoundsForRange",error)
+        row["boundsForFullRangeError"] = error.rawValue
+        if let bounds, CFGetTypeID(bounds) == AXValueGetTypeID() { var r = CGRect.zero; if AXValueGetValue(bounds as! AXValue,.cgRect,&r) { row["boundsForFullRange"] = rect(r) } }
+    }
+    let traversalStarted = ContinuousClock.now
+    let controlRoles = ["AXButton", "AXPopUpButton", "AXRadioButton"]
+    var deferredValues: [Int] = []
+    var requiredTextOwners = Set<Int>()
     var elements: [AXUIElement] = []
     var parkedDocumentCount = 0
     let investigator = RangeInvestigator(deadline: deadline, cancellation: cancellation)
-    var stack: [(node: AXUIElement, depth: Int, parent: Int?, insideWebArea: Bool)] = [(window,0,nil,false)], seen: [AXUIElement] = [], rows: [[String:Any]] = [], candidates: [[String:Any]] = []
-    while let (node,depth,parent,insideWebArea) = stack.popLast() {
+    var stack: [(node: AXUIElement, depth: Int, parent: Int?, insideWebArea: Bool, pruningScope: AXBranchPruning.Scope)] = [(window,0,nil,false,.body)], seen: [AXUIElement] = [], rows: [[String:Any]] = [], candidates: [[String:Any]] = []
+    while let (node,depth,parent,insideWebArea,inheritedScope) = stack.popLast() {
         try cancellation.check()
-        if rows.count >= 3500 || Date() > deadline { stack.append((node,depth,parent,insideWebArea)); break }
+        if rows.count >= 3500 || Date() > deadline { stack.append((node,depth,parent,insideWebArea,inheritedScope)); break }
         if seen.contains(where:{CFEqual($0,node)}) { continue }; seen.append(node)
         let n = rows.count
         let role = get(node,"AXRole") as? String ?? ""
@@ -76,9 +96,8 @@ static func collect(_ request: AXExtractionRequest, window: AXUIElement, cancell
             parkedDocumentCount += 1
             continue
         }
-        let value = role == "AXTextArea" && !request.collectParentTextDiagnostics ? "" : get(node,"AXValue") as? String ?? ""
         try cancellation.check()
-        var row: [String:Any] = ["id":n,"role":role,"value":value,"title":title,"attributes":[String](),"parameterizedAttributes":[String]()]
+        var row: [String:Any] = ["id":n,"role":role,"title":title,"attributes":[String](),"parameterizedAttributes":[String]()]
         if role == "AXTextArea" && !request.collectParentTextDiagnostics { row["valueCollection"] = "omitted_parent_value" }
         if let parent { row["parent"] = parent }
         if role == "AXWebArea", title != "Tab Bar", let url = get(node,"AXURL") as? URL {
@@ -136,6 +155,19 @@ static func collect(_ request: AXExtractionRequest, window: AXUIElement, cancell
             row["surfaceKind"] = surfaceKind
         }
         let nodeViewport = selectionViewport(row)
+        let outsideStaticText = role == "AXStaticText" &&
+            !excludedMath && !nodeViewport.isNull && nodeFrame.map {
+                !$0.isEmpty && [$0.minX, $0.minY, $0.width, $0.height].allSatisfy(\.isFinite) && !$0.intersects(nodeViewport)
+            } == true
+        let deferValue = request.visibleFirst && !request.collectParentTextDiagnostics && outsideStaticText
+        if outsideStaticText && !deferValue { outsideValueQueries += 1 }
+        let value = deferValue || (role == "AXTextArea" && !request.collectParentTextDiagnostics)
+            ? "" : get(node, "AXValue") as? String ?? ""
+        row["value"] = value
+        if deferValue {
+            deferredValues.append(n)
+            row["valueCollection"] = "omitted_outside_viewport"
+        }
         let excludedTinyText = (!value.isEmpty || !title.isEmpty) && nodeFrame.map(isTinyTextFrame) == true
         let reason: String
         if excludedMath { reason = "math_translation_excluded" }
@@ -154,22 +186,54 @@ static func collect(_ request: AXExtractionRequest, window: AXUIElement, cancell
                 candidates.append(["node":n,"text":value,"box":rect(f),"textSource":"AXValue","boxKind":"node_frame","selectionReason":reason,"uncertainty":"Full AX value; glyph visibility unverified"])
             }
         }
-        if !excludedMath && !value.isEmpty && !excludedTinyText && row["surfaceKind"] as? String == "sidebar" {
-            var range = CFRange(location:0,length:(value as NSString).length)
-            var bounds: CFTypeRef?
-            try cancellation.check()
-            recordAXQuery()
-            let error = AXUIElementCopyParameterizedAttributeValue(node,"AXBoundsForRange" as CFString,AXValueCreate(.cfRange,&range)!,&bounds)
-            recordAXResult("AXBoundsForRange",error)
-            row["boundsForFullRangeError"] = error.rawValue
-            if let bounds, CFGetTypeID(bounds) == AXValueGetTypeID() { var r = CGRect.zero; if AXValueGetValue(bounds as! AXValue,.cgRect,&r) { row["boundsForFullRange"] = rect(r) } }
+        if !request.visibleFirst, !excludedMath, !value.isEmpty, !excludedTinyText, row["surfaceKind"] as? String == "sidebar" {
+            try readSidebarBounds(node, value: value, row: &row)
         }
         elements.append(node)
         rows.append(row)
+        var pruningScope = inheritedScope
+        if pruningEnabled {
+            if surfaceKind != nil || excludedMath || row["subrole"] as? String == "AXApplicationDialog" {
+                pruningScope = .preserve
+            } else {
+                pruningScope = inheritedScope.descending(into: nodeClasses, frame: nodeFrame)
+            }
+            if (insideWebArea || isWebArea),
+               AXBranchPruning.shouldSkipChildren(role: role, classes: nodeClasses, frame: nodeFrame,
+                                                 captureViewport: captureViewport, scope: pruningScope) {
+                rows[n]["childrenPruned"] = true
+                prunedBranches += 1
+                continue
+            }
+        }
         let children = get(node,"AXChildren") as? [AXUIElement] ?? []
-        if depth < 40 { stack.append(contentsOf:children.reversed().map{($0,depth+1,n,insideWebArea || isWebArea)}) }
+        if depth < 40 { stack.append(contentsOf:children.reversed().map{($0,depth+1,n,insideWebArea || isWebArea,pruningScope)}) }
         else if !children.isEmpty { row["depthLimitReached"] = true; rows[n] = row }
     }
+    for candidate in candidates where !deferredValues.isEmpty {
+        var ancestor = rows[candidate["node"] as! Int]["parent"] as? Int
+        while let id = ancestor {
+            if rows[id]["role"] as? String == "AXTextArea" { requiredTextOwners.insert(id) }
+            ancestor = rows[id]["parent"] as? Int
+        }
+    }
+    var restoredValues = 0
+    for id in deferredValues {
+        var ancestor = rows[id]["parent"] as? Int
+        while let owner = ancestor {
+            if requiredTextOwners.contains(owner) || controlRoles.contains(rows[owner]["role"] as? String ?? "") {
+                try cancellation.check()
+                rows[id]["value"] = get(elements[id], "AXValue") as? String ?? ""
+                rows[id].removeValue(forKey: "valueCollection")
+                restoredValues += 1
+                break
+            }
+            ancestor = rows[owner]["parent"] as? Int
+        }
+    }
+    let traversalDuration = traversalStarted.duration(to: .now).components
+    let treeVisitedNodes = rows.count
+    let traversalSeconds = Double(traversalDuration.seconds) + Double(traversalDuration.attoseconds) / 1e18
     // Second pass uses the observed tree only: no additional AX calls. Prefer
     // existing static text descendants even when fragmented by style or emoji.
     // Never deduplicate globally by string: identical labels in other rows matter.
@@ -482,7 +546,7 @@ static func collect(_ request: AXExtractionRequest, window: AXUIElement, cancell
         }
     }
 
-    func sidebarPageTitleLine(_ node: Int) -> [String: Any]? {
+    func sidebarPageTitleLine(_ node: Int) throws -> [String: Any]? {
         guard rows[node]["surfaceKind"] as? String == "sidebar",
               rows[node]["role"] as? String == "AXStaticText",
               let wrapper = rows[node]["parent"] as? Int,
@@ -493,16 +557,20 @@ static func collect(_ request: AXExtractionRequest, window: AXUIElement, cancell
               let page = rows[row]["parent"] as? Int,
               classes(page).contains("notion-page-block"),
               ancestorIDs(page).contains(where: { rows[$0]["role"] as? String == "AXOutline" }),
-              rows[node]["boundsForFullRangeError"] as? Int32 == 0,
-              let box = rows[node]["boundsForFullRange"] as? [String: Double],
-              box.values.allSatisfy(\.isFinite),
-              let width = box["width"], width > 0,
-              let height = box["height"], height > 0,
-              let text = rows[node]["value"] as? String else { return nil }
+              let text = rows[node]["value"] as? String, !text.isEmpty else { return nil }
 
         var rowLeaves: [Int] = []
         collectTextLeaves(row, into: &rowLeaves)
         guard rowLeaves.count == 1, rowLeaves.first == node else { return nil }
+
+        if request.visibleFirst {
+            try readSidebarBounds(elements[node], value: text, row: &rows[node])
+        }
+        guard rows[node]["boundsForFullRangeError"] as? Int32 == 0,
+              let box = rows[node]["boundsForFullRange"] as? [String: Double],
+              box.values.allSatisfy(\.isFinite),
+              let width = box["width"], width > 0,
+              let height = box["height"], height > 0 else { return nil }
 
         // Page rows have a single displayed title. Reuse the full source
         // bounds, including portions hidden by ellipsis or scroll clipping.
@@ -562,7 +630,7 @@ static func collect(_ request: AXExtractionRequest, window: AXUIElement, cancell
                 "coveredUTF16Length": combinedLines.reduce(0) { $0 + ($1["rangeLength"] as! Int) },
                 "totalUTF16Length": source.utf16.count, "lineRanges": combinedLines,
                 "inlineContent": content, "mathPolicy": MathTranslationPolicy.version, "segmentFailures": failures]
-        } else if let titleLine = sidebarPageTitleLine(unit) {
+        } else if let titleLine = try sidebarPageTitleLine(unit) {
             probe = titleLine
         } else if leafIDs.isEmpty {
             probe=["lineMethod":"unavailable","lineSourceText":rows[unit]["value"] as? String ?? "",
@@ -702,7 +770,10 @@ static func collect(_ request: AXExtractionRequest, window: AXUIElement, cancell
         "totalAXCalls":Thread.current.threadDictionary["rearview.ax.queryCount"] as? Int ?? 0,"rangeCalls":investigator.calls,"rangeElapsed":investigator.elapsed,"rangeLimitReached":investigator.limitReached,
         "activationReadinessReasons":readinessReasons,
         "truncated":truncated,"parkedDocumentCount":parkedDocumentCount,"coverageLimitations":coverageLimitations,"visibleSearches":visibleSearches,
-        "visibleSearchElapsed":visibleSearchElapsed,"controlTextResolution":controlTextResolution,
+        "visibleSearchElapsed":visibleSearchElapsed,"traversalSeconds":traversalSeconds,
+        "visibleFirst":request.visibleFirst,"pruneOffscreenBranches":pruningEnabled,
+        "treeVisitedNodes":treeVisitedNodes,"treePrunedBranches":prunedBranches,"sidebarBoundsQueries":sidebarBoundsQueries,
+        "outsideStaticTextValueQueries":outsideValueQueries+restoredValues,"omittedOutsideValues":deferredValues.count-restoredValues,"controlTextResolution":controlTextResolution,
         "selectionPolicy":"ax-visible-only-plus-timeline-pinned-list-v1", "limits":["nodes":3500,"depth":40,"seconds":15],
         "collectedAt":ISO8601DateFormatter().string(from:started), "windowFrame":rect(before), "selectionRegion":rect(request.selectionRegion)]
     guard valid else { throw AXExtractionError.windowChanged }

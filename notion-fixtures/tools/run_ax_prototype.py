@@ -169,6 +169,9 @@ def main():
     parser.add_argument('--ax-newline-context', action='store_true')
     parser.add_argument('--ax-newline-independent', action='store_true')
     parser.add_argument('--ax-collect-parent-values', action='store_true')
+    parser.add_argument('--ax-measure-live-draw', action='store_true')
+    parser.add_argument('--ax-visible-first', action='store_true')
+    parser.add_argument('--ax-disable-branch-pruning', action='store_true')
     parser.add_argument('--ax-repeat', type=int, choices=range(1, 6), default=2)
     parser.add_argument('--ax-translation-direction', choices=['ja-ko', 'ko-ja'], default='ja-ko')
     parser.add_argument('--reuse-replay-app', action='store_true', help='Use the signed installed replay app when all replay sources predate it')
@@ -307,7 +310,7 @@ def main():
             unexpected = [step for step in result['steps'] if step['status'] != 'verified' and not (step['item'] == 'zoom' and step['status'] == 'unsupported')]
             if unexpected:
                 raise ValueError('재생 검증 실패: ' + json.dumps(unexpected, ensure_ascii=False))
-            collector_arguments = (['--export-diagnostics'] if args.export_diagnostics and args.collector == 'rearview' else []) + (['--ax-newline-context'] if args.ax_newline_context else []) + (['--ax-newline-independent'] if args.ax_newline_independent else []) + (['--ax-repeat', str(args.ax_repeat)] if args.collector == 'rearview' else []) + (['--ax-collect-parent-values'] if args.ax_collect_parent_values else []) + [ '--root', str(root), '--run-id', result['runId'], '--activation', args.activation] + (['--ax-translation-direction', args.ax_translation_direction] + (['--skip-translation'] if args.skip_translation else []) if args.collector == 'rearview' else []) + (['--offscreen-study'] if args.offscreen_study else []) + (['--disable-1pt-filter'] if args.disable_1pt_filter else []) + (['--control-title-study'] if args.control_title_study else [])
+            collector_arguments = (['--ax-measure-live-draw', '--export-diagnostics'] if args.ax_measure_live_draw and not args.export_diagnostics else ['--ax-measure-live-draw'] if args.ax_measure_live_draw else []) + (['--ax-visible-first'] if args.ax_visible_first else []) + (['--ax-disable-branch-pruning'] if args.ax_disable_branch_pruning else []) + (['--export-diagnostics'] if args.export_diagnostics and args.collector == 'rearview' else []) + (['--ax-newline-context'] if args.ax_newline_context else []) + (['--ax-newline-independent'] if args.ax_newline_independent else []) + (['--ax-repeat', str(args.ax_repeat)] if args.collector == 'rearview' else []) + (['--ax-collect-parent-values'] if args.ax_collect_parent_values else []) + [ '--root', str(root), '--run-id', result['runId'], '--activation', args.activation] + (['--ax-translation-direction', args.ax_translation_direction] + (['--skip-translation'] if args.skip_translation else []) if args.collector == 'rearview' else []) + (['--offscreen-study'] if args.offscreen_study else []) + (['--disable-1pt-filter'] if args.disable_1pt_filter else []) + (['--control-title-study'] if args.control_title_study else [])
             if args.collector == 'rearview':
                 collected = run_rearview_app(repo / 'dist/Rearview-dev.app', collector_arguments, run, f'{scenario}-collect', batch)
             else:

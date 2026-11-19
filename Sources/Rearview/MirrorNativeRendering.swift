@@ -1110,7 +1110,7 @@ final class NativeTranslationMirrorView: NSView, NSMenuItemValidation, NSPopover
                 in: imageRect, from: .zero, operation: .copy, fraction: 1
             )
         }
-        snapshot.diagnosticContext?.recorder?.mark("display.drawn",id:snapshot.diagnosticContext?.id,["hasComposite":String(imageToDraw != nil),"showsCapturedImage":String(showsCapturedImage),"windowVisible":String(window?.isVisible ?? false),"liveResize":String(window?.inLiveResize ?? false)])
+        snapshot.diagnosticContext?.recorder?.mark("display.drawn",id:snapshot.diagnosticContext?.id,["hasComposite":String(imageToDraw != nil),"hasAXTranslationArtwork":String(snapshot.axArtwork?.diagnostics.contains { $0.status == "rendered" } == true),"showsCapturedImage":String(showsCapturedImage),"windowVisible":String(window?.isVisible ?? false),"liveResize":String(window?.inLiveResize ?? false)])
         if ocrDebugOverlayEnabled {
             if let debug = snapshot.axArtwork?.debug {
                 NSImage(cgImage:debug,size:imageRect.size).draw(in:imageRect)

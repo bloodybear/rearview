@@ -290,6 +290,22 @@ final class SessionCoordinator {
         if modeTransitionID == transitionID { modeTransition = nil }
     }
 
+    private var visibleFirstAXCollection: Bool {
+        #if LST_EXCLUDE_DEBUG_FEATURES
+        false
+        #else
+        CommandLine.arguments.contains("--ax-visible-first")
+        #endif
+    }
+
+    private var pruneOffscreenAXBranches: Bool {
+        #if LST_EXCLUDE_DEBUG_FEATURES
+        true
+        #else
+        !CommandLine.arguments.contains("--ax-disable-branch-pruning")
+        #endif
+    }
+
     private func axRequest() throws -> AXExtractionRequest {
         guard let app = captureTarget.application,
               let windowID = windowTrackingAnchor?.windowID ?? app.anchorWindowID,
@@ -299,7 +315,8 @@ final class SessionCoordinator {
         }
         return AXExtractionRequest(processID:app.processID,windowID:windowID,windowFrame:windowFrame,
             selectionRegion:screenCaptureRect(for:selection,screenFrame:screen.frame,displayBounds:CGDisplayBounds(displayID)),
-            collectParentTextDiagnostics:CommandLine.arguments.contains("--ax-collect-parent-values"))
+            collectParentTextDiagnostics:CommandLine.arguments.contains("--ax-collect-parent-values"), visibleFirst: visibleFirstAXCollection,
+            pruneOffscreenBranches: pruneOffscreenAXBranches)
     }
 
     private func axPresentation(_ value: AXTranslatedFrame, artwork: AXRenderArtwork) -> MirrorFrame {
