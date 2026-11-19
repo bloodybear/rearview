@@ -178,7 +178,7 @@ def main():
     parser.add_argument('--list', action='store_true', help='List available prototype cases without running')
     parser.add_argument('--skip-ensure', action='store_true', help='Use existing fixtures without checking/restoring their contents')
     parser.add_argument('--group', action='append', choices=['lines', 'clipping', 'database', 'regression', 'all'], help='Repeatable scenario groups; no selection defaults to ax-active-scenarios.json')
-    parser.add_argument('--activation', choices=['none', 'manual', 'enhanced', 'both'], default='manual', help='Research-only mode; restored after collection')
+    parser.add_argument('--activation', choices=['none', 'manual', 'enhanced', 'both'], default='manual', help='Research-only mode; remains enabled after collection')
     parser.add_argument('--offscreen-study', action='store_true', help='Research only: compare AXVisibleOnly membership and discovery timing; keep production selection unchanged')
     parser.add_argument('--disable-1pt-filter', action='store_true', help='Research only: retain <=1pt text frames; other visibility filters remain enabled')
     args = parser.parse_args()

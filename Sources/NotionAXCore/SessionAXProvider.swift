@@ -79,25 +79,35 @@ public final class NativeSessionAXProvider: SessionAXProvider, @unchecked Sendab
         await withCheckedContinuation { continuation in queue.async { continuation.resume(returning:self.lastDiagnostic) } }
     }
     private let queue = DispatchQueue(label: "rearview.ax-extraction", qos: .userInitiated)
-    // Accessed exclusively on queue, including restoration.
-    private var activation: (pid_t, AXUIElement, CFTypeRef?)?
+    // Accessed exclusively on queue. Ending a session leaves target AX activation enabled.
+    private var activation: (pid_t, AXUIElement)?
+    private var activatedAt: TimeInterval = 0
+    private var readinessFinished = false
+    private let cancellationLock = NSLock()
+    private var activeCancellation: AXCancellation?
+    private func setActiveCancellation(_ value: AXCancellation?) {
+        cancellationLock.lock(); activeCancellation = value; cancellationLock.unlock()
+    }
+    private func cancelActiveCollection() {
+        cancellationLock.lock(); activeCancellation?.cancel(); cancellationLock.unlock()
+    }
     public init() {}
-    private func restore() {
-        if let (_, app, prior) = activation, let prior {
-            let result=AXUIElementSetAttributeValue(app, "AXManualAccessibility" as CFString, prior)
-            lastDiagnostic?.fields["manualAccessibilityRestoreResult"]=String(result.rawValue)
-        }
+    private func clearSessionActivation() {
         activation = nil
+        readinessFinished = false
         activationFacts=[:]
     }
     public func endSession() async {
-        await withCheckedContinuation { continuation in queue.async { self.restore(); continuation.resume() } }
+        cancelActiveCollection()
+        await withCheckedContinuation { continuation in queue.async { self.clearSessionActivation(); continuation.resume() } }
     }
     public func collect(_ request: AXExtractionRequest) async throws -> AXExtractionSnapshot {
         let cancellation = AXCancellation()
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
                 queue.async {
+                    self.setActiveCancellation(cancellation)
+                    defer { self.setActiveCancellation(nil) }
                     do { continuation.resume(returning: try self.collect(request, cancellation)) }
                     catch { continuation.resume(throwing: error) }
                 }
@@ -127,46 +137,96 @@ public final class NativeSessionAXProvider: SessionAXProvider, @unchecked Sendab
         let initializationStarted = Date()
         var initialized = false
         if activation?.0 != request.processID {
-            restore()
+            clearSessionActivation()
             let app = AXUIElementCreateApplication(request.processID)
             AXUIElementSetMessagingTimeout(app, 0.35)
             diagnostic.fields["stage"]="activation"
             let prior = get(app, "AXManualAccessibility")
             diagnostic.fields["previousManualAccessibility"]=(prior as? Bool).map(String.init) ?? "unavailable"
+            activatedAt = ProcessInfo.processInfo.systemUptime
             let setResult=AXUIElementSetAttributeValue(app, "AXManualAccessibility" as CFString, kCFBooleanTrue)
             diagnostic.fields["manualAccessibilitySetResult"]=String(setResult.rawValue)
             diagnostic.fields["manualAccessibilityReadback"]=(get(app,"AXManualAccessibility") as? Bool).map(String.init) ?? "unavailable"
             activationFacts=diagnostic.fields.filter { ["previousManualAccessibility","manualAccessibilitySetResult","manualAccessibilityReadback"].contains($0.key) }
             guard setResult == .success else { throw AXExtractionError.activationFailed }
-            activation = (request.processID, app, prior)
+            activation = (request.processID, app)
             initialized = true
         }
-        guard let (_, app, _) = activation else { throw AXExtractionError.activationFailed }
+        guard let (_, app) = activation else { throw AXExtractionError.activationFailed }
         try cancellation.check()
         let initializationSeconds = Date().timeIntervalSince(initializationStarted)
         diagnostic.fields.merge(activationFacts) { old,_ in old }
         diagnostic.fields["activationReused"]=String(!initialized)
         diagnostic.fields["initializationSeconds"]=String(initializationSeconds)
-        diagnostic.fields["stage"]="window_mapping"
-        let mappingStarted = Date()
-        // Map the session's CG window, never the focused window. Ambiguity fails.
-        let info = CGWindowListCopyWindowInfo([.optionIncludingWindow], request.windowID) as? [[String: Any]] ?? []
-        guard info.contains(where: {
-            ($0[kCGWindowNumber as String] as? NSNumber)?.uint32Value == request.windowID &&
-            ($0[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == request.processID
-        }) else { throw AXExtractionError.targetTerminated }
-        let windows = get(app, "AXWindows") as? [AXUIElement] ?? []
-        diagnostic.fields["windowCount"]=String(windows.count)
-        let matches = windows.filter { frame($0).map { AXWindowMatch.near($0, request.windowFrame) } == true }
-        diagnostic.fields["matchingWindows"]=String(matches.count)
-        guard matches.count == 1 else { throw AXExtractionError.windowMappingFailed }
-        let mappingSeconds = Date().timeIntervalSince(mappingStarted)
-        diagnostic.fields["stage"]="collection"
-        var snapshot = try AXCollector.collect(request, window: matches[0], cancellation: cancellation)
+        var totalMappingSeconds: TimeInterval = 0
+        func attempt() throws -> AXExtractionSnapshot {
+            try cancellation.check()
+            guard let process = NSRunningApplication(processIdentifier:request.processID), !process.isTerminated else { throw AXExtractionError.targetTerminated }
+            diagnostic.fields["stage"]="window_mapping"
+            let mappingStarted = Date()
+            // Map the session's CG window, never the focused window. Ambiguity fails.
+            let info = CGWindowListCopyWindowInfo([.optionIncludingWindow], request.windowID) as? [[String: Any]] ?? []
+            guard info.contains(where: {
+                ($0[kCGWindowNumber as String] as? NSNumber)?.uint32Value == request.windowID &&
+                ($0[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == request.processID
+            }) else { throw AXExtractionError.targetTerminated }
+            let windows = get(app, "AXWindows") as? [AXUIElement] ?? []
+            diagnostic.fields["windowCount"]=String(windows.count)
+            let matches = windows.filter { frame($0).map { AXWindowMatch.near($0, request.windowFrame) } == true }
+            diagnostic.fields["matchingWindows"]=String(matches.count)
+            guard matches.count == 1 else { throw AXExtractionError.windowMappingFailed }
+            let mappingSeconds = Date().timeIntervalSince(mappingStarted)
+            diagnostic.fields["stage"]="collection"
+            let snapshot = try AXCollector.collect(request, window: matches[0], cancellation: cancellation)
+            totalMappingSeconds += mappingSeconds
+            return snapshot
+        }
+        var attempts: [[String:Any]] = []
+        var totalWait: TimeInterval = 0
+        var snapshot: AXExtractionSnapshot
+        while true {
+            try cancellation.check()
+            let attemptStarted = ProcessInfo.processInfo.systemUptime - activatedAt
+            let countsBefore = queries.counts
+            var result: AXExtractionSnapshot?
+            var pendingError: Error?
+            var reasons: [String] = []
+            do {
+                let collected = try attempt()
+                result = collected
+                let fields = try JSONSerialization.jsonObject(with:collected.metadata) as? [String:Any]
+                reasons = fields?["activationReadinessReasons"] as? [String] ?? []
+            } catch let error as AXReadinessError {
+                pendingError = error
+                reasons = ["visibility_search_unavailable"]
+            }
+            let elapsed = ProcessInfo.processInfo.systemUptime - activatedAt
+            attempts.append(["startedAfterActivationSeconds":attemptStarted,
+                "elapsedSeconds":elapsed-attemptStarted,"reasons":reasons,
+                "status":result?.status.rawValue ?? "failed",
+                "queryResults":queries.counts.reduce(into:[String:Int]()) { values, entry in
+                    let count = entry.value - (countsBefore[entry.key] ?? 0)
+                    if count > 0 { values[entry.key] = count }
+                }])
+            diagnostic.fields["activationReadinessAttempts"] = String(data:try JSONSerialization.data(withJSONObject:attempts),encoding:.utf8)
+            guard !readinessFinished, !reasons.isEmpty,
+                  let delay = AXActivationReadiness.nextDelay(attemptStarted:attemptStarted,elapsed:elapsed) else {
+                readinessFinished = true
+                diagnostic.fields["activationReadinessExit"] = reasons.isEmpty ? "no_retryable_missing_data" : "final_attempt_exhausted"
+                if let pendingError { throw pendingError }
+                guard let result else { throw AXExtractionError.activationFailed }
+                snapshot = result
+                break
+            }
+            diagnostic.fields["stage"]="activation_readiness_wait"
+            totalWait += try AXActivationReadiness.wait(delay,cancellation:cancellation)
+        }
         var metadata = try JSONSerialization.jsonObject(with: snapshot.metadata) as! [String: Any]
         metadata["initializationSeconds"] = initializationSeconds
-        metadata["windowMappingSeconds"] = mappingSeconds
-        metadata["activationObservationDelaySeconds"] = 0
+        metadata["windowMappingSeconds"] = totalMappingSeconds
+        metadata["activationObservationDelaySeconds"] = totalWait
+        metadata["activationReadinessAttempts"] = attempts
+        metadata["activationReadinessExit"] = diagnostic.fields["activationReadinessExit"]
         snapshot = try AXExtractionSnapshot(nodes: JSONSerialization.jsonObject(with:snapshot.nodes) as! [[String:Any]], selected: JSONSerialization.jsonObject(with:snapshot.selected) as! [[String:Any]], paragraphs: (JSONSerialization.jsonObject(with:snapshot.paragraphs) as! [String:Any])["units"] as! [[String:Any]], metadata: metadata)
         diagnostic.fields["stage"]="finished"
         diagnostic.fields["status"]=snapshot.status.rawValue

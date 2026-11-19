@@ -55,8 +55,7 @@ func run() throws {
     let activation = args.firstIndex(of: "--activation").flatMap { $0 + 1 < args.count ? args[$0 + 1] : nil } ?? "manual"
     guard ["none", "manual", "enhanced", "both"].contains(activation) else { throw NSError(domain:"Invalid activation mode",code:1) }
     let activationKeys = activation == "none" ? [] : activation == "manual" ? ["AXManualAccessibility"] : activation == "both" ? ["AXManualAccessibility", "AXEnhancedUserInterface"] : ["AXEnhancedUserInterface"]
-    let priorActivation = activationKeys.map { get(app,$0) }
-    defer { for (key,value) in zip(activationKeys,priorActivation) { if let value { AXUIElementSetAttributeValue(app,key as CFString,value) } } }
+    // Leave target AX activation enabled after collection.
     var activationErrors: [String: Int32] = [:]
     for key in activationKeys { activationErrors[key] = AXUIElementSetAttributeValue(app,key as CFString,kCFBooleanTrue).rawValue }
     // Delay is an observation window, NOT a claim that every node is ready.

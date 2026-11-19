@@ -226,6 +226,9 @@ static func collect(_ request: AXExtractionRequest, window: AXUIElement, cancell
             recordAXResult("AXUIElementsForSearchPredicate",error)
             guard error == .success, let matches = found as? [AXUIElement], matches.count < 10000 else {
                 // An incomplete search must not masquerade as successful filtering.
+                if error == .cannotComplete || error == .noValue || (error == .success && found == nil) {
+                    throw AXReadinessError.visibilitySearchUnavailable(error.rawValue)
+                }
                 throw NSError(domain:"AX visibility search unavailable or truncated at WebArea \(rootID), visibleOnly=\(visibleOnly), error=\(error.rawValue)",code:1)
             }
             lists[visibleOnly] = matches
@@ -655,7 +658,9 @@ static func collect(_ request: AXExtractionRequest, window: AXUIElement, cancell
     let codeSeconds = Date().timeIntervalSince(codeStarted)
     let truncated = Date() > deadline || investigator.limitReached || !stack.isEmpty || rows.contains{$0["depthLimitReached"] as? Bool == true}
     let codePartial = paragraphs.contains { ($0["codeSegments"] as? [[String:Any]])?.contains(where: { $0["status"] as? String == "partial" }) == true }
-    let partial = codePartial || truncated || paragraphs.contains { ($0["lineRangeStatus"] as? String ?? "unavailable") != "complete_unverified" }
+    let missingDocumentTree = !truncated && AXActivationReadiness.documentTreeMissing(rows:rows)
+    let readinessReasons = AXActivationReadiness.reasons(paragraphs:paragraphs,truncated:truncated) + (missingDocumentTree ? ["document_webarea_unavailable"] : [])
+    let partial = missingDocumentTree || codePartial || truncated || paragraphs.contains { ($0["lineRangeStatus"] as? String ?? "unavailable") != "complete_unverified" }
     let imageRegions = ImageRegionBuilder.build(rows:rows,selection:request.selectionRegion,
         viewport:{ id in
             var viewport = selectionViewport(rows[id])
@@ -695,6 +700,7 @@ static func collect(_ request: AXExtractionRequest, window: AXUIElement, cancell
         "codeRangeQueries":investigator.calls-codeCallsBefore,"codeRangeSeconds":codeSeconds,
         "parentValueQueries":request.collectParentTextDiagnostics ? rows.filter { $0["role"] as? String == "AXTextArea" }.count : 0,
         "totalAXCalls":Thread.current.threadDictionary["rearview.ax.queryCount"] as? Int ?? 0,"rangeCalls":investigator.calls,"rangeElapsed":investigator.elapsed,"rangeLimitReached":investigator.limitReached,
+        "activationReadinessReasons":readinessReasons,
         "truncated":truncated,"parkedDocumentCount":parkedDocumentCount,"coverageLimitations":coverageLimitations,"visibleSearches":visibleSearches,
         "visibleSearchElapsed":visibleSearchElapsed,"controlTextResolution":controlTextResolution,
         "selectionPolicy":"ax-visible-only-plus-timeline-pinned-list-v1", "limits":["nodes":3500,"depth":40,"seconds":15],
