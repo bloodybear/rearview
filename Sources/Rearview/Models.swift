@@ -144,6 +144,7 @@ enum AppDefaults {
     // Refresh
     static let refreshMode: RefreshMode = .automatic
     static let realtimeOCRIntervalMilliseconds = 500
+    static let axRefreshIntervalMilliseconds = 250
     static let mirrorUpdateStyle: MirrorUpdateStyle = .atomic
 
     // OCR Execution
@@ -243,7 +244,7 @@ enum AppSettings {
         "toolbarShortcut.alwaysOnTop.label", "toolbarShortcut.alwaysOnTop.enabled",
         "toolbarShortcut.pause.keyCode", "toolbarShortcut.pause.modifiers",
         "toolbarShortcut.pause.label", "toolbarShortcut.pause.enabled",
-        CapturePolicy.targetFPSKey, CapturePolicy.realtimeOCRIntervalMillisecondsKey,
+        CapturePolicy.targetFPSKey, CapturePolicy.realtimeOCRIntervalMillisecondsKey, CapturePolicy.axRefreshIntervalMillisecondsKey,
         OCRRecognitionPolicy.minimumConfidenceKey, RefinementOCRPolicy.automaticStrategyKey,
         RefinementOCRPolicy.manualStrategyKey, RefinementOCRPolicy.alwaysRunKey,
         RefinementOCRPolicy.confidenceThresholdKey, RefinementOCRPolicy.delayMillisecondsKey,
@@ -1265,25 +1266,29 @@ enum TargetApplicationTracking {
 struct CapturePolicy: Equatable, Sendable {
     static let targetFPSKey = "captureTargetFPS"
     static let realtimeOCRIntervalMillisecondsKey = "realtimeOCRIntervalMilliseconds"
+    static let axRefreshIntervalMillisecondsKey = "axRefreshIntervalMilliseconds"
     static let defaultTargetFPS = AppDefaults.captureTargetFPS
     static let defaultRealtimeOCRIntervalMilliseconds = AppDefaults.realtimeOCRIntervalMilliseconds
     static let targetFPSRange = 1...30
-    static let realtimeOCRIntervalMillisecondsRange = 100...2_000
+    static let refreshIntervalMillisecondsRange = 100...2_000
 
     let targetFPS: Int
     let realtimeOCRIntervalMilliseconds: Int
+    let axRefreshIntervalMilliseconds: Int
 
     init(
         targetFPS: Int = defaultTargetFPS,
-        realtimeOCRIntervalMilliseconds: Int = defaultRealtimeOCRIntervalMilliseconds
+        realtimeOCRIntervalMilliseconds: Int = defaultRealtimeOCRIntervalMilliseconds,
+        axRefreshIntervalMilliseconds: Int = AppDefaults.axRefreshIntervalMilliseconds
     ) {
         self.targetFPS = Self.targetFPSRange.clamp(targetFPS)
         self.realtimeOCRIntervalMilliseconds =
-            Self.realtimeOCRIntervalMillisecondsRange.clamp(realtimeOCRIntervalMilliseconds)
+            Self.refreshIntervalMillisecondsRange.clamp(realtimeOCRIntervalMilliseconds)
+        self.axRefreshIntervalMilliseconds = Self.refreshIntervalMillisecondsRange.clamp(axRefreshIntervalMilliseconds)
     }
 
-    var realtimeOCRInterval: Duration {
-        .milliseconds(Int64(realtimeOCRIntervalMilliseconds))
+    func refreshInterval(usesAX: Bool) -> Duration {
+        .milliseconds(Int64(usesAX ? axRefreshIntervalMilliseconds : realtimeOCRIntervalMilliseconds))
     }
 
     static func load(from defaults: UserDefaults = .standard) -> CapturePolicy {
@@ -1293,7 +1298,9 @@ struct CapturePolicy: Equatable, Sendable {
             realtimeOCRIntervalMilliseconds:
                 defaults.object(forKey: realtimeOCRIntervalMillisecondsKey) == nil
                 ? defaultRealtimeOCRIntervalMilliseconds
-                : defaults.integer(forKey: realtimeOCRIntervalMillisecondsKey)
+                : defaults.integer(forKey: realtimeOCRIntervalMillisecondsKey),
+            axRefreshIntervalMilliseconds: defaults.object(forKey: axRefreshIntervalMillisecondsKey) == nil
+                ? AppDefaults.axRefreshIntervalMilliseconds : defaults.integer(forKey: axRefreshIntervalMillisecondsKey)
         )
     }
 
@@ -1303,6 +1310,7 @@ struct CapturePolicy: Equatable, Sendable {
             realtimeOCRIntervalMilliseconds,
             forKey: Self.realtimeOCRIntervalMillisecondsKey
         )
+        defaults.set(axRefreshIntervalMilliseconds, forKey: Self.axRefreshIntervalMillisecondsKey)
     }
 }
 

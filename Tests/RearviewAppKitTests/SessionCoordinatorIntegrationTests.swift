@@ -388,7 +388,7 @@ final class SessionCoordinatorIntegrationTests: XCTestCase {
         await coordinator.setTextExtractionMode(.ax)
         try await coordinator.start(screen:screen,selection:selection,captureTarget:.application(
             CaptureApplication(processID:123,bundleIdentifier:"notion.id",name:"Notion",anchorWindowID:42,anchorWindowFrame:screen.frame)))
-        await coordinator.setCapturePolicy(CapturePolicy(targetFPS:30,realtimeOCRIntervalMilliseconds:100))
+        await coordinator.setCapturePolicy(CapturePolicy(targetFPS: 30, axRefreshIntervalMilliseconds: 100))
         coordinator.setRefreshMode(.automatic); coordinator.setPaused(false)
         let first = expectation(description:"first translated"), latest = expectation(description:"newest translated")
         coordinator.onAXTranslation = { value in
@@ -439,7 +439,7 @@ final class SessionCoordinatorIntegrationTests: XCTestCase {
         await coordinator.setTextExtractionMode(.ax)
         try await coordinator.start(screen:screen,selection:selection,captureTarget:.application(
             CaptureApplication(processID:123,bundleIdentifier:"notion.id",name:"Notion",anchorWindowID:42,anchorWindowFrame:screen.frame)))
-        await coordinator.setCapturePolicy(CapturePolicy(targetFPS:30,realtimeOCRIntervalMilliseconds:100))
+        await coordinator.setCapturePolicy(CapturePolicy(targetFPS: 30, axRefreshIntervalMilliseconds: 100))
         coordinator.setRefreshMode(.automatic); coordinator.setPaused(false)
         let first = expectation(description:"first AX"), latest = expectation(description:"newest AX")
         coordinator.onAXExtraction = { _, _, id in
@@ -673,7 +673,7 @@ final class SessionCoordinatorIntegrationTests: XCTestCase {
         await coordinator.setTextExtractionMode(.ax)
         try await coordinator.start(screen:screen,selection:selection,captureTarget:.application(
             CaptureApplication(processID:123,bundleIdentifier:"notion.id",name:"Notion",anchorWindowID:42,anchorWindowFrame:screen.frame)))
-        await coordinator.setCapturePolicy(CapturePolicy(targetFPS:30,realtimeOCRIntervalMilliseconds:100))
+        await coordinator.setCapturePolicy(CapturePolicy(targetFPS: 30, axRefreshIntervalMilliseconds: 100))
         coordinator.setRefreshMode(.automatic);coordinator.setPaused(false)
         let first=expectation(description:"image result"),latest=expectation(description:"new image result")
         coordinator.onAXTranslation = { value in

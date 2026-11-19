@@ -1123,6 +1123,7 @@ final class SessionCoordinator {
             "updateStyle":String(describing:mirrorUpdateStyle),"acceptingFrames":String(acceptingFrames),"workInFlight":String(ocrTask != nil),
             "targetBundleID":captureTarget.application?.bundleIdentifier ?? "all",
             "captureFPS":String(capturePolicy.targetFPS),"ocrIntervalMilliseconds":String(capturePolicy.realtimeOCRIntervalMilliseconds),
+            "axIntervalMilliseconds":String(capturePolicy.axRefreshIntervalMilliseconds),
             "refinement":String(describing:refinementOCRPolicy),"selection":String(describing:selection),
             "screenFrame":String(describing:selectedScreen?.frame),"screenScale":String(describing:selectedScreen?.backingScaleFactor),
             "overlaySettings":String(describing:overlaySettings),"tracking":String(targetApplicationTracking),
@@ -1785,7 +1786,7 @@ final class SessionCoordinator {
                 )
                 return
             }
-            guard lastRealtimeOCR.duration(to: now) >= capturePolicy.realtimeOCRInterval else {
+            guard lastRealtimeOCR.duration(to: now) >= capturePolicy.refreshInterval(usesAX: usesAXExtraction) else {
                 diagnostics.event("frame.queued", ["frameID":String(frame.id)])
                 pendingAutomaticFrame.store(frame)
                 return
@@ -1944,7 +1945,7 @@ final class SessionCoordinator {
     @discardableResult
     private func processPendingAutomaticFrameIfPossible() -> Bool {
         let now = ContinuousClock.now
-        let intervalElapsed = lastRealtimeOCR.duration(to: now) >= capturePolicy.realtimeOCRInterval
+        let intervalElapsed = lastRealtimeOCR.duration(to: now) >= capturePolicy.refreshInterval(usesAX: usesAXExtraction)
         guard refreshMode == .automatic, !paused, ocrTask == nil,
               let frame = pendingAutomaticFrame.take(when: intervalElapsed) else { return false }
         PresentationTrace.shared.record("pending.consume", [

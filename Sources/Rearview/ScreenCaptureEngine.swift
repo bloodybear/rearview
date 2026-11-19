@@ -297,6 +297,7 @@ final class ScreenCaptureEngine: NSObject, SCStreamOutput, SCStreamDelegate, @un
             "ocr.realtimeIntervalMilliseconds",
             value: policy.realtimeOCRIntervalMilliseconds
         )
+        profiler.setCounter("ax.refreshIntervalMilliseconds", value: policy.axRefreshIntervalMilliseconds)
         profiler.setCounter("capture.mode.mirror", value: 1)
         profiler.setCounter("capture.filter.application", value: target.isApplication ? 1 : 0)
     }

@@ -264,6 +264,8 @@ Rearview가 활성 상태이거나 비활성 컨트롤 바에 마우스를 올�
 타겟 앱 이동 추적	Track Target App Movement	対象アプリの移動を追跡
 캡처 대상 앱 창이 이동하면 번역 영역도 함께 이동합니다.	Moves the translation area when the target app window moves.	キャプチャ対象アプリのウインドウが移動すると翻訳範囲も移動します。
 갱신	Refresh	更新
+AX 최소 간격	Minimum AX Interval	AXの最小間隔
+AX 모드에서 자동 갱신을 시작하는 최소 간격입니다. 설정 범위는 100–2000ms입니다.	Minimum time between automatic updates in AX mode. Range: 100–2000 ms.	AXモードでの自動更新の最小間隔です。範囲は100～2000msです。
 OCR 최소 간격	Minimum OCR Interval	OCRの最小間隔
 화면이 변해도 이 시간이 지난 뒤 다음 OCR을 시작합니다. 설정 범위는 100–2000ms입니다.	Waits this long before starting the next OCR after a screen change. Range: 100–2000 ms.	画面が変化しても、この時間が経過してから次のOCRを開始します。範囲は100～2000msです。
 미러 갱신 방식	Mirror Update Style	ミラー更新方式

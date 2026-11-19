@@ -156,6 +156,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
     private let imageSaveFilenameField = NSTextField()
     private let ocrIntervalField = NSTextField()
     private let ocrIntervalStepper = NSStepper()
+    private let axIntervalField = NSTextField()
+    private let axIntervalStepper = NSStepper()
     private let ocrFilterConfidenceField = NSTextField()
     private let ocrFilterConfidenceStepper = NSStepper()
     private let ocrHeightFields = [OCRMode.realtime: NSTextField(), .refinement: NSTextField()]
@@ -304,11 +306,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         }
         imageSaveDirectoryField.stringValue = ImageSaveSettings.directoryURL().path
         imageSaveFilenameField.stringValue = ImageSaveSettings.filenameTemplate()
-        let policy = CapturePolicy.load()
-        captureFPSField.integerValue = policy.targetFPS
-        captureFPSStepper.integerValue = policy.targetFPS
-        ocrIntervalField.integerValue = policy.realtimeOCRIntervalMilliseconds
-        ocrIntervalStepper.integerValue = policy.realtimeOCRIntervalMilliseconds
+        updateCapturePolicyControls(CapturePolicy.load())
         ocrFilterConfidenceField.stringValue = String(format: "%.2f", OCRRecognitionPolicy.minimumConfidence)
         ocrFilterConfidenceStepper.doubleValue = Double(OCRRecognitionPolicy.minimumConfidence)
         let refinementPolicy = RefinementOCRPolicy.load()
@@ -483,6 +481,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
             makePreferenceRow(title: L10n.text("이미지 파일명 규칙"), description: L10n.text("{yyyy}, {MM}, {dd}, {HH}, {mm}, {ss}, {counter} 토큰을 사용할 수 있습니다."), control: imageSaveFilenameField),
         ])
         let updateSection = makeSection(title: L10n.text("갱신"), rows: [
+            makePreferenceRow(title: L10n.text("AX 최소 간격"), description: L10n.text("AX 모드에서 자동 갱신을 시작하는 최소 간격입니다. 설정 범위는 100–2000ms입니다."), control: makeNumberControl(field: axIntervalField, stepper: axIntervalStepper, unit: "ms")),
             makePreferenceRow(title: L10n.text("OCR 최소 간격"), description: L10n.text("화면이 변해도 이 시간이 지난 뒤 다음 OCR을 시작합니다. 설정 범위는 100–2000ms입니다."), control: makeNumberControl(field: ocrIntervalField, stepper: ocrIntervalStepper, unit: "ms")),
             makePreferenceRow(title: L10n.text("미러 갱신 방식"), description: L10n.text("번역을 한 번에 표시하거나, 완료되는 줄부터 점진적으로 표시합니다."), control: mirrorUpdateStylePopup),
         ])
@@ -780,7 +779,12 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         )
         configureNumberControl(
             field: ocrIntervalField, stepper: ocrIntervalStepper,
-            range: CapturePolicy.realtimeOCRIntervalMillisecondsRange, increment: 50,
+            range: CapturePolicy.refreshIntervalMillisecondsRange, increment: 50,
+            action: #selector(capturePolicyChanged)
+        )
+        configureNumberControl(
+            field: axIntervalField, stepper: axIntervalStepper,
+            range: CapturePolicy.refreshIntervalMillisecondsRange, increment: 50,
             action: #selector(capturePolicyChanged)
         )
         configureDecimalControl(
@@ -1171,17 +1175,26 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
             captureFPSField.integerValue = captureFPSStepper.integerValue
         } else if sender as AnyObject === ocrIntervalStepper {
             ocrIntervalField.integerValue = ocrIntervalStepper.integerValue
+        } else if sender as AnyObject === axIntervalStepper {
+            axIntervalField.integerValue = axIntervalStepper.integerValue
         }
         let policy = CapturePolicy(
             targetFPS: captureFPSField.integerValue,
-            realtimeOCRIntervalMilliseconds: ocrIntervalField.integerValue
+            realtimeOCRIntervalMilliseconds: ocrIntervalField.integerValue,
+            axRefreshIntervalMilliseconds: axIntervalField.integerValue
         )
+        updateCapturePolicyControls(policy)
+        policy.save()
+        onCapturePolicyChange?(policy)
+    }
+
+    private func updateCapturePolicyControls(_ policy: CapturePolicy) {
         captureFPSField.integerValue = policy.targetFPS
         captureFPSStepper.integerValue = policy.targetFPS
         ocrIntervalField.integerValue = policy.realtimeOCRIntervalMilliseconds
         ocrIntervalStepper.integerValue = policy.realtimeOCRIntervalMilliseconds
-        policy.save()
-        onCapturePolicyChange?(policy)
+        axIntervalField.integerValue = policy.axRefreshIntervalMilliseconds
+        axIntervalStepper.integerValue = policy.axRefreshIntervalMilliseconds
     }
 
     @objc private func ocrFilterConfidenceChanged(_ sender: Any?) {
@@ -1196,7 +1209,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
 
     func controlTextDidEndEditing(_ notification: Notification) {
         guard let field = notification.object as? NSTextField else { return }
-        if field === captureFPSField || field === ocrIntervalField {
+        if field === captureFPSField || field === ocrIntervalField || field === axIntervalField {
             capturePolicyChanged(field)
         }
         if field === ocrFilterConfidenceField {
