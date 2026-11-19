@@ -69,6 +69,7 @@ import NotionAXReportSupport
         let direction: TranslationDirection = directionValue == "ja-ko" ? .japaneseToKorean : .koreanToJapanese
         let broker = TranslationBroker(direction:direction)
         let measureLiveDraw = CommandLine.arguments.contains("--ax-measure-live-draw")
+        let measureAutoScroll = CommandLine.arguments.contains("--ax-measure-auto-scroll")
         let coordinator = SessionCoordinator(broker:broker,createsOutputWindow:measureLiveDraw,
             translatesAXParagraphs:!skip,initialTranslationDirection:direction)
         var worker: Task<Void,Never>?
@@ -156,7 +157,7 @@ import NotionAXReportSupport
             }
             coordinator.onAXExtractionError = { failure = $0 }
             await coordinator.setTextExtractionMode(.ax)
-            coordinator.setRefreshMode(control == nil ? .automatic : .manual)
+            coordinator.setRefreshMode(control == nil || measureAutoScroll ? .automatic : .manual)
             coordinator.setPaused(false)
             // Track the replay's window, not the focused app/window.
             let target = CaptureApplication(processID:input.request.processID,bundleIdentifier:"notion.id",name:"Notion",
@@ -267,28 +268,31 @@ import NotionAXReportSupport
             for (phase,name) in phaseNames.enumerated() {
                 var targetCount=repeatCount
                 if let control {
+                    if measureAutoScroll { targetCount = phase + 1 }
                     if phase > 0 {
                         let gate=control.appendingPathComponent("continue-\(phase).json")
-                        let deadline=ContinuousClock.now + .seconds(540)
+                        let deadline=ContinuousClock.now + .seconds(measureAutoScroll ? 30 : 540)
                         while !FileManager.default.fileExists(atPath:gate.path),ContinuousClock.now < deadline {
                             if FileManager.default.fileExists(atPath:control.appendingPathComponent("abort.json").path) { throw CancellationError() }
                             try await Task.sleep(for:.milliseconds(50))
                         }
                         guard FileManager.default.fileExists(atPath:gate.path) else { throw CocoaError(.fileReadNoSuchFile) }
                     }
-                    // The external test driver has changed the UI; capture keeps
-                    // running in manual mode. Give it a fresh current frame.
-                    try await Task.sleep(for:.milliseconds(400))
-                    failure=nil;collected=nil;translated=nil;samples=[];translationSamples=[]
-                    targetCount=finishedCount+repeatCount
-                    fputs("AX sequence phase \(phase): completed=\(finishedCount), target=\(targetCount)\n",stderr)
-                    coordinator.translateImmediately()
+                    if !measureAutoScroll {
+                        // The external test driver has changed the UI; capture keeps
+                        // running in manual mode. Give it a fresh current frame.
+                        try await Task.sleep(for:.milliseconds(400))
+                        failure=nil;collected=nil;translated=nil;samples=[];translationSamples=[]
+                        targetCount=finishedCount+repeatCount
+                        fputs("AX sequence phase \(phase): completed=\(finishedCount), target=\(targetCount)\n",stderr)
+                        coordinator.translateImmediately()
+                    }
                 }
                 let deadline=ContinuousClock.now + .seconds(skip ? 60 : 540)
                 var requestedRepeat=finishedCount
                 while finishedCount < targetCount && failure == nil && ContinuousClock.now < deadline {
                     try await Task.sleep(for:.milliseconds(50))
-                    if finishedCount > requestedRepeat && finishedCount < targetCount {
+                    if !measureAutoScroll && finishedCount > requestedRepeat && finishedCount < targetCount {
                         requestedRepeat=finishedCount;coordinator.translateImmediately()
                     }
                 }

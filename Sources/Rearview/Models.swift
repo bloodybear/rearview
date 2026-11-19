@@ -1617,6 +1617,7 @@ func makeMirrorItems(
 }
 
 struct MirrorFrame {
+    var isAXScrollPreview = false
     var diagnosticContext: DiagnosticFrameContext? = nil
     var axArtwork: AXRenderArtwork? = nil
     var imageOCRLayers: [AXImageOCRLayer] = []

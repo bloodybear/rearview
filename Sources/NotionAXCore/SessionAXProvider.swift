@@ -5,6 +5,7 @@ public enum TextExtractionMode: Sendable { case ocr, ax }
 public struct AXExtractionRequest: Sendable {
     public let diagnosticRequestID = UUID()
     public let prefetch: Bool
+    public let retainScrollAnchors: Bool
     public let visibleFirst: Bool
     public let pruneOffscreenBranches: Bool
     public let collectParentTextDiagnostics: Bool
@@ -12,8 +13,9 @@ public struct AXExtractionRequest: Sendable {
     public let windowID: CGWindowID
     public let windowFrame: CGRect
     public let selectionRegion: CGRect
-    public init(processID: pid_t, windowID: CGWindowID, windowFrame: CGRect, selectionRegion: CGRect, collectParentTextDiagnostics: Bool = false, visibleFirst: Bool = false, pruneOffscreenBranches: Bool = false, prefetch: Bool = false) {
+    public init(processID: pid_t, windowID: CGWindowID, windowFrame: CGRect, selectionRegion: CGRect, collectParentTextDiagnostics: Bool = false, visibleFirst: Bool = false, pruneOffscreenBranches: Bool = false, prefetch: Bool = false, retainScrollAnchors: Bool = false) {
         self.prefetch = prefetch
+        self.retainScrollAnchors = retainScrollAnchors
         self.visibleFirst = visibleFirst
         self.pruneOffscreenBranches = pruneOffscreenBranches
         self.collectParentTextDiagnostics = collectParentTextDiagnostics
@@ -66,10 +68,12 @@ public protocol SessionAXProvider: Sendable {
     func diagnosticSnapshot() async -> AXCollectionDiagnostics?
     func endSession() async
     func nextPrefetchSource(requestID: UUID) async throws -> String?
+    func scrollDisplacement(from sourceID: UUID, to request: AXExtractionRequest) async -> CGFloat?
 }
 public extension SessionAXProvider {
     func diagnosticSnapshot() async -> AXCollectionDiagnostics? { nil }
     func nextPrefetchSource(requestID: UUID) async throws -> String? { nil }
+    func scrollDisplacement(from sourceID: UUID, to request: AXExtractionRequest) async -> CGFloat? { nil }
 }
 package final class AXCancellation: @unchecked Sendable {
     private let lock = NSLock()
@@ -84,6 +88,43 @@ package enum AXWindowMatch {
     }
 }
 public final class NativeSessionAXProvider: SessionAXProvider, @unchecked Sendable {
+    // Both the handles and the positions captured with them belong to this serial queue.
+    private var scrollAnchors: (request: AXExtractionRequest, elements: [(AXUIElement, CGPoint)])?
+
+    public func scrollDisplacement(from sourceID: UUID, to request: AXExtractionRequest) async -> CGFloat? {
+        let cancellation = AXCancellation()
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                queue.async {
+                    guard !cancellation.isCancelled, let anchors = self.scrollAnchors,
+                          anchors.request.diagnosticRequestID == sourceID,
+                          anchors.request.processID == request.processID,
+                          anchors.request.windowID == request.windowID,
+                          anchors.request.windowFrame == request.windowFrame,
+                          anchors.request.selectionRegion == request.selectionRegion,
+                          anchors.elements.count >= 2 else {
+                        continuation.resume(returning: nil)
+                        return
+                    }
+                    let movements = anchors.elements.compactMap { element, before -> CGFloat? in
+                        guard !cancellation.isCancelled, let after = position(element),
+                              abs(after.x - before.x) <= 1 else { return nil }
+                        return after.y - before.y
+                    }
+                    continuation.resume(returning: cancellation.isCancelled ? nil : Self.agreedScrollDisplacement(movements))
+                }
+            }
+        } onCancel: { cancellation.cancel() }
+    }
+
+    static func agreedScrollDisplacement(_ movements: [CGFloat]) -> CGFloat? {
+        guard let first = movements.first(where: { candidate in
+            candidate.isFinite && abs(candidate) >= 3 &&
+                movements.filter { abs($0 - candidate) <= 1 }.count >= 2
+        }) else { return nil }
+        return first
+    }
+
     private var prefetchID: UUID?
     private var candidates: ArraySlice<AXUIElement> = []
     public func nextPrefetchSource(requestID: UUID) async throws -> String? {
@@ -135,6 +176,7 @@ public final class NativeSessionAXProvider: SessionAXProvider, @unchecked Sendab
     public init() {}
     private func clearSessionActivation() {
         candidates = []; prefetchID = nil
+        scrollAnchors = nil
         activation = nil
         readinessFinished = false
         activationFacts=[:]
@@ -159,6 +201,7 @@ public final class NativeSessionAXProvider: SessionAXProvider, @unchecked Sendab
     }
     private func collect(_ request: AXExtractionRequest, _ cancellation: AXCancellation, prefetchWait: TimeInterval?) throws -> AXExtractionSnapshot {
         candidates = []; prefetchID = nil
+        scrollAnchors = nil
         let started=Date()
         let queries=AXQueryDiagnostics()
         var diagnostic=AXCollectionDiagnostics(fields:["requestID":request.diagnosticRequestID.uuidString,"stage":"request","processID":String(request.processID),"windowID":String(request.windowID)])
@@ -226,7 +269,12 @@ public final class NativeSessionAXProvider: SessionAXProvider, @unchecked Sendab
                 self.prefetchID = request.diagnosticRequestID
                 self.candidates = elements[...]
             } : nil
-            let snapshot = try AXCollector.collect(request, window: matches[0], cancellation: cancellation, prefetch: retain)
+            scrollAnchors = nil
+            let rememberScrollAnchors: (([(AXUIElement, CGPoint)]) -> Void)? = request.retainScrollAnchors ? { elements in
+                self.scrollAnchors = (request, elements)
+            } : nil
+            let snapshot = try AXCollector.collect(request, window: matches[0], cancellation: cancellation,
+                prefetch: retain, scrollAnchors: rememberScrollAnchors)
             totalMappingSeconds += mappingSeconds
             return snapshot
         }

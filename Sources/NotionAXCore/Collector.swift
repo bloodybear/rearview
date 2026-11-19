@@ -19,6 +19,11 @@ package func frame(_ e: AXUIElement) -> CGRect? {
     guard AXValueGetValue(p as! AXValue, .cgPoint, &point), AXValueGetValue(s as! AXValue, .cgSize, &size) else { return nil }
     return CGRect(origin: point, size: size)
 }
+package func position(_ e: AXUIElement) -> CGPoint? {
+    guard let value = get(e, "AXPosition"), CFGetTypeID(value) == AXValueGetTypeID() else { return nil }
+    var point = CGPoint.zero
+    return AXValueGetValue(value as! AXValue, .cgPoint, &point) ? point : nil
+}
 // Product policy, not proof of invisibility: Chromium can clamp fully clipped
 // nodes to a 1-unit edge rectangle. Even a genuinely visible <=1pt text sliver
 // is not useful translation input. Filter using the already-read frame to avoid
@@ -45,7 +50,8 @@ package func isParkedNotionDocument(_ frame: CGRect, window: CGRect) -> Bool {
 package func rect(_ r: CGRect) -> [String: Double] { ["x":r.minX,"y":r.minY,"width":r.width,"height":r.height] }
 
 package enum AXCollector {
-static func collect(_ request: AXExtractionRequest, window: AXUIElement, cancellation: AXCancellation, prefetch: (([AXUIElement]) -> Void)? = nil) throws -> AXExtractionSnapshot {
+static func collect(_ request: AXExtractionRequest, window: AXUIElement, cancellation: AXCancellation, prefetch: (([AXUIElement]) -> Void)? = nil,
+                    scrollAnchors: (([(AXUIElement, CGPoint)]) -> Void)? = nil) throws -> AXExtractionSnapshot {
  let before = request.windowFrame
     func selectionViewport(_ row: [String:Any]) -> CGRect {
         let surface = (row["surfaceViewport"] as? [String:Double]).map {
@@ -794,6 +800,43 @@ static func collect(_ request: AXExtractionRequest, window: AXUIElement, cancell
         "selectionPolicy":"ax-visible-only-plus-timeline-pinned-list-v1", "limits":["nodes":3500,"depth":40,"seconds":15],
         "collectedAt":ISO8601DateFormatter().string(from:started), "windowFrame":rect(before), "selectionRegion":rect(request.selectionRegion)]
     guard valid else { throw AXExtractionError.windowChanged }
+    if let scrollAnchors, metadata["status"] as? String == "complete",
+       documentSurfaces.count == 1, let document = documentSurfaces.first,
+       (document["dialogBoxes"] as? [[String: Double]])?.isEmpty == true,
+       let bodyNodes = document["bodyNodes"] as? [Int] {
+        let body = Set(bodyNodes)
+        let interior = captureViewport.insetBy(dx: min(55, captureViewport.width / 8),
+                                                dy: min(90, captureViewport.height / 6))
+        let choices: [(Int, CGPoint)] = candidates.compactMap { candidate in
+            guard let id = candidate["node"] as? Int, rows[id]["role"] as? String == "AXStaticText",
+                  rows[id]["surfaceKind"] == nil, rows[id]["mathOwner"] == nil,
+                  let box = rows[id]["frame"] as? [String: Double], let x = box["x"], let y = box["y"],
+                  interior.contains(CGPoint(x: x, y: y)) else { return nil }
+            var ancestor: Int? = id
+            var belongsToBody = false
+            while let node = ancestor {
+                let classes = rows[node]["domClasses"] as? [String] ?? []
+                let role = rows[node]["role"] as? String
+                if role == "AXCell" || role == "AXTable" || classes.contains(where: {
+                    $0.hasPrefix("notion-collection") || $0.hasPrefix("notion-table") ||
+                        $0.hasPrefix("notion-simple-table") || $0 == "notion-code-block"
+                }) { return nil }
+                belongsToBody = belongsToBody || body.contains(node)
+                ancestor = rows[node]["parent"] as? Int
+            }
+            return belongsToBody ? (id, CGPoint(x: x, y: y)) : nil
+        }
+        var selected: [(AXUIElement, CGPoint)] = []
+        for fraction in [0.3, 0.5, 0.7] {
+            let y = captureViewport.minY + fraction * captureViewport.height
+            if let choice = choices.filter({ candidate in
+                selected.allSatisfy { abs($0.1.y - candidate.1.y) >= 35 }
+            }).min(by: { abs($0.1.y - y) < abs($1.1.y - y) }) {
+                selected.append((elements[choice.0], choice.1))
+            }
+        }
+        scrollAnchors(selected)
+    }
     if let prefetch, metadata["status"] as? String == "complete" {
         let roots = rows.filter { $0["documentURL"] != nil && $0["surfaceKind"] == nil }
         if roots.count == 1, let root = roots.first?["id"] as? Int {

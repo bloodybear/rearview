@@ -125,6 +125,7 @@ final class SessionCoordinator {
         let image: CGImage
         let frameID: UInt64
         let receivedAt: UInt64
+        var scrollAnchorRequestID: UUID? = nil
     }
     struct AXTranslatedFrame: Sendable {
         let frame: AXFrameSnapshot
@@ -374,7 +375,8 @@ final class SessionCoordinator {
         return AXExtractionRequest(processID:app.processID,windowID:windowID,windowFrame:windowFrame,
             selectionRegion:screenCaptureRect(for:selection,screenFrame:screen.frame,displayBounds:CGDisplayBounds(displayID)),
             collectParentTextDiagnostics:CommandLine.arguments.contains("--ax-collect-parent-values"), visibleFirst: visibleFirstAXCollection,
-            pruneOffscreenBranches: pruneOffscreenAXBranches, prefetch: prefetchEnabled)
+            pruneOffscreenBranches: pruneOffscreenAXBranches, prefetch: prefetchEnabled,
+            retainScrollAnchors: scrollPreviewEnabled)
     }
 
     private func axPresentation(_ value: AXTranslatedFrame, artwork: AXRenderArtwork) -> MirrorFrame {
@@ -393,6 +395,56 @@ final class SessionCoordinator {
         return frame
     }
 
+    private var scrollPreviewEnabled: Bool {
+        #if !LST_EXCLUDE_DEBUG_FEATURES
+        return !CommandLine.arguments.contains("--disable-ax-scroll-preview")
+        #else
+        return true
+        #endif
+    }
+
+    private var scrollPreviewFrameID: UInt64?
+
+    private func startScrollPreview(_ frame: FrameEnvelope, request: AXExtractionRequest,
+                                    diagnosticID: UUID?, origin: MirrorStatusOrigin) async -> Task<Void, Never>? {
+        guard request.retainScrollAnchors, origin == .automatic, translatesAXParagraphs, mirrorUpdateStyle == .atomic,
+              mirror?.allowsAXScrollPreview == true,
+              let previous = latestAXTranslation, previous.retainedBody == nil,
+              let sourceID = previous.frame.scrollAnchorRequestID,
+              let rendered = latestAXRenderedFrame, rendered.frameID == previous.frame.frameID,
+              let artwork = rendered.axArtwork, frame.id > rendered.frameID,
+              frame.image.width == previous.frame.image.width, frame.image.height == previous.frame.image.height else { return nil }
+        let generation = generation, revision = contentRevision, sequence = ocrTaskSequence, epoch = stabilityEpoch
+        let started = ContinuousClock.now
+        // Read these anchors before starting the regular collection on the same AX queue.
+        guard let displacement = await ax.scrollDisplacement(from: sourceID, to: request),
+              !Task.isCancelled, self.generation == generation, self.contentRevision == revision,
+              self.ocrTaskSequence == sequence, self.stabilityEpoch == epoch else { return nil }
+        let deltaY = -displacement * CGFloat(frame.image.height) / request.selectionRegion.height
+        return Task { [weak self] in
+            let worker = Task.detached(priority: .userInitiated) {
+                AXScrollPreview.make(size: CGSize(width: frame.image.width, height: frame.image.height),
+                    deltaY: deltaY, artwork: artwork, snapshot: previous.frame.snapshot)
+            }
+            let result = await withTaskCancellationHandler {
+                await worker.value
+            } onCancel: { worker.cancel() }
+            guard let self, !Task.isCancelled, self.generation == generation, self.contentRevision == revision,
+                  self.ocrTaskSequence == sequence, self.stabilityEpoch == epoch,
+                  self.latestAXRenderedFrame?.frameID == rendered.frameID,
+                  self.mirror?.allowsAXScrollPreview == true, let result else { return }
+            var preview = MirrorFrame(image: frame.image, translatedItems: [], frameID: frame.id)
+            preview.axArtwork = result
+            preview.isAXScrollPreview = true
+            self.scrollPreviewFrameID = frame.id
+            self.diagnostics.mark("ax.scroll_preview", id: diagnosticID, [
+                "shift": String(Double(deltaY)), "method": "ax_position", "parts": String(result.diagnostics.count),
+                "elapsed": String(describing: started.duration(to: .now))
+            ])
+            self.display(preview)
+        }
+    }
+
     private func scheduleAX(_ frame: FrameEnvelope, origin: MirrorStatusOrigin) {
         cancelPrefetch()
         let activeGeneration = generation, activeRevision = contentRevision
@@ -404,7 +456,9 @@ final class SessionCoordinator {
         showProcessingStatus(.recognizing, frameID:frame.id, origin:origin)
         ocrTask = Task { [weak self] in
             guard let self else { return }
+            var preview: Task<Void, Never>?
             defer {
+                preview?.cancel()
                 if self.generation == activeGeneration, self.ocrTaskSequence == sequence {
                     self.ocrTask = nil; self.ocrTaskRevision = nil
                     _ = self.processPendingAutomaticFrameIfPossible()
@@ -414,6 +468,8 @@ final class SessionCoordinator {
             do {
                 let request = try self.axRequest()
                 diagnosticRequestID=request.diagnosticRequestID
+                preview = await self.startScrollPreview(frame, request: request, diagnosticID: diagnosticID, origin: origin)
+                try Task.checkCancellation()
                 let axStarted=Date()
                 let result = try await self.ax.collect(request)
                 self.recordAXDiagnostic(result,id:diagnosticID)
@@ -428,7 +484,8 @@ final class SessionCoordinator {
                     window:request.windowFrame,selection:request.selectionRegion,pixels:CGSize(width:frame.image.width,height:frame.image.height),
                     direction:String(describing:self.translationDirection),protection:self.protectsNonSourceText)
                 let (retainedBody,reuseDiagnostic)=self.bodyRetention.resolve(snapshot:result,scope:bodyScope)
-                self.latestAXFrame = AXFrameSnapshot(snapshot:result,image:frame.image,frameID:frame.id,receivedAt:frame.receivedAt)
+                self.latestAXFrame = AXFrameSnapshot(snapshot:result,image:frame.image,frameID:frame.id,receivedAt:frame.receivedAt,
+                    scrollAnchorRequestID: request.retainScrollAnchors ? request.diagnosticRequestID : nil)
                 // Match OCR: atomic updates retain the displayed result until rendering finishes.
                 if !self.translatesAXParagraphs || (self.mirrorUpdateStyle == .progressive && retainedBody == nil) {
                     self.display(MirrorFrame(image:frame.image,translatedItems:[],frameID:frame.id))
@@ -557,6 +614,9 @@ final class SessionCoordinator {
                 guard !Task.isCancelled, self.generation == activeGeneration,
                       self.contentRevision == activeRevision, self.ocrTaskSequence == sequence else { self.diagnostics.event("result.discarded",frame:diagnosticID,["reason":"stale_or_cancelled"]); return }
                 if let axError=error as? AXExtractionError, [.windowMappingFailed,.windowChanged,.targetTerminated].contains(axError) { self.bodyRetention.reset() }
+                if self.scrollPreviewFrameID != nil, let previous = self.latestAXRenderedFrame {
+                    self.display(previous)
+                }
                 self.showProcessingStatus(.recognitionFailed,frameID:frame.id,origin:origin)
                 self.reportFailure(error, stage: .ax, userInitiated: origin == .userAction)
                 self.onAXExtractionError?(error)
@@ -1138,6 +1198,7 @@ final class SessionCoordinator {
     }
 
     private func display(_ original: MirrorFrame) {
+        if !original.isAXScrollPreview { scrollPreviewFrameID = nil }
         var frame=original
         let id=diagnostics.find(frameID:frame.frameID,generation:generation,revision:contentRevision)
         if let id { frame.diagnosticContext=DiagnosticFrameContext(diagnostics,id:id) }
