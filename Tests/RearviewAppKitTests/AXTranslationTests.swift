@@ -272,6 +272,40 @@ import XCTest
         let value = try await b.value
         XCTAssertEqual(value,"訳:日本語")
     }
+    func testForegroundJoinsCancelledPrefetchAlreadyInModel() async throws {
+        let broker = TranslationBroker(direction: .japaneseToKorean, protectsNonSourceText: false)
+        var release: CheckedContinuation<Void, Never>?
+        var calls = 0
+        let worker = Task {
+            await broker.run(prepare: {}, model: { values in
+                calls += 1
+                if calls == 1 { await withCheckedContinuation { release = $0 } }
+                return values.map { "\(calls):" + $0 }
+            })
+        }
+        defer { worker.cancel(); release?.resume() }
+        try await ready(broker)
+        let token = TranslationPrefetch()
+        let prefetch = Task {
+            try await TranslationPrefetch.$current.withValue(token) { try await broker.translate("日本語") }
+        }
+        for _ in 0..<1000 where release == nil { try await Task.sleep(for: .milliseconds(1)) }
+        let continuation = try XCTUnwrap(release)
+        token.cancelled = true
+        prefetch.cancel()
+        let foreground = Task { try await broker.translate("日本語") }
+        do { _ = try await prefetch.value; XCTFail("Cancelled prefetch returned a result") }
+        catch is CancellationError {}
+        await Task.yield()
+        release = nil
+        continuation.resume()
+        let actual = try await foreground.value
+        XCTAssertEqual(actual, "1:日本語")
+        let cached = try await broker.translate("日本語")
+        XCTAssertEqual(cached, actual)
+        XCTAssertEqual(calls, 1)
+    }
+
     func testOrphanedResponseCannotCompleteNewRequest() async throws {
         let broker = TranslationBroker(direction:.japaneseToKorean,protectsNonSourceText:true)
         var release: CheckedContinuation<Void,Never>?

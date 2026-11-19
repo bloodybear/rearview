@@ -16,6 +16,12 @@ struct TranslationRequestOptions: Hashable, Sendable {
 }
 
 @MainActor
+final class TranslationPrefetch {
+    @TaskLocal static var current: TranslationPrefetch?
+    var cancelled = false
+}
+
+@MainActor
 final class TranslationBroker: ObservableObject {
     struct RequestKey: Hashable {
         let source: String
@@ -28,16 +34,20 @@ final class TranslationBroker: ObservableObject {
         let id: UUID
         let key: RequestKey
         let plan: TranslationPlan
+        let prefetch: TranslationPrefetch?
         let enqueuedAt: UInt64
     }
     private struct Waiter {
         let id: UUID
         let continuation: CheckedContinuation<String, Error>
     }
+    private var runningPrefetchIDs: Set<UUID> = []
+    private var prefetchRequests: [RequestKey: TranslationPrefetch] = [:]
     private var queue: [Pending] = []
     private var requests: [RequestKey: UUID] = [:]
     private var waiters: [UUID: [Waiter]] = [:]
     private var cache: [RequestKey: String] = [:]
+    private var prefetchedKeys: Set<RequestKey> = []
     private let segmentCache = TranslationSegmentCache<RequestKey>(capacity: 2_048)
     private(set) var preparationError: String?
     private var sessionReady = false
@@ -70,7 +80,7 @@ final class TranslationBroker: ObservableObject {
     }
     private func clearPolicy() {
         policyGeneration += 1
-        cache.removeAll(); segmentCache.removeAll()
+        cache.removeAll(); segmentCache.removeAll(); prefetchedKeys.removeAll()
         failPending(TranslatorError.translationSessionUnavailable)
     }
     func translate(_ source: String) async throws -> String {
@@ -100,34 +110,52 @@ final class TranslationBroker: ObservableObject {
         let text = options.context == "ocr" ? source.trimmingCharacters(in: .whitespacesAndNewlines) : source
         let key = RequestKey(source: text, direction: direction, options: options)
         if let cached = cache[key] {
+            if TranslationPrefetch.current == nil, prefetchedKeys.remove(key) != nil {
+                PerformanceProfiler.shared.increment("translation.prefetchReused")
+            }
             PerformanceProfiler.shared.increment("translation.cacheHit")
             PerformanceProfiler.shared.increment("translation.completed")
             return cached
         }
         PerformanceProfiler.shared.increment("translation.cacheMiss")
         guard sessionReady else { throw TranslatorError.translationSessionUnavailable }
+        let prefetch = TranslationPrefetch.current
+        guard prefetch?.cancelled != true else { throw CancellationError() }
         let waiterID = UUID()
-        return try await withTaskCancellationHandler {
+        let result: String = try await withTaskCancellationHandler {
             try Task.checkCancellation()
             return try await withCheckedThrowingContinuation { continuation in
+                if prefetchRequests[key]?.cancelled == true, let stale = requests[key],
+                   !runningPrefetchIDs.contains(stale) {
+                    requests.removeValue(forKey: key)
+                    prefetchRequests.removeValue(forKey: key)
+                    queue.removeAll { $0.id == stale }
+                    waiters.removeValue(forKey: stale)?.forEach { $0.continuation.resume(throwing: CancellationError()) }
+                }
                 let requestID: UUID
                 if let existing = requests[key] {
                     requestID = existing
+                    if prefetch == nil, runningPrefetchIDs.contains(existing) {
+                        PerformanceProfiler.shared.increment("translation.prefetchJoined")
+                    }
                     PerformanceProfiler.shared.increment("translation.inFlightHit")
                 } else {
                     requestID = UUID()
                     requests[key] = requestID
+                    prefetchRequests[key] = prefetch
                     queue.append(Pending(diagnosticContext:DiagnosticTaskScope.context,id: requestID, key: key,
                         plan: LanguageProtector.makeTranslationPlan(for: text, direction: direction,
                             protectNonSourceText: options.protectsNonSourceText,
                             preserveCodeSyntax: options.preservesCodeSyntax),
-                        enqueuedAt: DispatchTime.now().uptimeNanoseconds))
+                        prefetch: prefetch, enqueuedAt: DispatchTime.now().uptimeNanoseconds))
                 }
                 waiters[requestID, default: []].append(Waiter(id: waiterID, continuation: continuation))
             }
         } onCancel: {
             Task { @MainActor [weak self] in self?.cancelWaiter(waiterID, key: key) }
         }
+        try Task.checkCancellation()
+        return result
     }
     private func cancelWaiter(_ id: UUID, key: RequestKey) {
         guard let requestID = requests[key], var values = waiters[requestID],
@@ -135,7 +163,9 @@ final class TranslationBroker: ObservableObject {
         values.remove(at: index).continuation.resume(throwing: CancellationError())
         if values.isEmpty {
             waiters.removeValue(forKey: requestID)
+            guard !runningPrefetchIDs.contains(requestID) else { return }
             requests.removeValue(forKey: key)
+            prefetchRequests.removeValue(forKey: key)
             queue.removeAll { $0.id == requestID }
         } else { waiters[requestID] = values }
     }
@@ -179,7 +209,14 @@ final class TranslationBroker: ObservableObject {
         }
         while !Task.isCancelled, activeGeneration == sessionGeneration {
             if queue.isEmpty { try? await Task.sleep(for: .milliseconds(12)); continue }
-            let batch = Array(queue.prefix(24)); queue.removeFirst(batch.count)
+            let cancelled = queue.filter { $0.prefetch?.cancelled == true }
+            for pending in cancelled { finish(pending, result: .failure(CancellationError())) }
+            queue.removeAll { $0.prefetch?.cancelled == true }
+            let foreground = prefetchRequests.isEmpty ? queue : queue.filter { $0.prefetch == nil }
+            let batch = foreground.isEmpty ? Array(queue.prefix(1)) : Array(foreground.prefix(24))
+            let ids = Set(batch.map(\.id))
+            queue.removeAll { ids.contains($0.id) }
+            guard !batch.isEmpty else { continue }
             let activePolicy = policyGeneration
             do {
                 var missing: [RequestKey] = [], seen = Set<RequestKey>()
@@ -205,12 +242,20 @@ final class TranslationBroker: ObservableObject {
                     PerformanceProfiler.shared.increment("translation.modelBatchSegments", by: missing.count)
                     let output: [String]
                     let diagnosticModelID=UUID(),modelStarted=Date()
+                    let runningPrefetch = batch.first.flatMap { $0.prefetch == nil ? nil : $0.id }
+                    if let runningPrefetch { runningPrefetchIDs.insert(runningPrefetch) }
+                    defer { if let runningPrefetch { runningPrefetchIDs.remove(runningPrefetch) } }
                     do {
                         output = try await model(missing.map(\.source)); PerformanceProfiler.shared.end(token)
                         recordModelBatch(batch,id:diagnosticModelID,sources:missing.map(\.source),outputs:output,error:nil,started:modelStarted)
                     } catch {
                         recordModelBatch(batch,id:diagnosticModelID,sources:missing.map(\.source),outputs:[],error:error,started:modelStarted)
                         PerformanceProfiler.shared.end(token);throw error
+                    }
+                    if batch.first?.prefetch != nil {
+                        for pending in queue where pending.prefetch == nil {
+                            PerformanceProfiler.shared.recordElapsed(.translationPrefetchForegroundWait, startedAt: pending.enqueuedAt)
+                        }
                     }
                     guard Self.canCommitResults(activeGeneration: activeGeneration, currentGeneration: sessionGeneration,
                         isCancelled: Task.isCancelled) else { return }
@@ -233,8 +278,11 @@ final class TranslationBroker: ObservableObject {
                             direction: pending.key.direction, options: pending.key.options)] { output += text }
                         else { throw TranslatorError.translationSessionUnavailable }
                     }
+                    let willTrim = cache.count >= 512
                     trimCacheIfNeeded(&cache, maximumCount: 512, removalCount: 128)
                     cache[pending.key] = output
+                    if pending.prefetch != nil { prefetchedKeys.insert(pending.key) }
+                    if willTrim, !prefetchedKeys.isEmpty { prefetchedKeys = prefetchedKeys.filter { cache[$0] != nil } }
                     finish(pending, result: .success(output))
                 }
             } catch {
@@ -253,13 +301,14 @@ final class TranslationBroker: ObservableObject {
         }
     }
     private func failPending(_ error: Error) {
-        queue.removeAll(); requests.removeAll()
+        queue.removeAll(); requests.removeAll(); prefetchRequests.removeAll()
         let all = waiters; waiters.removeAll()
         all.values.joined().forEach { $0.continuation.resume(throwing: error) }
     }
     private func finish(_ pending: Pending, result: Result<String, Error>) {
         guard requests[pending.key] == pending.id else { return }
         requests.removeValue(forKey: pending.key)
+        prefetchRequests.removeValue(forKey: pending.key)
         guard let values = waiters.removeValue(forKey: pending.id) else { return }
         if case .success = result { PerformanceProfiler.shared.increment("translation.completed", by: values.count) }
         values.forEach { $0.continuation.resume(with: result) }

@@ -355,6 +355,7 @@ CSV 다른 이름으로 저장…	Save CSV As…	CSVを別名で保存…
 보고서 폴더 열기	Open Report Folder	レポートフォルダを開く
 텍스트 인식 중	Recognizing Text	テキスト認識中
 번역 중 %d/%d	Translating %d/%d	翻訳中 %d/%d
+미리 읽기 %d/%d	Reading ahead %d/%d	先読み %d/%d
 완료	Completed	完了
 완료 · %d줄 실패	Completed · %d Lines Failed	完了・%d行失敗
 텍스트 인식 실패	Text Recognition Failed	テキスト認識に失敗

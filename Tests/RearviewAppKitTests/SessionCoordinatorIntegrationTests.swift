@@ -151,6 +151,21 @@ private actor TestAXProvider: SessionAXProvider {
     func endSession() async {}
 }
 
+private actor ReadAheadAXProvider: SessionAXProvider {
+    func collect(_ request: AXExtractionRequest) async throws -> AXExtractionSnapshot {
+        remaining = 2
+        return try AXExtractionSnapshot(nodes: [], selected: [], paragraphs: [],
+                                        metadata: ["status": "complete", "prefetchCandidateCount": remaining])
+    }
+    private var remaining = 0
+    func nextPrefetchSource(requestID: UUID) async throws -> String? {
+        guard remaining > 0 else { return nil }
+        remaining -= 1
+        return ""
+    }
+    func endSession() async {}
+}
+
 private actor RetentionAXProvider: SessionAXProvider {
     var phase=0
     func endSession() async {}
@@ -298,6 +313,31 @@ final class SessionCoordinatorIntegrationTests: XCTestCase {
         XCTAssertNotNil(output.frames.last?.axArtwork)
         XCTAssertEqual(coordinator.latestAXRenderedFrame?.frameID,1)
         XCTAssertTrue(output.statuses.contains(.completed(failures:1)))
+    }
+
+    func testReadAheadShowsCandidateProgressAndHidesWhenFinished() async throws {
+        let capture = TestCaptureProvider(), output = TestOutputSink()
+        let coordinator = SessionCoordinator(broker: TestTranslationProvider(translations: [:]), capture: capture,
+            targetResolver: TestTargetResolver(), ocr: TestOCRProvider(batch: makeBatch(lines: [])),
+            ax: ReadAheadAXProvider(), outputSink: output, createsOutputWindow: false)
+        coordinatorsUnderTest.append(coordinator)
+        let (screen, selection) = try makeScreenAndSelection()
+        await coordinator.setTextExtractionMode(.ax)
+        try await coordinator.start(screen: screen, selection: selection, captureTarget: .application(
+            CaptureApplication(processID: 123, bundleIdentifier: "notion.id", name: "Notion",
+                               anchorWindowID: 42, anchorWindowFrame: screen.frame)))
+        coordinator.setRefreshMode(.automatic)
+        coordinator.setPaused(false)
+        let previousCancellations = output.cancellationCount
+        capture.emit(makeImage(gray: 40), frameID: 1)
+        for _ in 0..<200 where output.cancellationCount == previousCancellations {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        XCTAssertEqual(Array(output.statuses.suffix(3)), [
+            .prefetching(completed: 0, total: 2), .prefetching(completed: 1, total: 2),
+            .prefetching(completed: 2, total: 2)
+        ])
+        XCTAssertGreaterThan(output.cancellationCount, previousCancellations)
     }
 
     func testLateAXTranslationIsDiscardedAfterInvalidation() async throws {

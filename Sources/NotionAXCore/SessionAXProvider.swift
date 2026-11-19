@@ -4,6 +4,7 @@ import ApplicationServices
 public enum TextExtractionMode: Sendable { case ocr, ax }
 public struct AXExtractionRequest: Sendable {
     public let diagnosticRequestID = UUID()
+    public let prefetch: Bool
     public let visibleFirst: Bool
     public let pruneOffscreenBranches: Bool
     public let collectParentTextDiagnostics: Bool
@@ -11,7 +12,8 @@ public struct AXExtractionRequest: Sendable {
     public let windowID: CGWindowID
     public let windowFrame: CGRect
     public let selectionRegion: CGRect
-    public init(processID: pid_t, windowID: CGWindowID, windowFrame: CGRect, selectionRegion: CGRect, collectParentTextDiagnostics: Bool = false, visibleFirst: Bool = false, pruneOffscreenBranches: Bool = false) {
+    public init(processID: pid_t, windowID: CGWindowID, windowFrame: CGRect, selectionRegion: CGRect, collectParentTextDiagnostics: Bool = false, visibleFirst: Bool = false, pruneOffscreenBranches: Bool = false, prefetch: Bool = false) {
+        self.prefetch = prefetch
         self.visibleFirst = visibleFirst
         self.pruneOffscreenBranches = pruneOffscreenBranches
         self.collectParentTextDiagnostics = collectParentTextDiagnostics
@@ -31,6 +33,7 @@ public struct AXExtractionSnapshot: Sendable {
     }
     public let observations: [AXNode]
     public let paragraphUnits: [AXParagraph]
+    public let prefetchCandidateCount: Int
     public let status: AXCollectionStatus
     public let nodes: Data
     public let selected: Data
@@ -43,6 +46,7 @@ public struct AXExtractionSnapshot: Sendable {
         observations = try decoder.decode([AXNode].self,from:nodes)
         paragraphUnits = try decoder.decode(Units.self,from:paragraphs).units
         let fields = try JSONSerialization.jsonObject(with:metadata) as? [String:Any]
+        prefetchCandidateCount = fields?["prefetchCandidateCount"] as? Int ?? 0
         status = AXCollectionStatus(rawValue:fields?["status"] as? String ?? "failed") ?? .failed
     }
     init(nodes: [[String: Any]], selected: [[String: Any]], paragraphs: [[String: Any]], metadata: [String: Any]) throws {
@@ -53,6 +57,7 @@ public struct AXExtractionSnapshot: Sendable {
         self.metadata = try JSONSerialization.data(withJSONObject: metadata, options: options)
         self.observations = try JSONDecoder().decode([AXNode].self, from:self.nodes)
         self.paragraphUnits = try JSONDecoder().decode([AXParagraph].self, from:JSONSerialization.data(withJSONObject:paragraphs))
+        self.prefetchCandidateCount = metadata["prefetchCandidateCount"] as? Int ?? 0
         self.status = AXCollectionStatus(rawValue:metadata["status"] as? String ?? "failed") ?? .failed
     }
 }
@@ -60,9 +65,11 @@ public protocol SessionAXProvider: Sendable {
     func collect(_ request: AXExtractionRequest) async throws -> AXExtractionSnapshot
     func diagnosticSnapshot() async -> AXCollectionDiagnostics?
     func endSession() async
+    func nextPrefetchSource(requestID: UUID) async throws -> String?
 }
 public extension SessionAXProvider {
     func diagnosticSnapshot() async -> AXCollectionDiagnostics? { nil }
+    func nextPrefetchSource(requestID: UUID) async throws -> String? { nil }
 }
 package final class AXCancellation: @unchecked Sendable {
     private let lock = NSLock()
@@ -77,6 +84,28 @@ package enum AXWindowMatch {
     }
 }
 public final class NativeSessionAXProvider: SessionAXProvider, @unchecked Sendable {
+    private var prefetchID: UUID?
+    private var candidates: ArraySlice<AXUIElement> = []
+    public func nextPrefetchSource(requestID: UUID) async throws -> String? {
+        let cancellation = AXCancellation()
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                queue.async {
+                    do {
+                        try cancellation.check()
+                        guard self.prefetchID == requestID, let candidate = self.candidates.popFirst() else {
+                            continuation.resume(returning: nil)
+                            return
+                        }
+                        self.setPrefetchReading(true)
+                        defer { self.setPrefetchReading(false) }
+                        continuation.resume(returning: try AXPrefetch.source(candidate, cancellation: cancellation) ?? "")
+                    } catch { continuation.resume(throwing: error) }
+                }
+            }
+        } onCancel: { cancellation.cancel() }
+    }
+
     private var activationFacts: [String:String] = [:]
     private var lastDiagnostic: AXCollectionDiagnostics?
     public func diagnosticSnapshot() async -> AXCollectionDiagnostics? {
@@ -89,6 +118,14 @@ public final class NativeSessionAXProvider: SessionAXProvider, @unchecked Sendab
     private var readinessFinished = false
     private let cancellationLock = NSLock()
     private var activeCancellation: AXCancellation?
+    private var prefetchReading = false
+    private func setPrefetchReading(_ value: Bool) {
+        cancellationLock.lock(); prefetchReading = value; cancellationLock.unlock()
+    }
+    private func prefetchReadInFlight() -> Bool {
+        cancellationLock.lock(); defer { cancellationLock.unlock() }
+        return prefetchReading
+    }
     private func setActiveCancellation(_ value: AXCancellation?) {
         cancellationLock.lock(); activeCancellation = value; cancellationLock.unlock()
     }
@@ -97,6 +134,7 @@ public final class NativeSessionAXProvider: SessionAXProvider, @unchecked Sendab
     }
     public init() {}
     private func clearSessionActivation() {
+        candidates = []; prefetchID = nil
         activation = nil
         readinessFinished = false
         activationFacts=[:]
@@ -106,19 +144,21 @@ public final class NativeSessionAXProvider: SessionAXProvider, @unchecked Sendab
         await withCheckedContinuation { continuation in queue.async { self.clearSessionActivation(); continuation.resume() } }
     }
     public func collect(_ request: AXExtractionRequest) async throws -> AXExtractionSnapshot {
+        let waitStart = prefetchReadInFlight() ? ProcessInfo.processInfo.systemUptime : nil
         let cancellation = AXCancellation()
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
                 queue.async {
                     self.setActiveCancellation(cancellation)
                     defer { self.setActiveCancellation(nil) }
-                    do { continuation.resume(returning: try self.collect(request, cancellation)) }
+                    do { continuation.resume(returning: try self.collect(request, cancellation, prefetchWait: waitStart.map { ProcessInfo.processInfo.systemUptime - $0 })) }
                     catch { continuation.resume(throwing: error) }
                 }
             }
         } onCancel: { cancellation.cancel() }
     }
-    private func collect(_ request: AXExtractionRequest, _ cancellation: AXCancellation) throws -> AXExtractionSnapshot {
+    private func collect(_ request: AXExtractionRequest, _ cancellation: AXCancellation, prefetchWait: TimeInterval?) throws -> AXExtractionSnapshot {
+        candidates = []; prefetchID = nil
         let started=Date()
         let queries=AXQueryDiagnostics()
         var diagnostic=AXCollectionDiagnostics(fields:["requestID":request.diagnosticRequestID.uuidString,"stage":"request","processID":String(request.processID),"windowID":String(request.windowID)])
@@ -181,7 +221,12 @@ public final class NativeSessionAXProvider: SessionAXProvider, @unchecked Sendab
             guard matches.count == 1 else { throw AXExtractionError.windowMappingFailed }
             let mappingSeconds = Date().timeIntervalSince(mappingStarted)
             diagnostic.fields["stage"]="collection"
-            let snapshot = try AXCollector.collect(request, window: matches[0], cancellation: cancellation)
+            candidates = []; prefetchID = nil
+            let retain: (([AXUIElement]) -> Void)? = request.prefetch ? { elements in
+                self.prefetchID = request.diagnosticRequestID
+                self.candidates = elements[...]
+            } : nil
+            let snapshot = try AXCollector.collect(request, window: matches[0], cancellation: cancellation, prefetch: retain)
             totalMappingSeconds += mappingSeconds
             return snapshot
         }
@@ -226,6 +271,8 @@ public final class NativeSessionAXProvider: SessionAXProvider, @unchecked Sendab
             totalWait += try AXActivationReadiness.wait(delay,cancellation:cancellation)
         }
         var metadata = try JSONSerialization.jsonObject(with: snapshot.metadata) as! [String: Any]
+        metadata["prefetchCandidateCount"] = candidates.count
+        metadata["prefetchAXWaitSeconds"] = prefetchWait
         metadata["initializationSeconds"] = initializationSeconds
         metadata["windowMappingSeconds"] = totalMappingSeconds
         metadata["activationObservationDelaySeconds"] = totalWait

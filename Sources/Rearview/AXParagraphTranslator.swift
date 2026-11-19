@@ -8,6 +8,12 @@ struct AXTranslationRequest: Codable, Sendable {
     var cacheScope: String? = nil
     var codeSegments: [AXCodeSegment]? = nil
 
+    init(plainSource: String) {
+        source = plainSource
+        protectNonSourceText = false
+        parts = nil
+    }
+
     init(paragraph: AXParagraph) {
         source = paragraph.translationSourceText ?? ""
         protectNonSourceText = paragraph.isCodeBlock

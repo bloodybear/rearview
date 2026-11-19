@@ -352,6 +352,7 @@ func mirrorClipboardText(items: [MirrorItem]) -> String {
 enum MirrorProcessingStatus: Equatable {
     case recognizing
     case translating(completed: Int, total: Int)
+    case prefetching(completed: Int, total: Int)
     case completed(failures: Int)
     case recognitionFailed
 
@@ -361,6 +362,8 @@ enum MirrorProcessingStatus: Equatable {
             L10n.text("텍스트 인식 중")
         case .translating(let completed, let total):
             L10n.format("번역 중 %d/%d", completed, total)
+        case .prefetching(let completed, let total):
+            L10n.format("미리 읽기 %d/%d", completed, total)
         case .completed(let failures):
             failures == 0
                 ? L10n.text("완료")
@@ -372,7 +375,7 @@ enum MirrorProcessingStatus: Equatable {
 
     var isProcessing: Bool {
         switch self {
-        case .recognizing, .translating: true
+        case .recognizing, .translating, .prefetching: true
         case .completed, .recognitionFailed: false
         }
     }

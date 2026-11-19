@@ -45,7 +45,7 @@ package func isParkedNotionDocument(_ frame: CGRect, window: CGRect) -> Bool {
 package func rect(_ r: CGRect) -> [String: Double] { ["x":r.minX,"y":r.minY,"width":r.width,"height":r.height] }
 
 package enum AXCollector {
-static func collect(_ request: AXExtractionRequest, window: AXUIElement, cancellation: AXCancellation) throws -> AXExtractionSnapshot {
+static func collect(_ request: AXExtractionRequest, window: AXUIElement, cancellation: AXCancellation, prefetch: (([AXUIElement]) -> Void)? = nil) throws -> AXExtractionSnapshot {
  let before = request.windowFrame
     func selectionViewport(_ row: [String:Any]) -> CGRect {
         let surface = (row["surfaceViewport"] as? [String:Double]).map {
@@ -777,6 +777,31 @@ static func collect(_ request: AXExtractionRequest, window: AXUIElement, cancell
         "selectionPolicy":"ax-visible-only-plus-timeline-pinned-list-v1", "limits":["nodes":3500,"depth":40,"seconds":15],
         "collectedAt":ISO8601DateFormatter().string(from:started), "windowFrame":rect(before), "selectionRegion":rect(request.selectionRegion)]
     guard valid else { throw AXExtractionError.windowChanged }
+    if let prefetch, metadata["status"] as? String == "complete" {
+        let roots = rows.filter { $0["documentURL"] != nil && $0["surfaceKind"] == nil }
+        if roots.count == 1, let root = roots.first?["id"] as? Int {
+            var above: [AXUIElement] = [], below: [AXUIElement] = []
+            for (id, row) in rows.enumerated() {
+                guard row["surfaceKind"] == nil, row["mathOwner"] == nil,
+                      let box = row["frame"] as? [String: Double], let y = box["y"], let height = box["height"],
+                      let classes = row["domClasses"] as? [String], !AXPrefetch.classes.isDisjoint(with: classes),
+                      row["childrenPruned"] as? Bool == true else { continue }
+                var ancestor = row["parent"] as? Int
+                while let index = ancestor, index != root {
+                    let classes = rows[index]["domClasses"] as? [String] ?? []
+                    if classes.contains(where: { $0.contains("table") || $0.contains("collection") || $0 == "notion-code-block" }) { break }
+                    ancestor = rows[index]["parent"] as? Int
+                }
+                guard ancestor == root else { continue }
+                if y + height <= captureViewport.minY + 1 { above.append(elements[id]) }
+                else if y >= captureViewport.maxY - 1 { below.append(elements[id]) }
+            }
+            above.reverse()
+            prefetch((0..<max(above.count, below.count)).flatMap { index in
+                [index < above.count ? above[index] : nil, index < below.count ? below[index] : nil].compactMap { $0 }
+            })
+        }
+    }
     return try AXExtractionSnapshot(nodes: rows, selected: candidates, paragraphs: paragraphs, metadata: metadata)
 }
 }

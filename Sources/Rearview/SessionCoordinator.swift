@@ -256,6 +256,7 @@ final class SessionCoordinator {
     private var pendingModeRefresh = false
     private let persistsExtractionMode: Bool
     func setTextExtractionMode(_ mode: TextExtractionMode) async {
+        cancelPrefetch()
         diagnostics.event("mode.change", ["requested":mode == .ax ? "ax":"ocr"])
         guard mode != textExtractionMode else { return }
         textExtractionMode = mode
@@ -306,6 +307,63 @@ final class SessionCoordinator {
         #endif
     }
 
+    private var prefetchTask: Task<Void, Never>?
+    private var prefetchToken: TranslationPrefetch?
+    private var prefetchEnabled: Bool {
+        #if LST_EXCLUDE_DEBUG_FEATURES
+        translatesAXParagraphs
+        #else
+        translatesAXParagraphs && !CommandLine.arguments.contains("--ax-disable-prefetch")
+        #endif
+    }
+
+    private func cancelPrefetch() {
+        guard let token = prefetchToken else { return }
+        token.cancelled = true
+        prefetchTask?.cancel()
+        prefetchToken = nil
+        prefetchTask = nil
+        cancelProcessingStatus()
+    }
+
+    private func startPrefetch(requestID: UUID, frameID: UInt64, total: Int) {
+        guard prefetchEnabled, total > 0, !paused, pendingAutomaticFrame.value == nil else { return }
+        let token = TranslationPrefetch()
+        prefetchToken = token
+        let ax = self.ax
+        let translator = AXParagraphTranslator(broker: broker, direction: translationDirection)
+        showProcessingStatus(.prefetching(completed: 0, total: total), frameID: frameID)
+        prefetchTask = Task(priority: .utility) { [weak self] in
+            defer {
+                if let self, self.prefetchToken === token { self.cancelPrefetch() }
+            }
+            var completed = 0
+            await TranslationPrefetch.$current.withValue(token) {
+                do {
+                    while !Task.isCancelled, !token.cancelled {
+                        let start = DispatchTime.now().uptimeNanoseconds
+                        guard let source = try await ax.nextPrefetchSource(requestID: requestID) else { break }
+                        PerformanceProfiler.shared.recordElapsed(.axPrefetchRead, startedAt: start)
+                        try Task.checkCancellation()
+                        if source.isEmpty {
+                            PerformanceProfiler.shared.increment("ax.prefetchSkipped")
+                        } else {
+                            let result = try await translator.translate(.init(plainSource: source), node: 0)
+                            PerformanceProfiler.shared.increment("ax.prefetch." + result.status)
+                        }
+                        guard !Task.isCancelled, let self, self.prefetchToken === token else { break }
+                        completed += 1
+                        self.showProcessingStatus(.prefetching(completed: completed, total: total), frameID: frameID)
+                    }
+                } catch is CancellationError {
+                    PerformanceProfiler.shared.increment("ax.prefetchCancelled")
+                } catch {
+                    PerformanceProfiler.shared.increment("ax.prefetchFailed")
+                }
+            }
+        }
+    }
+
     private func axRequest() throws -> AXExtractionRequest {
         guard let app = captureTarget.application,
               let windowID = windowTrackingAnchor?.windowID ?? app.anchorWindowID,
@@ -316,7 +374,7 @@ final class SessionCoordinator {
         return AXExtractionRequest(processID:app.processID,windowID:windowID,windowFrame:windowFrame,
             selectionRegion:screenCaptureRect(for:selection,screenFrame:screen.frame,displayBounds:CGDisplayBounds(displayID)),
             collectParentTextDiagnostics:CommandLine.arguments.contains("--ax-collect-parent-values"), visibleFirst: visibleFirstAXCollection,
-            pruneOffscreenBranches: pruneOffscreenAXBranches)
+            pruneOffscreenBranches: pruneOffscreenAXBranches, prefetch: prefetchEnabled)
     }
 
     private func axPresentation(_ value: AXTranslatedFrame, artwork: AXRenderArtwork) -> MirrorFrame {
@@ -336,6 +394,7 @@ final class SessionCoordinator {
     }
 
     private func scheduleAX(_ frame: FrameEnvelope, origin: MirrorStatusOrigin) {
+        cancelPrefetch()
         let activeGeneration = generation, activeRevision = contentRevision
         ocrTaskSequence &+= 1
         let sequence = ocrTaskSequence
@@ -488,6 +547,7 @@ final class SessionCoordinator {
                     } else { self.failureDeduplicator.succeeded(.translation) }
                     self.showProcessingStatus(.completed(failures:imageOCR.failures + entries.filter { $0.status == "failed" }.count + (result.status == .complete ? 0 : 1)),frameID:frame.id,origin:origin)
                     self.onAXTranslation?(translated)
+                    if result.status == .complete { self.startPrefetch(requestID: request.diagnosticRequestID, frameID: frame.id, total: result.prefetchCandidateCount) }
                 } else {
                     self.showProcessingStatus(.completed(failures:result.status == .complete ? 0 : 1),frameID:frame.id,origin:origin)
                 }
@@ -544,6 +604,7 @@ final class SessionCoordinator {
         refreshDiagnosticState()
         generation += 1
         let activeGeneration = generation
+        cancelPrefetch()
         contentRevision += 1
         delayedRefinementTask?.cancel()
         delayedRefinementTask = nil
@@ -617,6 +678,7 @@ final class SessionCoordinator {
         stopping = true
         defer { stopping = false }
         generation += 1
+        cancelPrefetch()
         contentRevision += 1
         ocrTask?.cancel()
         ocrTask = nil
@@ -653,6 +715,7 @@ final class SessionCoordinator {
         guard style != mirrorUpdateStyle else { return }
         mirrorUpdateStyle = style
         guard selectedScreen != nil else { return }
+        cancelPrefetch()
         contentRevision += 1
         ocrTask?.cancel()
         ocrTask = nil
@@ -675,6 +738,7 @@ final class SessionCoordinator {
         imageOCRProcessor.reset()
         latestAXFrame = nil; latestAXTranslation = nil; latestAXRenderedFrame = nil
         direction.save()
+        cancelPrefetch()
         contentRevision += 1
         ocrTask?.cancel(); ocrTask = nil; ocrTaskRevision = nil
         delayedRefinementTask?.cancel(); delayedRefinementTask = nil
@@ -695,6 +759,7 @@ final class SessionCoordinator {
         imageOCRProcessor.reset()
         latestAXFrame = nil; latestAXTranslation = nil; latestAXRenderedFrame = nil
         TranslationTextProtection.save(enabled)
+        cancelPrefetch()
         contentRevision += 1
         ocrTask?.cancel(); ocrTask = nil; ocrTaskRevision = nil
         delayedRefinementTask?.cancel(); delayedRefinementTask = nil
@@ -1107,6 +1172,7 @@ final class SessionCoordinator {
         imageOCRProcessor.reset()
         latestAXFrame = nil
         latestAXTranslation = nil; latestAXRenderedFrame = nil
+        cancelPrefetch()
         contentRevision += 1
         ocrTask?.cancel()
         ocrTask = nil
@@ -1559,6 +1625,7 @@ final class SessionCoordinator {
         imageOCRProcessor.reset()
         latestAXFrame = nil
         latestAXTranslation = nil; latestAXRenderedFrame = nil
+        cancelPrefetch()
         contentRevision += 1
         ocrTask?.cancel()
         ocrTask = nil
@@ -1638,11 +1705,13 @@ final class SessionCoordinator {
         let hasVisualChange = change.changedRatio > 0
         let now = ContinuousClock.now
         if hasVisualChange {
+            cancelPrefetch()
             if change.motion.kind == .sceneChange {
                 pendingAutomaticFrame.clear()
                 delayedRefinementTask?.cancel()
                 delayedRefinementTask = nil
                 if ocrTask != nil {
+                    cancelPrefetch()
                     contentRevision += 1
                     ocrTask?.cancel()
                     ocrTask = nil

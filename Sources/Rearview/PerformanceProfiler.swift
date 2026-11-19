@@ -8,6 +8,8 @@ enum ProfileStage: String, Codable, CaseIterable, Sendable {
     case ocrRealtime
     case ocrRefinement
     case languageFiltering
+    case axPrefetchRead
+    case translationPrefetchForegroundWait
     case translationQueue
     case translationModel
     case mirrorUpdate
@@ -21,6 +23,8 @@ enum ProfileStage: String, Codable, CaseIterable, Sendable {
         case .ocrRealtime: L10n.text("실시간 OCR")
         case .ocrRefinement: L10n.text("보정 OCR")
         case .languageFiltering: L10n.text("일본어 판별")
+        case .axPrefetchRead: "AX 선행 원문 읽기"
+        case .translationPrefetchForegroundWait: "선행 번역 호출 대기"
         case .translationQueue: L10n.text("번역 큐 대기")
         case .translationModel: L10n.text("번역 모델")
         case .mirrorUpdate: L10n.text("미러 프레임 교체")
