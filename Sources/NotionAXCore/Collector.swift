@@ -551,6 +551,16 @@ static func collect(_ request: AXExtractionRequest, window: AXUIElement, cancell
         }
         return false
     }
+    let imageViewer = ImageViewerGeometry.detect(in: rows)
+    if let imageViewer {
+        candidates.removeAll { candidate in
+            let id = candidate["node"] as! Int
+            guard let frame = rowFrame(id), imageViewer.panel.intersects(frame) else { return false }
+            rows[id]["decision"] = "excluded"
+            rows[id]["decisionReason"] = "occluded_by_image_viewer"
+            return true
+        }
+    }
     candidates.sort { ($0["node"] as! Int) < ($1["node"] as! Int) }
     // Lines belong to native translation units, parallel to original AX nodes.
     // Match the same nearest native boundary as render_ax_report.build_paragraphs.
@@ -752,7 +762,7 @@ static func collect(_ request: AXExtractionRequest, window: AXUIElement, cancell
     let missingDocumentTree = !truncated && AXActivationReadiness.documentTreeMissing(rows:rows)
     let readinessReasons = AXActivationReadiness.reasons(paragraphs:paragraphs,truncated:truncated) + (missingDocumentTree ? ["document_webarea_unavailable"] : [])
     let partial = missingDocumentTree || codePartial || truncated || paragraphs.contains { ($0["lineRangeStatus"] as? String ?? "unavailable") != "complete_unverified" }
-    let imageRegions = ImageRegionBuilder.build(rows:rows,selection:request.selectionRegion,
+    let imageRegions = imageViewer.map { [$0.region(in: captureViewport)] } ?? ImageRegionBuilder.build(rows:rows,selection:request.selectionRegion,
         viewport:{ id in
             var viewport = selectionViewport(rows[id])
             let ancestors = [id]+ancestorIDs(id)
@@ -786,7 +796,7 @@ static func collect(_ request: AXExtractionRequest, window: AXUIElement, cancell
     let surfaceStarted=Date()
     let documentSurfaces=AXDocumentSurfaceBuilder.build(rows:rows)
     let surfaceSeconds=Date().timeIntervalSince(surfaceStarted)
-    let metadata: [String: Any] = ["documentSurfaces":documentSurfaces,"documentSurfaceSeconds":surfaceSeconds, "popupOcclusionSeconds":popupDetectionSeconds, "popupOcclusionPanels":popupOcclusion.diagnostics, "popupOcclusionPolicy":"semantic-dialog-and-floating-sidebar-v2; anonymous-popups-unsupported", "imageRegions":imageRegions,"status": valid ? (partial ? "partial" : "complete") : "failed",
+    let metadata: [String: Any] = ["imageViewerActive":imageViewer != nil,"documentSurfaces":documentSurfaces,"documentSurfaceSeconds":surfaceSeconds, "popupOcclusionSeconds":popupDetectionSeconds, "popupOcclusionPanels":popupOcclusion.diagnostics, "popupOcclusionPolicy":"semantic-dialog-and-floating-sidebar-v2; anonymous-popups-unsupported", "imageRegions":imageRegions,"status": valid ? (partial ? "partial" : "complete") : "failed",
         "targetAndFrameMatch":valid,"coordinateSystem":"screen-top-left-points", "elapsed":Date().timeIntervalSince(started), "colorQueries":colorCalls, "colorQuerySeconds":Date().timeIntervalSince(colorStarted),
         "codeRangeQueries":investigator.calls-codeCallsBefore,"codeRangeSeconds":codeSeconds,
         "parentValueQueries":request.collectParentTextDiagnostics ? rows.filter { $0["role"] as? String == "AXTextArea" }.count : 0,
@@ -800,7 +810,7 @@ static func collect(_ request: AXExtractionRequest, window: AXUIElement, cancell
         "selectionPolicy":"ax-visible-only-plus-timeline-pinned-list-v1", "limits":["nodes":3500,"depth":40,"seconds":15],
         "collectedAt":ISO8601DateFormatter().string(from:started), "windowFrame":rect(before), "selectionRegion":rect(request.selectionRegion)]
     guard valid else { throw AXExtractionError.windowChanged }
-    if let scrollAnchors, metadata["status"] as? String == "complete",
+    if let scrollAnchors, imageViewer == nil, metadata["status"] as? String == "complete",
        documentSurfaces.count == 1, let document = documentSurfaces.first,
        (document["dialogBoxes"] as? [[String: Double]])?.isEmpty == true,
        let bodyNodes = document["bodyNodes"] as? [Int] {
@@ -837,7 +847,7 @@ static func collect(_ request: AXExtractionRequest, window: AXUIElement, cancell
         }
         scrollAnchors(selected)
     }
-    if let prefetch, metadata["status"] as? String == "complete" {
+    if let prefetch, imageViewer == nil, metadata["status"] as? String == "complete" {
         let roots = rows.filter { $0["documentURL"] != nil && $0["surfaceKind"] == nil }
         if roots.count == 1, let root = roots.first?["id"] as? Int {
             var above: [AXUIElement] = [], below: [AXUIElement] = []

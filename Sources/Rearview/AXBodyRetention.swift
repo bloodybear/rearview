@@ -67,6 +67,7 @@ struct AXBodyReuse: Sendable {
     }
     func resolve(snapshot: AXExtractionSnapshot, scope: AXBodyScope) -> (AXBodyReuse?, AXBodyReuseDiagnostic) {
         func no(_ reason:String) -> (AXBodyReuse?,AXBodyReuseDiagnostic) { (nil,.init(status:reason)) }
+        guard !snapshot.imageViewerActive else { previousPanels=[];return no("image_viewer_active") }
         guard !Self.limited(snapshot) else { previousPanels=[];return no("collection_unavailable_or_limited") }
         guard let body else { return no("no_previous_body") }
         guard body.scope == scope else { reset(); return no("scope_changed") }
@@ -95,7 +96,7 @@ struct AXBodyReuse: Sendable {
     }
     func store(value: SessionCoordinator.AXTranslatedFrame, artwork: AXRenderArtwork, scope: AXBodyScope) {
         let snapshot=value.frame.snapshot
-        guard value.retainedBody == nil, !Self.limited(snapshot),
+        guard value.retainedBody == nil, !snapshot.imageViewerActive, !Self.limited(snapshot),
               snapshot.documentSurfaces.allSatisfy({ $0.dialogBoxes.isEmpty }),
               let surface=snapshot.documentSurfaces.first(where: { !$0.bodyNodes.isEmpty && !($0.url ?? "").isEmpty }) else { return }
         let roots=Set(surface.bodyNodes), nodes=Dictionary(uniqueKeysWithValues:snapshot.observations.map { ($0.id,$0) })

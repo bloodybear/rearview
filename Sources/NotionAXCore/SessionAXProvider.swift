@@ -33,6 +33,7 @@ public struct AXExtractionSnapshot: Sendable {
         struct Metadata: Decodable { let imageRegions: [AXImageRegion]? }
         return (try? JSONDecoder().decode(Metadata.self, from: metadata).imageRegions) ?? []
     }
+    public let imageViewerActive: Bool
     public let observations: [AXNode]
     public let paragraphUnits: [AXParagraph]
     public let prefetchCandidateCount: Int
@@ -48,6 +49,7 @@ public struct AXExtractionSnapshot: Sendable {
         observations = try decoder.decode([AXNode].self,from:nodes)
         paragraphUnits = try decoder.decode(Units.self,from:paragraphs).units
         let fields = try JSONSerialization.jsonObject(with:metadata) as? [String:Any]
+        imageViewerActive = fields?["imageViewerActive"] as? Bool ?? false
         prefetchCandidateCount = fields?["prefetchCandidateCount"] as? Int ?? 0
         status = AXCollectionStatus(rawValue:fields?["status"] as? String ?? "failed") ?? .failed
     }
@@ -59,6 +61,7 @@ public struct AXExtractionSnapshot: Sendable {
         self.metadata = try JSONSerialization.data(withJSONObject: metadata, options: options)
         self.observations = try JSONDecoder().decode([AXNode].self, from:self.nodes)
         self.paragraphUnits = try JSONDecoder().decode([AXParagraph].self, from:JSONSerialization.data(withJSONObject:paragraphs))
+        self.imageViewerActive = metadata["imageViewerActive"] as? Bool ?? false
         self.prefetchCandidateCount = metadata["prefetchCandidateCount"] as? Int ?? 0
         self.status = AXCollectionStatus(rawValue:metadata["status"] as? String ?? "failed") ?? .failed
     }
