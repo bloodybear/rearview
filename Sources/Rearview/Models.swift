@@ -33,9 +33,11 @@ enum AppDefaults {
         keyCode: UInt32(kVK_ANSI_1), modifiers: UInt32(controlKey | optionKey), keyLabel: "1"
     )
 
-    // Region-selection single-key docking shortcuts
+    // Region-selection single-key shortcuts
     static func selectionShortcut(for action: SelectionShortcutAction) -> ToolbarHotKey {
         switch action {
+        case .selectionMode:
+            ToolbarHotKey(keyCode: UInt32(kVK_Space), modifiers: 0, keyLabel: "Space", isEnabled: true)
         case .displayMode:
             ToolbarHotKey(keyCode: UInt32(kVK_ANSI_2), modifiers: 0, keyLabel: "2", isEnabled: true)
         case .dockTop:
@@ -221,7 +223,7 @@ enum AppSettings {
         OverlayIgnoresMouseEvents.defaultsKey,
         "overlayInteractionModifier", MirrorBackgroundOpacity.defaultsKey, RegionBorderOpacity.defaultsKey,
         MirrorAlwaysOnTop.defaultsKey, DebugFeatures.defaultsKey, MirrorFollowsSelectionSize.defaultsKey,
-        MirrorDockingState.defaultsKey, MirrorDockingState.undockedFrameKey,
+        RegionSelectionMode.defaultsKey, MirrorDockingState.defaultsKey, MirrorDockingState.undockedFrameKey,
         LaunchAtLogin.defaultsKey, TargetApplicationTracking.defaultsKey,
         // Legacy overlay toolbar size, retained only so Reset Settings removes it.
         "overlayToolbarSize",
@@ -772,7 +774,23 @@ func applyMenuShortcut(_ hotKey: ImmediateTranslationHotKey, to item: NSMenuItem
 /// Single-key shortcuts usable on the region-selection screen. Separate from
 /// the running-session toolbar shortcuts: while selecting, only the bare key
 /// (no modifier) is matched, so these are configured independently.
+enum RegionSelectionMode: String {
+    case drag
+    case window
+
+    static let defaultsKey = "regionSelectionMode"
+
+    static func load(from defaults: UserDefaults = .standard) -> Self {
+        defaults.string(forKey: defaultsKey).flatMap(Self.init(rawValue:)) ?? .drag
+    }
+
+    func save(to defaults: UserDefaults = .standard) {
+        defaults.set(rawValue, forKey: Self.defaultsKey)
+    }
+}
+
 enum SelectionShortcutAction: String, CaseIterable, Sendable {
+    case selectionMode
     case displayMode
     case dockTop
     case dockBottom
@@ -781,6 +799,7 @@ enum SelectionShortcutAction: String, CaseIterable, Sendable {
 
     var title: String {
         switch self {
+        case .selectionMode: L10n.text("드래그/창 선택 전환")
         case .displayMode: L10n.text("미러/오버레이 모드 전환")
         case .dockTop: L10n.text("위쪽에 도킹")
         case .dockBottom: L10n.text("아래쪽에 도킹")
@@ -791,6 +810,8 @@ enum SelectionShortcutAction: String, CaseIterable, Sendable {
 
     var settingsDescription: String {
         switch self {
+        case .selectionMode:
+            L10n.text("영역 선택 화면에서 드래그 선택과 창 선택을 전환합니다.")
         case .displayMode:
             L10n.text("영역 선택 화면에서 미러/오버레이 모드를 전환합니다.")
         case .dockTop, .dockBottom, .dockLeft, .dockRight:
@@ -811,7 +832,17 @@ extension ToolbarHotKey {
         guard defaults.object(forKey: "\(prefix).keyCode") != nil,
               let label = defaults.string(forKey: "\(prefix).label"),
               !label.isEmpty else {
-            return defaultValue(selectionAction: selectionAction)
+            let shortcut = defaultValue(selectionAction: selectionAction)
+            if selectionAction == .selectionMode,
+               SelectionShortcutAction.allCases.contains(where: { action in
+                   guard action != .selectionMode else { return false }
+                   let existing = load(selectionAction: action, from: defaults)
+                   return existing.isEnabled && existing.keyCode == shortcut.keyCode
+               }) {
+                return ToolbarHotKey(keyCode: shortcut.keyCode, modifiers: 0,
+                                     keyLabel: shortcut.keyLabel, isEnabled: false)
+            }
+            return shortcut
         }
         return ToolbarHotKey(
             keyCode: UInt32(defaults.integer(forKey: "\(prefix).keyCode")),

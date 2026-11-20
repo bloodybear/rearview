@@ -163,11 +163,14 @@ struct ScreenSelectionResult {
     let screen: NSScreen
     let initialDockingState: MirrorDockingState
     let displayMode: TranslationDisplayMode
+    var application: CaptureApplication? = nil
 }
 
 @MainActor
 final class ScreenSelectionController {
     private var panels: [SelectionPanel] = []
+    private var mouseMonitor: Any?
+    private var mode: RegionSelectionMode = .drag
     private var completion: ((Result<ScreenSelectionResult, Error>) -> Void)?
     private var observers: [(NotificationCenter, NSObjectProtocol)] = []
     private lazy var placementProbe = MirrorPlacementProbe()
@@ -190,6 +193,8 @@ final class ScreenSelectionController {
     ) -> Bool {
         guard !isSelecting else { return false }
         self.completion = completion
+        let modeShortcut = ToolbarHotKey.load(selectionAction: .selectionMode)
+        mode = modeShortcut.isEnabled ? RegionSelectionMode.load() : .drag
         for screen in NSScreen.screens {
             let panel = SelectionPanel(
                 screen: screen, displayMode: displayMode,
@@ -200,7 +205,15 @@ final class ScreenSelectionController {
                 placementProbe: placementProbe,
                 targetResolver: targetResolver
             )
-            panel.selectionHandler = { [weak self, weak panel] rect, dockingState, displayMode in
+            panel.selectionView.modeShortcut = modeShortcut
+            panel.selectionView.mode = mode
+            panel.selectionView.onToggleMode = { [weak self] in self?.toggleMode() }
+            panel.selectionView.onPreviewChange = { [weak self] displayMode, dockingState in
+                self?.panels.forEach {
+                    $0.selectionView.updateOutputPreview(displayMode: displayMode, dockingState: dockingState)
+                }
+            }
+            panel.selectionHandler = { [weak self, weak panel] rect, dockingState, displayMode, application in
                 guard let self, let panel else { return }
                 guard let screen = NSScreen.screens.first(where: {
                     displayID(for: $0) == panel.targetDisplayID
@@ -211,7 +224,7 @@ final class ScreenSelectionController {
                 let result: Result<ScreenSelectionResult, Error> = rect.width >= 32 && rect.height >= 20
                     ? .success(ScreenSelectionResult(
                         selection: rect, screen: screen,
-                        initialDockingState: dockingState, displayMode: displayMode
+                        initialDockingState: dockingState, displayMode: displayMode, application: application
                     ))
                     : .failure(TranslatorError.invalidSelection)
                 self.finish(result)
@@ -219,9 +232,32 @@ final class ScreenSelectionController {
             panel.cancelHandler = { [weak self] in self?.finish(.failure(CancellationError())) }
             panels.append(panel)
         }
+        mouseMonitor = NSEvent.addLocalMonitorForEvents(matching: .mouseMoved) { [weak self] event in
+            self?.updateWindowPreview()
+            return event
+        }
         installObservers()
         activateSelectionPanels()
         return true
+    }
+
+    private func toggleMode() {
+        guard !panels.contains(where: { $0.selectionView.hasPointerGesture }) else { return }
+        mode = mode == .drag ? .window : .drag
+        mode.save()
+        panels.forEach { $0.selectionView.mode = mode }
+        updateWindowPreview()
+    }
+
+    private func updateWindowPreview() {
+        guard mode == .window else { return }
+        let point = NSEvent.mouseLocation
+        for panel in panels {
+            panel.selectionView.setWindowCandidate(
+                panel.targetScreen.frame.contains(point)
+                    ? captureWindow(at: point, on: panel.targetScreen) : nil
+            )
+        }
     }
 
     func cancel() {
@@ -259,11 +295,14 @@ final class ScreenSelectionController {
             ?? panels.first
         NSApp.activate()
         keyPanel?.activateSelectionView()
+        updateWindowPreview()
     }
 
     private func finish(_ result: Result<ScreenSelectionResult, Error>) {
         guard let callback = completion else { return }
         completion = nil
+        if let mouseMonitor { NSEvent.removeMonitor(mouseMonitor) }
+        mouseMonitor = nil
         observers.forEach { center, observer in center.removeObserver(observer) }
         observers.removeAll()
         panels.forEach { $0.close() }
@@ -334,7 +373,8 @@ fileprivate final class MirrorPlacementProbe {
 private final class SelectionPanel: NSPanel {
     let targetScreen: NSScreen
     let targetDisplayID: CGDirectDisplayID?
-    var selectionHandler: ((CGRect, MirrorDockingState, TranslationDisplayMode) -> Void)?
+    var selectionHandler: ((CGRect, MirrorDockingState, TranslationDisplayMode, CaptureApplication?) -> Void)?
+    let selectionView: SelectionView
     var cancelHandler: (() -> Void)?
 
     init(
@@ -349,18 +389,6 @@ private final class SelectionPanel: NSPanel {
     ) {
         targetScreen = screen
         targetDisplayID = displayID(for: screen)
-        super.init(
-            contentRect: screen.frame,
-            styleMask: [.borderless],
-            backing: .buffered,
-            defer: false
-        )
-        level = .screenSaver
-        isOpaque = false
-        backgroundColor = .clear
-        hidesOnDeactivate = false
-        // Keep the active selection UI visible while the user changes Spaces.
-        collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         let localVisibleFrame = screen.visibleFrame.offsetBy(
             dx: -screen.frame.minX, dy: -screen.frame.minY
         )
@@ -378,10 +406,24 @@ private final class SelectionPanel: NSPanel {
             placementProbe: placementProbe,
             targetResolver: targetResolver
         )
-        view.onComplete = { [weak self] localRect, dockingState, displayMode in
+        selectionView = view
+        super.init(
+            contentRect: screen.frame,
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        level = .screenSaver
+        isOpaque = false
+        acceptsMouseMovedEvents = true
+        backgroundColor = .clear
+        hidesOnDeactivate = false
+        // Keep the active selection UI visible while the user changes Spaces.
+        collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        view.onComplete = { [weak self] localRect, dockingState, displayMode, application in
             guard let self else { return }
             let global = localRect.offsetBy(dx: self.frame.minX, dy: self.frame.minY)
-            self.selectionHandler?(global, dockingState, displayMode)
+            self.selectionHandler?(global, dockingState, displayMode, application)
         }
         view.onCancel = { [weak self] in self?.cancelHandler?() }
         contentView = view
@@ -397,7 +439,37 @@ private final class SelectionPanel: NSPanel {
 
 @MainActor
 private final class SelectionView: NSView {
-    var onComplete: ((CGRect, MirrorDockingState, TranslationDisplayMode) -> Void)?
+    var onComplete: ((CGRect, MirrorDockingState, TranslationDisplayMode, CaptureApplication?) -> Void)?
+    var onToggleMode: (() -> Void)?
+    var onPreviewChange: ((TranslationDisplayMode, MirrorDockingState) -> Void)?
+    var modeShortcut: ToolbarHotKey?
+    var mode: RegionSelectionMode = .drag {
+        didSet {
+            resetTargetPreview()
+            windowCandidate = nil
+            needsDisplay = true
+        }
+    }
+    private var windowCandidate: CaptureWindowCandidate?
+    private var pressedWindow: CaptureWindowCandidate?
+    var hasPointerGesture: Bool { start != nil || pressedWindow != nil }
+
+    func setWindowCandidate(_ candidate: CaptureWindowCandidate?) {
+        guard candidate != windowCandidate else { return }
+        windowCandidate = candidate
+        if let candidate {
+            setTargetPreview(.application(candidate.application))
+        } else {
+            resetTargetPreview()
+        }
+        needsDisplay = true
+    }
+
+    func updateOutputPreview(displayMode: TranslationDisplayMode, dockingState: MirrorDockingState) {
+        self.displayMode = displayMode
+        self.dockingState = dockingState
+        needsDisplay = true
+    }
     var onCancel: (() -> Void)?
     private var start: CGPoint?
     private var current: CGPoint?
@@ -472,7 +544,19 @@ private final class SelectionView: NSView {
         addCursorRect(bounds, cursor: .crosshair)
     }
 
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+        mode == .window || super.acceptsFirstMouse(for: event)
+    }
+
     override func mouseDown(with event: NSEvent) {
+        if mode == .window {
+            guard let panel = window as? SelectionPanel else { return }
+            let candidate = captureWindow(at: panel.convertPoint(toScreen: event.locationInWindow),
+                                          on: panel.targetScreen)
+            setWindowCandidate(candidate)
+            pressedWindow = candidate
+            return
+        }
         resetTargetPreview()
         start = constrainedPoint(for: event)
         current = start
@@ -480,6 +564,7 @@ private final class SelectionView: NSView {
     }
 
     override func mouseDragged(with event: NSEvent) {
+        guard mode == .drag, start != nil else { return }
         current = constrainedPoint(for: event)
         needsDisplay = true
         guard let rect = activeSelectionRect,
@@ -490,9 +575,20 @@ private final class SelectionView: NSView {
     }
 
     override func mouseUp(with event: NSEvent) {
+        if mode == .window {
+            guard let panel = window as? SelectionPanel else { return }
+            let pressed = pressedWindow
+            pressedWindow = nil
+            let candidate = captureWindow(at: panel.convertPoint(toScreen: event.locationInWindow),
+                                          on: panel.targetScreen)
+            setWindowCandidate(candidate)
+            guard let candidate, candidate == pressed, let rect = selectionRect else { return }
+            onComplete?(rect, dockingState, displayMode, candidate.application)
+            return
+        }
         current = constrainedPoint(for: event)
         guard let rect = selectionRect else { return }
-        onComplete?(rect, dockingState, displayMode)
+        onComplete?(rect, dockingState, displayMode, nil)
     }
 
     private func resetTargetPreview() {
@@ -591,11 +687,16 @@ private final class SelectionView: NSView {
 
     override func keyDown(with event: NSEvent) {
         if event.keyCode == 53 { onCancel?(); return }
+        if let modeShortcut, modeShortcut.isEnabled, UInt32(event.keyCode) == modeShortcut.keyCode {
+            if !event.isARepeat { onToggleMode?() }
+            return
+        }
         // Selection-screen shortcuts match the bare key only — modifiers are
         // ignored while selecting.
         if let displayModeShortcut, displayModeShortcut.isEnabled,
            UInt32(event.keyCode) == displayModeShortcut.keyCode {
             displayMode = displayMode == .mirror ? .overlay : .mirror
+            onPreviewChange?(displayMode, dockingState)
             needsDisplay = true
             return
         }
@@ -609,6 +710,7 @@ private final class SelectionView: NSView {
             )
             displayMode = transition.displayMode
             dockingState = transition.dockingState
+            onPreviewChange?(displayMode, dockingState)
             if displayMode != previousMode || dockingState != previousState {
                 startSeamFlash()
             }
@@ -899,19 +1001,26 @@ private final class SelectionView: NSView {
     }
 
     private func drawInstructions() {
-        let firstText = L10n.text("드래그하여 영역 선택  ·  Esc로 취소") as NSString
+        let firstText = (mode == .drag
+            ? L10n.text("드래그하여 영역 선택  ·  Esc로 취소")
+            : L10n.text("클릭하여 창 선택  ·  Esc로 취소")) as NSString
         let firstAttributes: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(ofSize: 15, weight: .medium),
             .foregroundColor: NSColor.white
         ]
         let firstSize = firstText.size(withAttributes: firstAttributes)
 
-        // Below the drag hint: one "label: key" line per selection single key.
+        // Below the selection hint, show the available shortcuts.
         let detailAttributes: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(ofSize: 12, weight: .medium),
             .foregroundColor: NSColor.white.withAlphaComponent(0.85)
         ]
         var details: [(NSString, NSSize)] = []
+        if let modeShortcut, modeShortcut.isEnabled {
+            let title = mode == .drag ? L10n.text("창 선택으로 전환") : L10n.text("드래그 선택으로 전환")
+            let text = "\(title): \(modeShortcut.title)" as NSString
+            details.append((text, text.size(withAttributes: detailAttributes)))
+        }
         if let displayModeShortcut, displayModeShortcut.isEnabled {
             let text = "\(SelectionShortcutAction.displayMode.title): \(displayModeShortcut.keyLabel)" as NSString
             details.append((text, text.size(withAttributes: detailAttributes)))
@@ -970,6 +1079,10 @@ private final class SelectionView: NSView {
     }
 
     private var selectionRect: CGRect? {
+        if mode == .window {
+            guard let windowCandidate, let window else { return nil }
+            return windowCandidate.selection.offsetBy(dx: -window.frame.minX, dy: -window.frame.minY)
+        }
         guard let start, let current else { return nil }
         return CGRect(
             x: min(start.x, current.x), y: min(start.y, current.y),

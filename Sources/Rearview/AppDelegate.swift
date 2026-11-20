@@ -800,6 +800,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     selection: selectionResult.selection,
                     initialDockingState: selectionResult.initialDockingState,
                     mirrorUpdateStyle: self.mirrorUpdateStyle,
+                    captureTarget: selectionResult.application.map(CaptureTarget.application) ?? .allContent,
                     debugCaptureTranscript: debugCaptureTranscript
                 )
                 onComplete?(nil)

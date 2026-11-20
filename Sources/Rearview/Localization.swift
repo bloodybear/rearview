@@ -346,6 +346,11 @@ Notion에서 AX 모드를 사용하려면 시스템 설정에서 Rearview의 손
 메뉴바의 Rearview 아이콘에서 ‘영역 선택…’을 선택해 시작하세요.	Choose “Select Area…” from the Rearview icon in the menu bar to get started.	メニューバーのRearviewアイコンから「範囲を選択…」を選んで開始してください。
 확인	OK	確認
 BenchmarkFixture 실행 파일을 찾을 수 없습니다. 앱 번들을 다시 패키징하세요.	The BenchmarkFixture executable was not found. Package the app again.	BenchmarkFixture実行ファイルが見つかりません。アプリを再パッケージしてください。
+드래그/창 선택 전환	Switch Drag/Window Selection	ドラッグ選択／ウインドウ選択を切り替え
+영역 선택 화면에서 드래그 선택과 창 선택을 전환합니다.	Switch between drag and window selection on the area selection screen.	範囲選択画面でドラッグ選択とウインドウ選択を切り替えます。
+클릭하여 창 선택  ·  Esc로 취소	Click to select a window  ·  Esc to cancel	クリックしてウインドウを選択・Escでキャンセル
+창 선택으로 전환	Switch to window selection	ウインドウ選択に切り替え
+드래그 선택으로 전환	Switch to drag selection	ドラッグ選択に切り替え
 드래그하여 영역 선택  ·  Esc로 취소	Drag to select an area  ·  Esc to cancel	ドラッグして範囲を選択・Escでキャンセル
 화면 기록 권한이 필요합니다.	Screen Recording permission is required.	画面収録の権限が必要です。
 캡처할 디스플레이를 찾을 수 없습니다.	No display is available to capture.	キャプチャするディスプレイが見つかりません。

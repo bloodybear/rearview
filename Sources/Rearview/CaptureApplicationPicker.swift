@@ -142,3 +142,49 @@ final class CaptureApplicationPicker {
         }
     }
 }
+
+struct CaptureWindowCandidate: Equatable {
+    let selection: CGRect
+    let application: CaptureApplication
+}
+
+@MainActor
+func captureWindow(at point: CGPoint, on screen: NSScreen) -> CaptureWindowCandidate? {
+    guard screen.frame.contains(point),
+          let display = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber,
+          let windows = CGWindowListCopyWindowInfo(
+              [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID
+          ) as? [[String: Any]] else { return nil }
+
+    let displayBounds = CGDisplayBounds(display.uint32Value)
+    let capturePoint = CGPoint(x: displayBounds.minX + point.x - screen.frame.minX,
+                               y: displayBounds.minY + screen.frame.maxY - point.y)
+    for window in windows {
+        guard (window[kCGWindowLayer as String] as? NSNumber)?.intValue == 0,
+              ((window[kCGWindowAlpha as String] as? NSNumber)?.doubleValue ?? 1) > 0,
+              let pid = (window[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value,
+              pid != getpid(),
+              let id = (window[kCGWindowNumber as String] as? NSNumber)?.uint32Value,
+              let bounds = window[kCGWindowBounds as String] as? [String: Any],
+              let frame = CGRect(dictionaryRepresentation: bounds as CFDictionary),
+              frame.contains(capturePoint),
+              let owner = NSRunningApplication(processIdentifier: pid),
+              let bundleIdentifier = owner.bundleIdentifier else { continue }
+
+        let visibleFrame = frame.intersection(displayBounds)
+        guard !visibleFrame.isNull,
+              visibleFrame.width >= 32, visibleFrame.height >= 20 else { return nil }
+        let selection = appKitSelectionRect(
+            for: visibleFrame, screenFrame: screen.frame, displayBounds: displayBounds
+        )
+        return CaptureWindowCandidate(
+            selection: selection,
+            application: CaptureApplication(
+                processID: pid, bundleIdentifier: bundleIdentifier,
+                name: owner.localizedName ?? bundleIdentifier,
+                anchorWindowID: id, anchorWindowFrame: frame
+            )
+        )
+    }
+    return nil
+}

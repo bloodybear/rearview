@@ -165,6 +165,31 @@ struct SettingsAndShortcutTests {
         }
     }
 
+    @Test func windowSelectionPreservesExistingSpaceAssignmentAndResetsToDrag() {
+        withTestDefaults { defaults in
+            let space = ToolbarHotKey.load(selectionAction: .selectionMode, from: defaults)
+            #expect(space.isEnabled)
+            #expect(space.settingsTitle == "SPACE")
+            #expect(space.title == "␣")
+            #expect(RegionSelectionMode.load(from: defaults) == .drag)
+
+            space.save(selectionAction: .displayMode, to: defaults)
+            #expect(!ToolbarHotKey.load(selectionAction: .selectionMode, from: defaults).isEnabled)
+            #expect(ToolbarHotKey.load(selectionAction: .displayMode, from: defaults) == space)
+
+            let custom = ToolbarHotKey(keyCode: UInt32(kVK_ANSI_V), modifiers: 0,
+                                       keyLabel: "V", isEnabled: true)
+            custom.save(selectionAction: .selectionMode, to: defaults)
+            #expect(ToolbarHotKey.load(selectionAction: .selectionMode, from: defaults) == custom)
+            RegionSelectionMode.window.save(to: defaults)
+            #expect(RegionSelectionMode.load(from: defaults) == .window)
+
+            AppSettings.reset(to: defaults)
+            #expect(RegionSelectionMode.load(from: defaults) == .drag)
+            #expect(ToolbarHotKey.load(selectionAction: .selectionMode, from: defaults) == space)
+        }
+    }
+
     @Test func selectionShortcutsAndMenuMappingRoundTrip() {
         withTestDefaults { defaults in
             #expect(ToolbarHotKey.load(selectionAction: .displayMode, from: defaults)
