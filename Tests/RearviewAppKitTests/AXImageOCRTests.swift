@@ -103,6 +103,27 @@ private actor TimedImageBenchmarkOCR: SessionOCRProvider {
             ["node":$0,"status":"selected","box":box,"displayBoxes":[box]] as [String:Any]
         }])
     }
+    func testTwoPixelImageCropIsSkipped() throws {
+        let selection = CGRect(x: 100, y: 249, width: 100, height: 80)
+        let snapshot = try snapshot()
+        XCTAssertTrue(AXImageOCRProcessor.jobs(
+            snapshot: snapshot, image: image(), selection: selection
+        ).isEmpty)
+        XCTAssertEqual(AXImageOCRProcessor.jobs(
+            snapshot: snapshot, image: image(),
+            selection: selection.offsetBy(dx: 0, dy: -1)
+        ).first?.crop.height, 4)
+    }
+
+    func testTwoPixelInputReturnsEmptyRecognition() async throws {
+        let thinImage = try XCTUnwrap(image().cropping(to: CGRect(x: 0, y: 0, width: 200, height: 2)))
+        let batch = try await OCRService().recognize(
+            image: thinImage, mode: .realtime, settings: OCRSettings(engine: .text, imageScale: 1)
+        )
+        XCTAssertTrue(batch.lines.isEmpty)
+        XCTAssertEqual(batch.rawObservationCount, 0)
+    }
+
     func testOnlyJapaneseTranslatedAndIdenticalPixelsReuseRecognition() async throws {
         let processor=AXImageOCRProcessor(),ocr=ImageTestOCR(),broker=ImageTestBroker(),settings=OCRSettings.defaultProfile(for:.realtime)
         let first=try await processor.process(snapshot:snapshot(count:2),image:image(),selection:selection,ocr:ocr,broker:broker,settings:settings,direction:.japaneseToKorean)

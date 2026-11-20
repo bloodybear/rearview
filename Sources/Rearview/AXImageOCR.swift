@@ -95,7 +95,7 @@ struct AXImageOCRResult: Sendable {
         for region in snapshot.imageRegions where region.status == "selected" {
             for box in region.displayBoxes ?? [] {
                 let crop = pixelBox(box.cgRect, selection:selection, image:image)
-                if !crop.isNull, crop.width > 1, crop.height > 1 {
+                if !crop.isNull, crop.width > 2, crop.height > 2 {
                     jobs.append(Job(index:jobs.count,node:region.node,box:box.cgRect,crop:crop))
                 }
             }

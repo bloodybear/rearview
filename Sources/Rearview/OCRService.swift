@@ -125,13 +125,34 @@ final class OCRService: @unchecked Sendable {
         try await withCheckedThrowingContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
                 autoreleasepool {
-                let preparedImage = ocrScaledImage(image, by: settings.imageScale)
-                let request = VNRecognizeTextRequest { request, error in
-                    if let error {
+                    let preparedImage = ocrScaledImage(image, by: settings.imageScale)
+                    guard preparedImage.width > 2, preparedImage.height > 2 else {
+                        continuation.resume(returning: self.makeBatch(
+                            observations: [], image: image, direction: direction
+                        ))
+                        return
+                    }
+
+                    let request = VNRecognizeTextRequest()
+                    request.recognitionLevel = .accurate
+                    request.revision = VNRecognizeTextRequest.currentRevision
+                    // Vision applies one dominant language model to an observation. The
+                    // user can choose either supported ordering, or let Vision decide.
+                    if let languages = OCRRecognitionLanguageChoice.load().languages {
+                        request.recognitionLanguages = languages
+                    }
+                    request.automaticallyDetectsLanguage = settings.automaticallyDetectsLanguage
+                    request.usesLanguageCorrection = settings.usesLanguageCorrection
+                    request.minimumTextHeight = settings.minimumTextHeight
+                    if let regionOfInterest { request.regionOfInterest = regionOfInterest }
+                    do {
+                        try VNImageRequestHandler(cgImage: preparedImage, options: [:]).perform([request])
+                    } catch {
                         continuation.resume(throwing: error)
                         return
                     }
-                    let observations = (request.results as? [VNRecognizedTextObservation]) ?? []
+
+                    let observations = request.results ?? []
                     let candidateLimit = includeRejectedAlternatives ? 10 : 1
                     let parsed = observations.map { observation in
                         let candidates = observation.topCandidates(candidateLimit)
@@ -152,23 +173,6 @@ final class OCRService: @unchecked Sendable {
                         observations: parsed, image: image, direction: direction
                     ))
                 }
-                request.recognitionLevel = .accurate
-                request.revision = VNRecognizeTextRequest.currentRevision
-                // Vision applies one dominant language model to an observation. The
-                // user can choose either supported ordering, or let Vision decide.
-                if let languages = OCRRecognitionLanguageChoice.load().languages {
-                    request.recognitionLanguages = languages
-                }
-                request.automaticallyDetectsLanguage = settings.automaticallyDetectsLanguage
-                request.usesLanguageCorrection = settings.usesLanguageCorrection
-                request.minimumTextHeight = settings.minimumTextHeight
-                if let regionOfInterest { request.regionOfInterest = regionOfInterest }
-                do {
-                    try VNImageRequestHandler(cgImage: preparedImage, options: [:]).perform([request])
-                } catch {
-                    continuation.resume(throwing: error)
-                }
-                }
             }
         }
     }
@@ -180,6 +184,9 @@ final class OCRService: @unchecked Sendable {
         direction: TranslationDirection
     ) async throws -> RecognitionBatch {
         let preparedImage = ocrScaledImage(image, by: settings.imageScale)
+        guard preparedImage.width > 2, preparedImage.height > 2 else {
+            return makeBatch(observations: [], image: image, direction: direction)
+        }
         var request = RecognizeDocumentsRequest()
         request.textRecognitionOptions.minimumTextHeightFraction = settings.minimumTextHeight
         request.textRecognitionOptions.automaticallyDetectLanguage =
