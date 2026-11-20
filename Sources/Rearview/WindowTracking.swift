@@ -13,24 +13,38 @@ struct WindowTrackingProjection: Equatable {
     let wasResized: Bool
 }
 
-func relativeSelectionInWindow(
-    selection: CGRect, screenFrame: CGRect, displayBounds: CGRect, windowFrame: CGRect
-) -> CGRect {
-    let captureRect = screenCaptureRect(
-        for: selection, screenFrame: screenFrame, displayBounds: displayBounds
-    )
-    return captureRect.offsetBy(dx: -windowFrame.minX, dy: -windowFrame.minY)
+struct WindowTrackingInsets: Equatable {
+    let left: CGFloat
+    let top: CGFloat
+    let right: CGFloat
+    let bottom: CGFloat
+
+    init(captureRect: CGRect, windowFrame: CGRect) {
+        left = captureRect.minX - windowFrame.minX
+        top = captureRect.minY - windowFrame.minY
+        right = windowFrame.maxX - captureRect.maxX
+        bottom = windowFrame.maxY - captureRect.maxY
+    }
 }
 
 func projectTrackedSelection(
-    relativeSelection: CGRect,
+    insets: WindowTrackingInsets,
     windowFrame: CGRect,
     displays: [WindowTrackingDisplay],
     preferredDisplayID: CGDirectDisplayID? = nil
 ) -> WindowTrackingProjection? {
     guard !displays.isEmpty else { return nil }
 
-    let desired = relativeSelection.offsetBy(dx: windowFrame.minX, dy: windowFrame.minY)
+    let left = windowFrame.minX + insets.left
+    let right = windowFrame.maxX - insets.right
+    let top = windowFrame.minY + insets.top
+    let bottom = windowFrame.maxY - insets.bottom
+    let desiredWidth = right - left
+    let desiredHeight = bottom - top
+    let center = CGPoint(x: (left + right) / 2, y: (top + bottom) / 2)
+    let desired = CGRect(x: center.x - max(0, desiredWidth) / 2,
+                         y: center.y - max(0, desiredHeight) / 2,
+                         width: max(0, desiredWidth), height: max(0, desiredHeight))
     let selectedDisplay = displays.first(where: { $0.bounds.contains(desired) })
         ?? displays.first(where: { $0.bounds.contains(desired.center) })
         ?? displays.first(where: { $0.displayID == preferredDisplayID })
@@ -51,8 +65,8 @@ func projectTrackedSelection(
         minimumTrackedSelectionSize.height,
         min(desired.height, availableHeight)
     )
-    let wasResized = abs(width - desired.width) > 0.01
-        || abs(height - desired.height) > 0.01
+    let wasResized = abs(width - desiredWidth) > 0.01
+        || abs(height - desiredHeight) > 0.01
 
     var projected = CGRect(
         x: desired.midX - width / 2,

@@ -261,8 +261,8 @@ Rearview가 활성 상태이거나 비활성 컨트롤 바에 마우스를 올�
 캡처	Capture	キャプチャ
 화면 캡처 속도	Capture Frame Rate	画面キャプチャ速度
 화면 변화를 확인할 초당 프레임 수입니다. 설정 범위는 1–30fps입니다.	Frames per second used to check for screen changes. Range: 1–30 fps.	画面の変化を確認する1秒あたりのフレーム数です。範囲は1～30fpsです。
-타겟 앱 이동 추적	Track Target App Movement	対象アプリの移動を追跡
-캡처 대상 앱 창이 이동하면 번역 영역도 함께 이동합니다.	Moves the translation area when the target app window moves.	キャプチャ対象アプリのウインドウが移動すると翻訳範囲も移動します。
+타겟 앱 창 추적	Track Target App Window	対象アプリのウィンドウを追跡
+대상 창이 이동하거나 크기가 바뀌면 선택 영역도 창의 네 변과 같은 간격을 유지합니다.	Keeps the selection at the same distance from each edge as the target window moves or resizes.	対象ウィンドウの移動やサイズ変更に合わせて、選択範囲とウィンドウの各辺との間隔を保ちます。
 갱신	Refresh	更新
 AX 최소 간격	Minimum AX Interval	AXの最小間隔
 AX 모드에서 자동 갱신을 시작하는 최소 간격입니다. 설정 범위는 100–2000ms입니다.	Minimum time between automatic updates in AX mode. Range: 100–2000 ms.	AXモードでの自動更新の最小間隔です。範囲は100～2000msです。

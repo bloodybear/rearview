@@ -476,7 +476,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
 
         let captureSection = makeSection(title: L10n.text("캡처"), rows: [
             makePreferenceRow(title: L10n.text("화면 캡처 속도"), description: L10n.text("화면 변화를 확인할 초당 프레임 수입니다. 설정 범위는 1–30fps입니다."), control: makeNumberControl(field: captureFPSField, stepper: captureFPSStepper, unit: "fps")),
-            makePreferenceRow(title: L10n.text("타겟 앱 이동 추적"), description: L10n.text("캡처 대상 앱 창이 이동하면 번역 영역도 함께 이동합니다."), control: targetApplicationTracking),
+            makePreferenceRow(title: L10n.text("타겟 앱 창 추적"), description: L10n.text("대상 창이 이동하거나 크기가 바뀌면 선택 영역도 창의 네 변과 같은 간격을 유지합니다."), control: targetApplicationTracking),
             makePreferenceRow(title: L10n.text("이미지 저장 폴더"), description: L10n.text("이미지 저장 시 사용할 폴더입니다."), control: makeImageSaveDirectoryControl()),
             makePreferenceRow(title: L10n.text("이미지 파일명 규칙"), description: L10n.text("{yyyy}, {MM}, {dd}, {HH}, {mm}, {ss}, {counter} 토큰을 사용할 수 있습니다."), control: imageSaveFilenameField),
         ])

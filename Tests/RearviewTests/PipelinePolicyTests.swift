@@ -199,36 +199,39 @@ struct PipelinePolicyTests {
         #expect(appKitSelectionRect(
             for: capture, screenFrame: screenFrame, displayBounds: displayBounds
         ) == selection)
-        let relative = relativeSelectionInWindow(
-            selection: selection,
-            screenFrame: CGRect(x: 0, y: 0, width: 800, height: 600),
-            displayBounds: CGRect(x: 0, y: 0, width: 800, height: 600),
-            windowFrame: CGRect(x: 100, y: 200, width: 400, height: 300)
-        )
-        #expect(relative == CGRect(x: 20, y: 50, width: 200, height: 100))
-        let moved = projectTrackedSelection(
-            relativeSelection: relative,
-            windowFrame: CGRect(x: 1440, y: 100, width: 400, height: 300),
-            displays: [
-                WindowTrackingDisplay(displayID: 1, bounds: CGRect(x: 0, y: 0, width: 800, height: 600)),
-                WindowTrackingDisplay(displayID: 2, bounds: CGRect(x: 1440, y: 0, width: 800, height: 600))
-            ],
-            preferredDisplayID: 1
-        )
+        let original = CGRect(x: 100, y: 200, width: 400, height: 300)
+        let rect = CGRect(x: 120, y: 250, width: 200, height: 100)
+        let insets = WindowTrackingInsets(captureRect: rect, windowFrame: original)
+        let displays = [
+            WindowTrackingDisplay(displayID: 1, bounds: CGRect(x: 0, y: 0, width: 800, height: 600)),
+            WindowTrackingDisplay(displayID: 2, bounds: CGRect(x: 1440, y: 0, width: 800, height: 600))
+        ]
+        func project(_ frame: CGRect) -> WindowTrackingProjection? {
+            projectTrackedSelection(
+                insets: insets, windowFrame: frame, displays: displays, preferredDisplayID: 1
+            )
+        }
+        let moved = project(CGRect(x: 1440, y: 100, width: 400, height: 300))
         #expect(moved?.displayID == 2)
         #expect(moved?.captureRect == CGRect(x: 1460, y: 150, width: 200, height: 100))
-        let resized = projectTrackedSelection(
-            relativeSelection: CGRect(x: 0, y: 0, width: 200, height: 100),
-            windowFrame: CGRect(x: 0, y: 0, width: 300, height: 200),
-            displays: [WindowTrackingDisplay(displayID: 3, bounds: CGRect(x: 0, y: 0, width: 100, height: 50))],
-            preferredDisplayID: 3
-        )
-        #expect(resized?.captureRect == CGRect(x: 0, y: 0, width: 100, height: 50))
-        #expect(resized?.wasResized == true)
+        #expect(project(CGRect(x: 100, y: 200, width: 460, height: 340))?.captureRect
+            == CGRect(x: 120, y: 250, width: 260, height: 140))
+        #expect(project(CGRect(x: 70, y: 180, width: 430, height: 320))?.captureRect
+            == CGRect(x: 90, y: 230, width: 230, height: 120))
+        #expect(project(CGRect(x: 100, y: 200, width: 80, height: 80))?.captureRect.size
+            == minimumTrackedSelectionSize)
+        #expect(project(CGRect(x: 700, y: 450, width: 400, height: 300))?.captureRect
+            == CGRect(x: 600, y: 500, width: 200, height: 100))
+        #expect(project(original)?.captureRect == rect)
+
+        let outside = CGRect(x: 90, y: 180, width: 430, height: 340)
+        let outsideInsets = WindowTrackingInsets(captureRect: outside, windowFrame: original)
+        #expect(projectTrackedSelection(insets: outsideInsets, windowFrame: original, displays: displays)?
+            .captureRect == outside)
         #expect(projectTrackedSelection(
-            relativeSelection: CGRect(x: 0, y: 0, width: 40, height: 20),
-            windowFrame: .zero,
-            displays: [WindowTrackingDisplay(displayID: 4, bounds: CGRect(x: 0, y: 0, width: 31, height: 20))]
+            insets: insets, windowFrame: original, displays: [
+                WindowTrackingDisplay(displayID: 4, bounds: CGRect(x: 0, y: 0, width: 31, height: 20))
+            ]
         ) == nil)
     }
 }

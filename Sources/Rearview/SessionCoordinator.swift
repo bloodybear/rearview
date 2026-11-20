@@ -103,7 +103,7 @@ final class SessionCoordinator {
     private struct WindowTrackingAnchor {
         let processID: pid_t
         let windowID: CGWindowID
-        let relativeSelection: CGRect
+        let insets: WindowTrackingInsets?
         var lastKnownWindowFrame: CGRect
         var missingSince: ContinuousClock.Instant?
     }
@@ -1462,10 +1462,12 @@ final class SessionCoordinator {
         }
         regionBorder?.setScreen(selectedScreen)
         regionBorder?.setSelection(rect)
+        if previousSelection.size != rect.size {
+            mirror?.selectionSizeDidChange(rect.size, followsSelectionSize: mirrorFollowsSelectionSize)
+        }
         mirror?.setSelectionFrame(rect)
         acceptingFrames = true
         if rebuildTrackingAnchor, case .application = captureTarget, !selectionInteractionActive {
-            rebuildWindowTrackingAnchor()
             startWindowTrackingIfNeeded()
         }
     }
@@ -1532,31 +1534,34 @@ final class SessionCoordinator {
             return
         }
 
-        let windowFrame: CGRect
-        if let currentAnchor = windowTrackingAnchor,
-           currentAnchor.windowID == windowID,
-           currentAnchor.processID == application.processID {
-            windowFrame = currentAnchor.lastKnownWindowFrame
-        } else if let initialFrame = application.anchorWindowFrame {
-            windowFrame = initialFrame
-        } else {
+        guard let initialFrame = application.anchorWindowFrame else {
             windowTrackingAnchor = nil
-            windowTrackingTask = nil
             return
         }
-
-        let relativeSelection = relativeSelectionInWindow(
-            selection: selection,
-            screenFrame: selectedScreen.frame,
-            displayBounds: CGDisplayBounds(displayID),
-            windowFrame: windowFrame
+        let candidate = WindowTrackingAnchor(
+            processID: application.processID, windowID: windowID, insets: nil,
+            lastKnownWindowFrame: initialFrame, missingSince: nil
         )
-        windowTrackingAnchor = WindowTrackingAnchor(
-            processID: application.processID,
-            windowID: windowID,
-            relativeSelection: relativeSelection,
-            lastKnownWindowFrame: windowFrame,
-            missingSince: nil
+        guard case .visible(let windowFrame) = lookupTrackedWindow(anchor: candidate) else {
+            windowTrackingAnchor = candidate
+            return
+        }
+        windowTrackingAnchor = makeWindowTrackingAnchor(
+            candidate, frame: windowFrame, screen: selectedScreen, displayID: displayID
+        )
+    }
+
+    private func makeWindowTrackingAnchor(
+        _ anchor: WindowTrackingAnchor, frame: CGRect,
+        screen: NSScreen, displayID: CGDirectDisplayID
+    ) -> WindowTrackingAnchor {
+        let rect = screenCaptureRect(
+            for: selection, screenFrame: screen.frame, displayBounds: CGDisplayBounds(displayID)
+        )
+        return WindowTrackingAnchor(
+            processID: anchor.processID, windowID: anchor.windowID,
+            insets: WindowTrackingInsets(captureRect: rect, windowFrame: frame),
+            lastKnownWindowFrame: frame, missingSince: nil
         )
     }
 
@@ -1580,6 +1585,12 @@ final class SessionCoordinator {
             guard var anchor = windowTrackingAnchor,
                   let selectedScreen,
                   let selectedDisplayID = Self.displayID(for: selectedScreen) else { return }
+            guard let insets = anchor.insets else {
+                windowTrackingAnchor = makeWindowTrackingAnchor(
+                    anchor, frame: windowFrame, screen: selectedScreen, displayID: selectedDisplayID
+                )
+                return
+            }
             anchor.missingSince = nil
             anchor.lastKnownWindowFrame = windowFrame
             windowTrackingAnchor = anchor
@@ -1588,7 +1599,7 @@ final class SessionCoordinator {
                 return WindowTrackingDisplay(displayID: displayID, bounds: CGDisplayBounds(displayID))
             }
             guard let projection = projectTrackedSelection(
-                relativeSelection: anchor.relativeSelection,
+                insets: insets,
                 windowFrame: windowFrame,
                 displays: displays,
                 preferredDisplayID: selectedDisplayID
@@ -1612,7 +1623,8 @@ final class SessionCoordinator {
             let previousTask = selectionUpdateTask
             let updateTask = Task { @MainActor [weak self] in
                 _ = await previousTask?.result
-                guard !Task.isCancelled, let self else { return }
+                guard !Task.isCancelled, let self, self.targetApplicationTracking,
+                      !self.selectionInteractionActive else { return }
                 await self.applySelection(
                     newSelection,
                     screen: newScreen,

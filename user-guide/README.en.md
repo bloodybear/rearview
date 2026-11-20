@@ -123,9 +123,9 @@ The default is **Automatic Refresh**. When a screen change is detected, the curr
 
 You can specify an app in **Choose Capture App** (`⌘1`) on the toolbar to use it as the translation target. Only apps behind the selected area can be selected.
 
-### Track Target App Movement
+### Track Target App Window
 
-Enable `Settings → Capture & OCR → Capture → Track Target App Movement` to move the translation area along with the target app window when it moves.
+Enable `Settings → Capture & OCR → Capture → Track Target App Window` to keep the selection at the same distance from each edge as the target window moves or resizes.
 
 ## 6. Using Translation Results
 
@@ -183,7 +183,7 @@ You can adjust the mirror and overlay display modes, the mirror window's always-
 | Setting | Description |
 | --- | --- |
 | Capture Frame Rate | The rate at which screen changes are checked. Range: 1–30 fps. |
-| Track Target App Movement | Moves the translation area when the target app window moves. |
+| Track Target App Window | Keeps the selection at the same distance from each edge as the target window moves or resizes. |
 | Image Save Folder | The default folder for saved PNG files. |
 | Image Filename Pattern | The filename format used for saved images. |
 | Minimum OCR Interval | The minimum time before starting the next OCR after the screen changes. Range: 100–2000 ms. |
@@ -294,7 +294,7 @@ Check that `Settings → Display → Overlay → Ignore Mouse Events in Selectio
 
 ### The Translation Area Does Not Follow a Moved Target App
 
-Enable `Settings → Capture & OCR → Capture → Track Target App Movement`, and make sure the correct capture app is specified.
+Enable `Settings → Capture & OCR → Capture → Track Target App Window`, and make sure the correct capture app is specified.
 
 ### An Image Cannot Be Saved
 
