@@ -335,6 +335,9 @@ OCR 디버그 오버레이	OCR Debug Overlay	OCRデバッグオーバーレイ
 화면 기록 권한이 필요합니다	Screen Recording Permission Required	画面収録の権限が必要です
 Rearview는 선택한 화면 영역의 텍스트를 인식하고 번역합니다. 계속하려면 화면 기록 권한이 필요합니다.	Rearview recognizes and translates text in the selected screen area. Screen Recording permission is required to continue.	Rearviewは選択した画面範囲のテキストを認識して翻訳します。続けるには画面収録の権限が必要です。
 계속	Continue	続ける
+손쉬운 사용 권한	Accessibility Permission	アクセシビリティの権限
+Notion에서 AX 모드를 사용하려면 시스템 설정에서 Rearview의 손쉬운 사용 권한을 켜 주세요.	To use AX mode in Notion, allow Rearview in Accessibility in System Settings.	NotionでAXモードを使うには、システム設定のアクセシビリティでRearviewを許可してください。
+건너뛰기	Skip	スキップ
 다시 확인	Check Again	もう一度確認
 시스템 설정에서 Rearview의 화면 기록 권한을 켜 주세요.	Enable Screen Recording for Rearview in System Settings.	システム設定でRearviewの画面収録を有効にしてください。
 시스템 설정 열기	Open System Settings	システム設定を開く

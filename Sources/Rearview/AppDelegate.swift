@@ -1,4 +1,5 @@
 import AppKit
+@preconcurrency import ApplicationServices
 import Carbon
 import SwiftUI
 import ServiceManagement
@@ -36,6 +37,20 @@ enum ScreenCapturePermissionConfirmation {
 
     static func markShown(in defaults: UserDefaults = .standard) {
         defaults.set(true, forKey: defaultsKey)
+    }
+}
+
+enum AccessibilityPermissionSkip {
+    private static let defaultsKey = "accessibilityPermissionSkippedVersions"
+
+    static func contains(_ version: String?, in defaults: UserDefaults) -> Bool {
+        guard let version else { return false }
+        return defaults.stringArray(forKey: defaultsKey)?.contains(version) == true
+    }
+
+    static func save(_ version: String?, in defaults: UserDefaults) {
+        guard let version, !contains(version, in: defaults) else { return }
+        defaults.set((defaults.stringArray(forKey: defaultsKey) ?? []) + [version], forKey: defaultsKey)
     }
 }
 
@@ -78,6 +93,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var hotKeyRecording = false
     private var permissionIntroductionWindow: ScreenCapturePermissionWindowController?
     private var permissionRecoveryWindow: ScreenCapturePermissionWindowController?
+    private var accessibilityPermissionWindow: ScreenCapturePermissionWindowController?
+    private var awaitsScreenCaptureConfirmation = false
+    private let appVersion: String?
+    private let accessibilityTrusted: () -> Bool
     private var permissionCheckTask: Task<Void, Never>?
     private var permissionCheckGeneration: UInt = 0
     private var hasInstalledApplicationServices = false
@@ -93,10 +112,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     init(
         permissionClient: ScreenCapturePermissionClient = .live,
-        defaults: UserDefaults = .standard
+        defaults: UserDefaults = .standard,
+        appVersion: String? = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String,
+        accessibilityTrusted: @escaping () -> Bool = { AXIsProcessTrusted() }
     ) {
         self.permissionClient = permissionClient
         self.defaults = defaults
+        self.appVersion = appVersion
+        self.accessibilityTrusted = accessibilityTrusted
 #if LST_EXCLUDE_DEBUG_FEATURES
         self.appUpdater = AppUpdater()
 #endif
@@ -120,6 +143,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             showPermissionIntroductionWindow()
         }
+    }
+
+    func applicationDidBecomeActive(_ notification: Notification) {
+        recheckAccessibilityPermission()
     }
 
     func applicationShouldHandleReopen(
@@ -1038,6 +1065,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         aboutWindow?.refreshLocalization()
         permissionIntroductionWindow?.refreshLocalization()
         permissionRecoveryWindow?.refreshLocalization()
+        accessibilityPermissionWindow?.refreshLocalization()
 
         let shouldReopenSettings = settingsWindow?.window?.isVisible == true
         settingsWindow?.close()
@@ -1246,7 +1274,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func presentCurrentPermissionGate() {
         guard !screenCapturePermissionGranted else { return }
-        if permissionRecoveryWindow != nil {
+        if let accessibilityPermissionWindow {
+            presentPermissionWindow(accessibilityPermissionWindow)
+        } else if permissionRecoveryWindow != nil {
             showPermissionRecoveryWindow()
         } else if permissionIntroductionWindow != nil {
             showPermissionIntroductionWindow()
@@ -1345,8 +1375,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 let recoveryIsVisible = self.permissionRecoveryWindow?.window?.isVisible == true
                 let shouldShowConfirmation = recoveryIsVisible
                     || !ScreenCapturePermissionConfirmation.hasBeenShown(in: self.defaults)
-                self.screenCapturePermissionGranted = true
-                self.installApplicationServices()
+                self.awaitsScreenCaptureConfirmation = shouldShowConfirmation
                 if shouldShowConfirmation {
                     let controller = self.makePermissionRecoveryWindowIfNeeded()
                     let shortcutTitle = self.selectionHotKey.isEnabled
@@ -1360,6 +1389,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     }
                 } else {
                     self.hidePermissionWindows()
+                    self.continueAfterScreenCapturePermission()
                 }
             } catch is CancellationError {
                 return
@@ -1378,7 +1408,51 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func confirmScreenCapturePermission() {
-        permissionRecoveryWindow?.window?.orderOut(nil)
+        guard awaitsScreenCaptureConfirmation else { return }
+        awaitsScreenCaptureConfirmation = false
+        hidePermissionWindows()
+        continueAfterScreenCapturePermission()
+    }
+
+    private func continueAfterScreenCapturePermission() {
+        if hasInstalledApplicationServices || accessibilityTrusted()
+            || AccessibilityPermissionSkip.contains(appVersion, in: defaults) {
+            installApplicationServices()
+            return
+        }
+
+        let controller = ScreenCapturePermissionWindowController(kind: .accessibility)
+        controller.onOpenSystemSettings = { [weak self] in
+            guard let self else { return }
+            if self.accessibilityTrusted() {
+                self.finishAccessibilityPermission()
+                return
+            }
+            let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true]
+            _ = AXIsProcessTrustedWithOptions(options as CFDictionary)
+            let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!
+            if !NSWorkspace.shared.open(url) { NSSound.beep() }
+        }
+        controller.onRetryPermission = { [weak self] in self?.recheckAccessibilityPermission() }
+        controller.onSkip = { [weak self] in
+            guard let self else { return }
+            AccessibilityPermissionSkip.save(self.appVersion, in: self.defaults)
+            self.finishAccessibilityPermission()
+        }
+        accessibilityPermissionWindow = controller
+        presentPermissionWindow(controller)
+    }
+
+    private func recheckAccessibilityPermission() {
+        guard accessibilityPermissionWindow != nil, accessibilityTrusted() else { return }
+        finishAccessibilityPermission()
+    }
+
+    private func finishAccessibilityPermission() {
+        let controller = accessibilityPermissionWindow
+        accessibilityPermissionWindow = nil
+        controller?.window?.orderOut(nil)
+        installApplicationServices()
     }
 
     private func openScreenCaptureSettings() {

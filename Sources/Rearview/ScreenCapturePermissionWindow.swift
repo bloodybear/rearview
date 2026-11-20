@@ -3,6 +3,7 @@ import AppKit
 enum ScreenCapturePermissionWindowKind: CaseIterable {
     case introduction
     case recovery
+    case accessibility
 }
 
 @MainActor
@@ -11,6 +12,7 @@ final class ScreenCapturePermissionWindowController: NSWindowController, NSWindo
     private let messageLabel = NSTextField(wrappingLabelWithString: "")
     private let primaryButton = NSButton()
     private let settingsButton = NSButton()
+    private let skipButton = NSButton()
     private let buttonSpacer = NSView()
     private let buttonStack = NSStackView()
     private let contentStack = NSStackView()
@@ -26,6 +28,7 @@ final class ScreenCapturePermissionWindowController: NSWindowController, NSWindo
     var onRetryPermission: (() -> Void)?
     var onConfirmPermission: (() -> Void)?
     var onRecoveryWindowBecameKey: (() -> Void)?
+    var onSkip: (() -> Void)?
     var onQuit: (() -> Void)?
 
     init(
@@ -83,7 +86,14 @@ final class ScreenCapturePermissionWindowController: NSWindowController, NSWindo
     }
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
-        if kind == .recovery, showsPermissionConfirmation { return true }
+        if kind == .recovery, showsPermissionConfirmation {
+            onConfirmPermission?()
+            return false
+        }
+        if kind == .accessibility {
+            onSkip?()
+            return false
+        }
         onQuit?()
         return false
     }
@@ -98,6 +108,8 @@ final class ScreenCapturePermissionWindowController: NSWindowController, NSWindo
         switch kind {
         case .introduction:
             onContinue?()
+        case .accessibility:
+            onRetryPermission?()
         case .recovery:
             if showsPermissionConfirmation {
                 onConfirmPermission?()
@@ -111,6 +123,8 @@ final class ScreenCapturePermissionWindowController: NSWindowController, NSWindo
         onOpenSystemSettings?()
     }
 
+    @objc private func skipButtonPressed() { onSkip?() }
+
     private func refreshContent() {
         clearDefaultButtons()
 
@@ -122,6 +136,14 @@ final class ScreenCapturePermissionWindowController: NSWindowController, NSWindo
             )
             primaryButton.title = text("계속")
             setButtons([primaryButton], defaultButton: primaryButton)
+
+        case .accessibility:
+            titleLabel.stringValue = text("손쉬운 사용 권한")
+            messageLabel.stringValue = text("Notion에서 AX 모드를 사용하려면 시스템 설정에서 Rearview의 손쉬운 사용 권한을 켜 주세요.")
+            skipButton.title = text("건너뛰기")
+            primaryButton.title = text("다시 확인")
+            settingsButton.title = text("시스템 설정 열기")
+            setButtons([skipButton, primaryButton, settingsButton], defaultButton: settingsButton)
 
         case .recovery:
             if showsPermissionConfirmation {
@@ -184,6 +206,8 @@ final class ScreenCapturePermissionWindowController: NSWindowController, NSWindo
             action: #selector(settingsButtonPressed),
             identifier: "screen-capture-permission-settings"
         )
+        configure(skipButton, action: #selector(skipButtonPressed),
+                  identifier: "accessibility-permission-skip")
         buttonSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         buttonSpacer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 

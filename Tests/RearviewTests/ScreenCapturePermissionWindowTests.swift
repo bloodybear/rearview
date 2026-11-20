@@ -5,6 +5,20 @@ import Testing
 @Suite
 struct ScreenCapturePermissionWindowTests {
     @Test
+    func accessibilitySkipAppliesOnlyToTheSelectedVersionAndPreservesMode() throws {
+        let suite = "AccessibilityPermissionSkipTests-\(UUID())"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        TextExtractionPreference.save(.ax, to: defaults)
+
+        #expect(!AccessibilityPermissionSkip.contains("1.0", in: defaults))
+        AccessibilityPermissionSkip.save("1.0", in: defaults)
+        #expect(AccessibilityPermissionSkip.contains("1.0", in: defaults))
+        #expect(!AccessibilityPermissionSkip.contains("2.0", in: defaults))
+        #expect(TextExtractionPreference.load(from: defaults) == .ax)
+    }
+
+    @Test
     func permissionCatalogIsCompleteForEverySupportedLanguage() {
         let keys = [
             "화면 기록 권한이 필요합니다",
@@ -16,6 +30,9 @@ struct ScreenCapturePermissionWindowTests {
             "화면 기록 권한이 확인되었습니다",
             "%@을 눌러 번역할 화면 영역을 선택하세요. 메뉴바의 Rearview 아이콘에서 ‘영역 선택…’을 선택해 시작할 수도 있습니다.",
             "메뉴바의 Rearview 아이콘에서 ‘영역 선택…’을 선택해 시작하세요.",
+            "손쉬운 사용 권한",
+            "Notion에서 AX 모드를 사용하려면 시스템 설정에서 Rearview의 손쉬운 사용 권한을 켜 주세요.",
+            "건너뛰기",
             "확인"
         ]
         for language in AppDisplayLanguage.allCases {
@@ -26,7 +43,7 @@ struct ScreenCapturePermissionWindowTests {
     }
 
     @Test @MainActor
-    func bothPermissionWindowsHaveCompleteLocalizedLayouts() {
+    func permissionWindowsHaveCompleteLocalizedLayouts() {
         for language in AppDisplayLanguage.allCases {
             for kind in ScreenCapturePermissionWindowKind.allCases {
                 let controller = ScreenCapturePermissionWindowController(
@@ -41,7 +58,7 @@ struct ScreenCapturePermissionWindowTests {
                 #expect(textField(
                     "screen-capture-permission-title", in: controller.window?.contentView
                 )?.stringValue == L10n.text(
-                    "화면 기록 권한이 필요합니다", language: language
+                    kind == .accessibility ? "손쉬운 사용 권한" : "화면 기록 권한이 필요합니다", language: language
                 ))
                 #expect(textField(
                     "screen-capture-permission-message", in: controller.window?.contentView
@@ -183,7 +200,10 @@ struct ScreenCapturePermissionWindowTests {
         #expect(quitRequests == 2)
 
         recovery.showPermissionConfirmed(selectionShortcutTitle: "⇧⌘1")
-        #expect(recovery.windowShouldClose(recovery.window!) == true)
+        var confirmations = 0
+        recovery.onConfirmPermission = { confirmations += 1 }
+        #expect(recovery.windowShouldClose(recovery.window!) == false)
+        #expect(confirmations == 1)
         #expect(quitRequests == 2)
     }
 
