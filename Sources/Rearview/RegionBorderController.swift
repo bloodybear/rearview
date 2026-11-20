@@ -25,9 +25,12 @@ enum RegionWindowLevel {
     static let moveHandle = NSWindow.Level(
         rawValue: NSWindow.Level.floating.rawValue + 2
     )
+    static let cornerInteraction = NSWindow.Level(
+        rawValue: NSWindow.Level.floating.rawValue + 4
+    )
     /// Settings window – above all translation UI so it is never obscured.
     static let settings = NSWindow.Level(
-        rawValue: NSWindow.Level.floating.rawValue + 4
+        rawValue: NSWindow.Level.floating.rawValue + 5
     )
 }
 
@@ -53,7 +56,16 @@ private func regionHoverColor(_ color: NSColor, opacity: CGFloat) -> NSColor {
 
 @MainActor
 final class RegionBorderController: NSObject {
-    enum Edge: Equatable { case top, bottom, left, right, topLeft, topRight, bottomLeft, bottomRight }
+    enum Edge: Equatable {
+        case top, bottom, left, right, topLeft, topRight, bottomLeft, bottomRight
+
+        var isCorner: Bool {
+            switch self {
+            case .topLeft, .topRight, .bottomLeft, .bottomRight: true
+            case .top, .bottom, .left, .right: false
+            }
+        }
+    }
     enum Change: Equatable { case move(delta: CGPoint), resize(Edge) }
     enum PresentationState: Equatable { case automatic, automaticPaused, manual }
 
@@ -84,10 +96,7 @@ final class RegionBorderController: NSObject {
         self.screen = screen
         super.init()
         visualBorder.setOpacity(opacity)
-        // Four edge panels. Each is a band (inwardHitWidth inside, outwardHitWidth
-        // outside) extended past the outline corners, so corner diagonal zones
-        // are covered by the same panels and no corner windows are needed.
-        for edge in [Edge.top, .bottom, .left, .right] {
+        for edge in [Edge.top, .bottom, .left, .right, .topLeft, .topRight, .bottomLeft, .bottomRight] {
             let panel = RegionEdgePanel(edge: edge)
             panel.onDrag = { [weak self] edge, startRect, startPoint, point, finished in
                 self?.drag(edge: edge, startRect: startRect, startPoint: startPoint,
@@ -502,6 +511,71 @@ final class RegionBorderController: NSObject {
         return violations
     }
 
+    fileprivate func cornerHitZoneViolationsForSelfTest(outline: CGRect) -> [String] {
+        var violations: [String] = []
+        let insideX = min(7, outline.width / 3)
+        let insideY = min(7, outline.height / 3)
+        let reachX = min(18, outline.width / 3)
+        let reachY = min(18, outline.height / 3)
+        let configurations: [(Edge, Edge, Edge, CGFloat, CGFloat)] = [
+            (.topLeft, .top, .left, 1, -1), (.topRight, .top, .right, -1, -1),
+            (.bottomLeft, .bottom, .left, 1, 1), (.bottomRight, .bottom, .right, -1, 1)
+        ]
+        for (corner, horizontal, vertical, dx, dy) in configurations {
+            let x = dx > 0 ? outline.minX : outline.maxX
+            let y = dy > 0 ? outline.minY : outline.maxY
+            func point(_ inwardX: CGFloat, _ inwardY: CGFloat) -> CGPoint {
+                CGPoint(x: x + dx * inwardX, y: y + dy * inwardY)
+            }
+            guard let cornerPanel = panels[corner], let horizontalPanel = panels[horizontal],
+                  let verticalPanel = panels[vertical] else {
+                violations.append("missing resize panel for \(corner)")
+                continue
+            }
+            for (edgePanel, overlap, beyond) in [
+                (horizontalPanel, point(insideX - 1, -1), point(insideX + 1, -1)),
+                (verticalPanel, point(-1, insideY - 1), point(-1, insideY + 1))
+            ] {
+                guard let view = edgePanel.contentView as? RegionEdgeView else { continue }
+                if !cornerPanel.frame.contains(overlap) || !edgePanel.frame.contains(overlap)
+                    || cornerPanel.frame.contains(beyond) || !edgePanel.frame.contains(beyond) {
+                    violations.append("corner and edge bands must overlap without gaps for \(corner)")
+                }
+                let hasRemainingReach = edgePanel === horizontalPanel
+                    ? reachX >= insideX + 1 : reachY >= insideY + 1
+                let local = CGPoint(x: beyond.x - edgePanel.frame.minX, y: beyond.y - edgePanel.frame.minY)
+                if hasRemainingReach && view.resolvedEdge(at: local) != corner {
+                    violations.append("edge band must continue diagonal resize beyond \(corner)")
+                }
+                func cornerIsAboveEdge() -> Bool {
+                    let order = NSWindow.windowNumbers(options: []) ?? []
+                    guard let cornerIndex = order.firstIndex(of: NSNumber(value: cornerPanel.windowNumber)),
+                          let edgeIndex = order.firstIndex(of: NSNumber(value: edgePanel.windowNumber)) else {
+                        return false
+                    }
+                    return cornerIndex < edgeIndex
+                }
+                edgePanel.makeKeyAndOrderFront(nil)
+                if !cornerIsAboveEdge() {
+                    violations.append("corner must stay above edge when the edge becomes key")
+                }
+                layout(selection)
+                if !cornerIsAboveEdge() {
+                    violations.append("corner must stay above edge after layout")
+                }
+                if !(edgePanel.level.rawValue < cornerPanel.level.rawValue
+                    && cornerPanel.level.rawValue < RegionWindowLevel.settings.rawValue) {
+                    violations.append("corner resize window level must be between edge and settings")
+                }
+            }
+            if !cornerPanel.frame.contains(point(1.625, 1.625))
+                || panels.values.contains(where: { $0.frame.contains(point(insideX + 1, insideY + 1)) }) {
+                violations.append("corner must cover the curve and leave the nearby interior click-through")
+            }
+        }
+        return violations
+    }
+
     func close() {
         activationObservers.forEach(NotificationCenter.default.removeObserver)
         activationObservers.removeAll()
@@ -558,11 +632,7 @@ final class RegionBorderController: NSObject {
         let bottomY = overlayDocking == .belowSelection
             ? combinedFrame.minY - outwardHitWidth
             : rect.minY - outwardHitWidth
-        // Each edge panel is a 9pt band (1.5pt inward, 7.5pt outward; 3pt/6pt
-        // from the visible border line) that also extends past the outline's
-        // corners by the outward width, so the corner diagonal zones are
-        // covered by the two adjacent panels and the whole outer border is
-        // grabbable without extra windows.
+        // Extend the straight bands past the corners so they overlap the corner panels.
         panels[.top]?.setFrame(CGRect(
             x: combinedFrame.minX - outwardHitWidth, y: topY,
             width: combinedFrame.width + 2 * outwardHitWidth, height: hitWidth
@@ -581,6 +651,20 @@ final class RegionBorderController: NSObject {
             y: combinedFrame.minY - outwardHitWidth,
             width: hitWidth, height: combinedFrame.height + 2 * outwardHitWidth
         ), display: false)
+        let insideX = min(7, combinedFrame.width / 3)
+        let insideY = min(7, combinedFrame.height / 3)
+        let leftX = combinedFrame.minX - outwardHitWidth
+        let rightX = combinedFrame.maxX - insideX
+        let topCornerY = combinedFrame.maxY - insideY
+        let bottomCornerY = combinedFrame.minY - outwardHitWidth
+        for (edge, x, y) in [
+            (Edge.topLeft, leftX, topCornerY), (.topRight, rightX, topCornerY),
+            (.bottomLeft, leftX, bottomCornerY), (.bottomRight, rightX, bottomCornerY)
+        ] {
+            panels[edge]?.setFrame(CGRect(
+                x: x, y: y, width: outwardHitWidth + insideX, height: outwardHitWidth + insideY
+            ), display: false)
+        }
         panels.values.forEach { $0.setExternallyVisible(true) }
         // Set the outline after the frames so the views receive it offset
         // into their own (current) coordinates for corner detection.
@@ -1728,7 +1812,7 @@ private final class RegionEdgePanel: NSPanel {
         self.edge = edge
         edgeView = RegionEdgeView(edge: edge)
         super.init(contentRect: .zero, styleMask: [.borderless], backing: .buffered, defer: false)
-        level = RegionWindowLevel.interaction
+        level = edge.isCorner ? RegionWindowLevel.cornerInteraction : RegionWindowLevel.interaction
         isOpaque = false
         backgroundColor = .clear
         hasShadow = false
@@ -1977,6 +2061,21 @@ func regionPanelContractViolationsForSelfTest() -> [String] {
         violations.append(
             contentsOf: controller.borderHitZoneViolationsForSelfTest()
         )
+        let selection = controller.selection
+        violations += controller.cornerHitZoneViolationsForSelfTest(outline: selection)
+        for docking in [OverlayControlBarDocking.aboveSelection, .belowSelection] {
+            let bar = CGRect(
+                x: selection.minX - 1.5,
+                y: docking == .aboveSelection ? selection.maxY : selection.minY - 36,
+                width: selection.width + 3, height: 36
+            )
+            controller.setOverlayControlBarFrame(bar, docking: docking)
+            violations += controller.cornerHitZoneViolationsForSelfTest(outline: selection.union(bar))
+        }
+        controller.setOverlayControlBarFrame(nil, docking: nil)
+        let minimum = CGRect(x: selection.minX, y: selection.minY, width: 32, height: 20)
+        controller.setSelection(minimum)
+        violations += controller.cornerHitZoneViolationsForSelfTest(outline: minimum)
         controller.close()
     }
     return violations
