@@ -17,6 +17,7 @@ package final class ControlTextResolver: AXTextAccess {
         var texts: [Text] = []
         var status = "text_unavailable"
         var emptyRange = false
+        var internalTextAttempted = false
         var complete = true
     }
 
@@ -104,7 +105,7 @@ package final class ControlTextResolver: AXTextAccess {
     }
 
     func resolve(_ element: AXUIElement, header: Bool, internalText: Bool,
-                 neighbors: [AXUIElement], deadline: Date) -> Result {
+                 neighbors: [AXUIElement], deadline: Date, documentTab: Bool = false) -> Result {
         guard Date() < deadline,
               let raw = param(element, "AXTextMarkerRangeForUIElement", element),
               CFGetTypeID(raw) == AXTextMarkerRangeGetTypeID() else { return Result() }
@@ -114,9 +115,13 @@ package final class ControlTextResolver: AXTextAccess {
         let empty = sameMarkerBytes(start, end)
         var result = Result(emptyRange: empty)
 
-        if internalText {
-            // Home's tab text is absent from text navigation. SVG contains
-            // multiple labels, so enumerate its real StaticText children.
+        // Document tabs can expose a title while their native range is empty.
+        // Restrict this fallback to their observed semantic ancestry; other
+        // empty controls retain the existing no-extra-query path.
+        if internalText || (documentTab && empty) {
+            result.internalTextAttempted = true
+            // Sidebar/document tab text can be absent from text navigation.
+            // SVG can contain multiple labels; enumerate real StaticText children.
             // Chromium 156's serialization is checked by internalTree before
             // constructing any child marker. Unsupported formats stay unresolved.
             guard let description = param(element, "AXTextMarkerNodeDebugDescription", start) as? String else {
@@ -216,11 +221,16 @@ extension ControlTextResolver {
             let classes = ancestors.flatMap { rows[$0]["domClasses"] as? [String] ?? [] }
             let internalText = (rows[owner]["surfaceKind"] as? String == "sidebar" && rows[owner]["role"] as? String == "AXRadioButton") || (rows[owner]["role"] as? String == "AXButton" && classes.contains("notion-code-block"))
             verifyTextParents = classes.contains("notion-table-view-cell")
+            // These roles/classes are already collected. Do not query classes
+            // on every control or infer document tabs from screen coordinates.
+            let documentTab = rows[owner]["role"] as? String == "AXRadioButton"
+                && ancestors.dropFirst().contains { rows[$0]["role"] as? String == "AXTabGroup" }
+                && classes.contains("notion-desktop-drag-area")
             let ownerFrame = frame(rows[owner])!
             let neighbors = rows[owner]["surfaceKind"] as? String == "tabbar" ? controls.filter { $0 != owner && frame(rows[$0]).map { ownerFrame.contains($0) } == true }.map { elements[$0] } : []
             let before = queryCount
-            let found = resolve(elements[owner], header: classes.contains("notion-table-view-header-row"), internalText: internalText, neighbors: neighbors, deadline: deadline)
-            rows[owner]["controlTextResolution"] = ["status":found.status,"complete":found.complete,"calls":queryCount-before,"textCount":found.texts.count,"chromiumInternalPath":internalText]
+            let found = resolve(elements[owner], header: classes.contains("notion-table-view-header-row"), internalText: internalText, neighbors: neighbors, deadline: deadline, documentTab: documentTab)
+            rows[owner]["controlTextResolution"] = ["status":found.status,"complete":found.complete,"calls":queryCount-before,"textCount":found.texts.count,"chromiumInternalPath":found.internalTextAttempted]
             // Never replace a whole control with a partial private-tree walk.
             guard found.complete, !found.texts.isEmpty else {
                 if found.status == "empty_native_text_range" {
