@@ -42,6 +42,7 @@ private enum TestSessionError: Error {
 private final class TestCaptureProvider: SessionCaptureProvider, @unchecked Sendable {
     private(set) var startCount = 0
     private(set) var stopCount = 0
+    private(set) var startedSelection: CGRect?
     let startError: Error?
     private var onFrame: (@Sendable (CGImage, UInt64, UInt64) -> Void)?
 
@@ -55,6 +56,7 @@ private final class TestCaptureProvider: SessionCaptureProvider, @unchecked Send
         onFrame: @escaping @Sendable (CGImage, UInt64, UInt64) -> Void
     ) async throws {
         startCount += 1
+        startedSelection = selection
         if let startError { throw startError }
         self.onFrame = onFrame
     }
@@ -969,6 +971,40 @@ final class SessionCoordinatorIntegrationTests: XCTestCase {
         XCTAssertEqual(output.frames.last?.frameID, 12)
         XCTAssertGreaterThanOrEqual(translator.calls.count, 2)
 
+    }
+
+    func testOriginalViewStopsCaptureAndResumesAtEditedSelection() async throws {
+        let capture = TestCaptureProvider()
+        let coordinator = try await makeCoordinator(
+            capture: capture, ocr: TestOCRProvider(batch: makeBatch(lines: [])),
+            translator: TestTranslationProvider(translations: [:]), output: TestOutputSink()
+        )
+        let previousMode = TranslationDisplayMode.load()
+        defer { previousMode.save() }
+        coordinator.setDisplayMode(.overlay)
+        let previousStops = capture.stopCount
+        coordinator.toggleOverlayOriginalView()
+        XCTAssertTrue(coordinator.overlayOriginalView)
+        for _ in 0..<200 where capture.stopCount == previousStops { await Task.yield() }
+        XCTAssertGreaterThan(capture.stopCount, previousStops)
+
+        let (_, selection) = try makeScreenAndSelection()
+        let moved = selection.offsetBy(dx: 5, dy: 5)
+        await coordinator.applySelection(moved, reevaluateTarget: false)
+        coordinator.translateImmediately()
+        XCTAssertEqual(capture.startCount, 1)
+
+        coordinator.toggleOverlayOriginalView()
+        for _ in 0..<200 where capture.startCount == 1 { await Task.yield() }
+        XCTAssertFalse(coordinator.overlayOriginalView)
+        XCTAssertEqual(capture.startCount, 2)
+        XCTAssertEqual(capture.startedSelection, moved)
+
+        coordinator.toggleOverlayOriginalView()
+        coordinator.setDisplayMode(.mirror)
+        XCTAssertFalse(coordinator.overlayOriginalView)
+        for _ in 0..<200 where capture.startCount == 2 { await Task.yield() }
+        XCTAssertEqual(capture.startCount, 3)
     }
 
     func testPausedContentRevisionDiscardsLateTranslationResult() async throws {

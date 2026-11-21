@@ -39,6 +39,7 @@ func regionPresentationColor(
 ) -> NSColor {
     switch state {
     case .automatic: .systemBlue
+    case .originalView: .systemGray
     case .automaticPaused: .systemOrange
     case .manual: .systemPurple
     }
@@ -67,7 +68,7 @@ final class RegionBorderController: NSObject {
         }
     }
     enum Change: Equatable { case move(delta: CGPoint), resize(Edge) }
-    enum PresentationState: Equatable { case automatic, automaticPaused, manual }
+    enum PresentationState: Equatable { case automatic, automaticPaused, manual, originalView }
 
     // The border's hit band (inward/outward from the selection edge) lives
     // in RegionBorderTuning — tune the line-relative values there; the move

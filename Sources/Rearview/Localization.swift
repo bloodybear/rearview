@@ -370,6 +370,10 @@ CSV 다른 이름으로 저장…	Save CSV As…	CSVを別名で保存…
 완료 · %d줄 실패	Completed · %d Lines Failed	完了・%d行失敗
 텍스트 인식 실패	Text Recognition Failed	テキスト認識に失敗
 일시정지	Paused	一時停止
+원본 보기	Show Original	原文を表示
+오버레이 재개	Resume Overlay	オーバーレイを再開
+원본 보기 / 오버레이 재개	Show Original / Resume Overlay	原文を表示／オーバーレイを再開
+오버레이에서 원본 화면 보기와 번역 표시를 전환합니다.	Switches between the original screen and the translation overlay.	元の画面と翻訳オーバーレイの表示を切り替えます。
 자동 갱신 일시정지	Pause Automatic Refresh	自動更新を一時停止
 대소문자	Case	大小文字
 미러 텍스트 검색	Search Mirror Text	ミラーテキストを検索

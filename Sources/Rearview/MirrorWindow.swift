@@ -1240,6 +1240,24 @@ final class TranslationMirrorWindow: NSPanel, NSWindowDelegate {
     var failureNoticeAnchorRect: CGRect? {
         (displayMode == .mirror ? mirrorControlBar : overlayControlBar).screenRect
     }
+    func setOriginalView(_ enabled: Bool) {
+        originalView = enabled
+        controlBars.forEach { $0.setOriginalView(enabled) }
+        guard enabled else { return }
+        awaitingOriginalViewResult = true
+        closeSearch()
+        setSelectionModeActive(false, notifySelectionBegin: false)
+        hideStatusOnAllSurfaces(animated: false)
+        overlayPanel.resetInteractionState()
+        overlayPanel.orderOut(nil)
+        overlayPanel.translationView.frameSnapshot = nil
+        mirrorView.frameSnapshot = nil
+        controlBars.forEach {
+            $0.setCopyAllEnabled(false)
+            $0.setCopyImageEnabled(false)
+        }
+    }
+
     func clearTranslationOutput() {
         if let frame = mirrorView.frameSnapshot {
             display(MirrorFrame(image: frame.image, translatedItems: [], frameID: frame.frameID))
@@ -1256,6 +1274,9 @@ final class TranslationMirrorWindow: NSPanel, NSWindowDelegate {
     var onApplicationCaptureChange: ((CaptureApplication?) -> Void)?
     var onApplicationListRequest: (() -> Void)?
     var onRefreshModeChange: ((RefreshMode) -> Void)?
+    private var originalView = false
+    private var awaitingOriginalViewResult = false
+    var onOriginalViewToggle: (() -> Void)?
     var onPauseChange: ((Bool) -> Void)?
     var onImmediateTranslation: (() -> Void)?
     var onOverlaySelectionDrag: ((CGRect, NSScreen, RegionBorderController.Change, Bool) -> Void)?
@@ -1423,6 +1444,7 @@ final class TranslationMirrorWindow: NSPanel, NSWindowDelegate {
         controlBar.onRefreshModeChange = { [weak self] mode in
             self?.refreshModeDidChange(mode)
         }
+        controlBar.onOriginalViewToggle = { [weak self] in self?.onOriginalViewToggle?() }
         controlBar.onPauseChange = { [weak self] paused in
             self?.pauseDidChange(paused)
         }
@@ -1958,6 +1980,7 @@ final class TranslationMirrorWindow: NSPanel, NSWindowDelegate {
     }
 
     func showSearch(selectQuery: Bool = false) {
+        guard !originalView, !awaitingOriginalViewResult else { return }
         let bar = displayMode == .overlay ? overlaySearchPanel.searchBar : searchBar
         bar.isHidden = false
         if displayMode == .overlay {
@@ -1978,8 +2001,12 @@ final class TranslationMirrorWindow: NSPanel, NSWindowDelegate {
         NSApp.activate(ignoringOtherApps: true)
         if displayMode == .overlay {
             orderOut(nil)
-            overlayPanel.orderFrontRegardless()
             overlayControlBar.show()
+            guard !originalView, !awaitingOriginalViewResult else {
+                overlayControlBar.activateForInteraction()
+                return
+            }
+            overlayPanel.orderFrontRegardless()
             overlayPanel.makeKey()
             overlayPanel.makeFirstResponder(overlayPanel.translationView)
         } else {
@@ -2083,7 +2110,15 @@ final class TranslationMirrorWindow: NSPanel, NSWindowDelegate {
             }
         }
         mirrorView.frameSnapshot = frame
-        if displayMode == .overlay { overlayPanel.display(frame) }
+        if displayMode == .overlay, !originalView {
+            overlayPanel.display(frame)
+            if awaitingOriginalViewResult {
+                awaitingOriginalViewResult = false
+                overlayPanel.orderFrontRegardless()
+            }
+        } else if displayMode == .mirror {
+            awaitingOriginalViewResult = false
+        }
         mirrorView.needsDisplay = true
         let copyEnabled = !frame.translatedItems.isEmpty
         controlBars.forEach {
@@ -2539,6 +2574,7 @@ final class TranslationMirrorWindow: NSPanel, NSWindowDelegate {
 
     private func focusActiveTranslationDisplay() {
         if displayMode == .overlay {
+            guard !originalView, !awaitingOriginalViewResult else { return }
             overlayPanel.makeKey()
             overlayPanel.makeFirstResponder(overlayPanel.translationView)
         } else {
@@ -2568,7 +2604,7 @@ final class TranslationMirrorWindow: NSPanel, NSWindowDelegate {
             mirrorView.backgroundOpacity = 1
             overlayPanel.translationView.backgroundOpacity = 1
             controlBars.forEach { $0.setTranslationBackgroundOpacity(1) }
-            overlayPanel.orderFrontRegardless()
+            if !originalView, !awaitingOriginalViewResult { overlayPanel.orderFrontRegardless() }
             overlayPanel.refreshInteractionState()
             orderOut(nil)
             overlayControlBar.show()

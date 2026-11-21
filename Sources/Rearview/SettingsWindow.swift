@@ -370,7 +370,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
             makeToolbarShortcutRows(for: [
                 .applicationCapture, .extractionMode, .displayMode, .translationDirection,
                 .protectNonSourceText,
-                .refreshMode, .modeSpecificDisplayControl, .sessionControlSingleKey,
+                .refreshMode, .modeSpecificDisplayControl, .sessionControlSingleKey, .overlayOriginalView,
             ])
         )
         let textSelectionShortcutSection = makeSection(title: L10n.text("텍스트 및 선택"), rows:
@@ -1490,9 +1490,10 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
                 sender.title = ToolbarHotKey.load(action: action).settingsTitle
                 return nil
             }
-            guard let hotKey = action == .sessionControlSingleKey
+            let hotKey = action == .sessionControlSingleKey || action == .overlayOriginalView
                 ? ToolbarHotKey.makeSingleKey(from: event)
-                : ToolbarHotKey.make(from: event) else {
+                : ToolbarHotKey.make(from: event)
+            guard let hotKey, action != .overlayOriginalView || hotKey.modifiers != 0 else {
                 NSSound.beep()
                 return nil
             }

@@ -442,6 +442,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 shortcutModifiers: entry.value.modifiers
             )
         })?.key else { return false }
+        if action == .overlayOriginalView {
+            guard !event.isARepeat, coordinator.canToggleOverlayOriginalView,
+                  coordinator.isTranslationSessionKeyWindow(NSApp.keyWindow),
+                  !keyWindowHasTextViewResponder(NSApp.keyWindow) else { return false }
+            coordinator.toggleOverlayOriginalView()
+            return true
+        }
+        if coordinator.overlayOriginalView {
+            switch action {
+            case .sessionControlSingleKey, .selectAll, .copySelection, .copyAndClearSelection,
+                 .copyAll, .copyImage, .saveImage, .search, .selectionMode, .debugOverlay:
+                return false
+            default: break
+            }
+        }
         if action == .extractionMode {
             guard !event.isARepeat else { return true }
             Task { await coordinator.setTextExtractionMode(coordinator.textExtractionMode == .ax ? .ocr : .ax) }
@@ -460,7 +475,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .applicationCapture:
             guard coordinator.isTranslationSessionKeyWindow(NSApp.keyWindow) else { return false }
             coordinator.showApplicationCapturePopup()
-        case .extractionMode: return true
+        case .extractionMode, .overlayOriginalView: return true
         case .translationDirection:
             coordinator.setTranslationDirection(coordinator.currentTranslationDirection.toggled)
         case .protectNonSourceText:

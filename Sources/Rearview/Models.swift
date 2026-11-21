@@ -99,6 +99,8 @@ enum AppDefaults {
             ToolbarHotKey(keyCode: UInt32(kVK_ANSI_3), modifiers: command, keyLabel: "3", isEnabled: true)
         case .refreshMode:
             ToolbarHotKey(keyCode: UInt32(kVK_ANSI_5), modifiers: command, keyLabel: "5", isEnabled: true)
+        case .overlayOriginalView:
+            ToolbarHotKey(keyCode: UInt32(kVK_Space), modifiers: UInt32(shiftKey), keyLabel: "Space", isEnabled: true)
         case .sessionControlSingleKey:
             ToolbarHotKey(keyCode: UInt32(kVK_Space), modifiers: 0, keyLabel: "Space", isEnabled: true)
         case .selectionMode:
@@ -481,6 +483,7 @@ enum ToolbarShortcutAction: String, CaseIterable, Sendable {
     case displayMode
     case refreshMode
     case sessionControlSingleKey
+    case overlayOriginalView
     case modeSpecificDisplayControl
     case selectAll
     case copySelection
@@ -519,6 +522,7 @@ enum ToolbarShortcutAction: String, CaseIterable, Sendable {
         case .protectNonSourceText: L10n.text("원문 외 텍스트 보호 전환")
         case .displayMode: L10n.text("미러/오버레이 모드 전환")
         case .refreshMode: L10n.text("자동/수동 갱신 전환")
+        case .overlayOriginalView: L10n.text("원본 보기 / 오버레이 재개")
         case .sessionControlSingleKey: L10n.text("일시정지/재생/즉시 번역")
         case .modeSpecificDisplayControl: L10n.text("모드별 화면 동작 전환")
         case .selectAll: L10n.text("전체 선택")
@@ -560,6 +564,8 @@ enum ToolbarShortcutAction: String, CaseIterable, Sendable {
             L10n.text("번역 결과를 별도 미러 창에 표시하거나 원래 영역 위에 오버레이로 표시합니다.")
         case .refreshMode:
             L10n.text("화면 변화를 감지해 자동으로 갱신하거나, 사용자가 직접 번역을 실행하는 방식으로 전환합니다.")
+        case .overlayOriginalView:
+            L10n.text("오버레이에서 원본 화면 보기와 번역 표시를 전환합니다.")
         case .sessionControlSingleKey:
             L10n.text("자동 갱신 모드에서는 번역을 일시정지하거나 재생하고, 수동 갱신 모드에서는 현재 영역을 즉시 번역합니다. 보조 키 없이 단일 키로 동작합니다.")
         case .modeSpecificDisplayControl:
@@ -672,7 +678,29 @@ struct ToolbarHotKey: Equatable, Sendable {
         guard defaults.object(forKey: "\(prefix).keyCode") != nil,
               let label = defaults.string(forKey: "\(prefix).label"),
               !label.isEmpty else {
-            return defaultValue(for: action)
+            let shortcut = defaultValue(for: action)
+            if action == .overlayOriginalView {
+                let existing = ToolbarShortcutAction.allCases.filter { $0 != action }.map {
+                    load(action: $0, from: defaults)
+                }
+                let selection = SelectionHotKey.load(from: defaults)
+                let immediate = ImmediateTranslationHotKey.load(from: defaults)
+                let activation = MirrorActivationHotKey.load(from: defaults)
+                let globals = [
+                    (selection.keyCode, selection.modifiers, selection.isEnabled),
+                    (immediate.keyCode, immediate.modifiers, immediate.isEnabled),
+                    (activation.keyCode, activation.modifiers, activation.isEnabled)
+                ]
+                if existing.contains(where: {
+                    $0.isEnabled && $0.keyCode == shortcut.keyCode && $0.modifiers == shortcut.modifiers
+                }) || globals.contains(where: { code, modifiers, enabled in
+                    enabled && code == shortcut.keyCode && modifiers == shortcut.modifiers
+                }) {
+                    return ToolbarHotKey(keyCode: shortcut.keyCode, modifiers: shortcut.modifiers,
+                                         keyLabel: shortcut.keyLabel, isEnabled: false)
+                }
+            }
+            return shortcut
         }
         return ToolbarHotKey(
             keyCode: UInt32(defaults.integer(forKey: "\(prefix).keyCode")),

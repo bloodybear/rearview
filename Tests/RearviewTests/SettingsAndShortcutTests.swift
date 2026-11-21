@@ -110,7 +110,7 @@ struct SettingsAndShortcutTests {
 
     @Test func toolbarShortcutDefaultsAndPresentation() {
         withTestDefaults { defaults in
-            #expect(ToolbarShortcutAction.allCases.count == 28)
+            #expect(ToolbarShortcutAction.allCases.count == 29)
             #expect(ToolbarHotKey.defaultValue(for: .protectNonSourceText).keyCode == UInt32(kVK_ANSI_4))
             #expect(ToolbarHotKey.defaultValue(for: .refreshMode).keyCode == UInt32(kVK_ANSI_5))
             #expect(ToolbarHotKey.defaultValue(for: .modeSpecificDisplayControl).keyCode == UInt32(kVK_ANSI_6))
@@ -124,6 +124,15 @@ struct SettingsAndShortcutTests {
             #expect(ToolbarHotKey.defaultValue(for: .sessionControlSingleKey) == space)
             #expect(space.title == "␣")
             #expect(space.settingsTitle == "SPACE")
+            let original = ToolbarHotKey.load(action: .overlayOriginalView, from: defaults)
+            #expect(original.keyCode == space.keyCode)
+            #expect(original.modifiers == UInt32(shiftKey))
+            #expect(original.isEnabled)
+            #expect(!matchesLocalShortcut(eventKeyCode: UInt16(kVK_Space), eventModifiers: [],
+                                          shortcutKeyCode: original.keyCode, shortcutModifiers: original.modifiers))
+            original.save(action: .sessionControlSingleKey, to: defaults)
+            #expect(!ToolbarHotKey.load(action: .overlayOriginalView, from: defaults).isEnabled)
+
 
             for action in ToolbarShortcutAction.configurableActions {
                 #expect(ToolbarHotKey.defaultValue(for: action) == AppDefaults.toolbarHotKey(for: action))
@@ -356,7 +365,7 @@ struct SettingsAndShortcutTests {
         )
         #expect(overlayCompactPresentation.layout.visibleItemIDs == overlayIDs)
         #expect(overlayCompactPresentation.layout.overflowItemIDs.isEmpty)
-        #expect(overlayCompactPresentation.compactedItemIDs == [.refreshMode])
+        #expect(overlayCompactPresentation.compactedItemIDs == [.refreshMode, .translationDirection])
         var previousVisibleCount = 0
         for width in stride(from: CGFloat(200), through: 650, by: 1) {
             let layout = overlayControlBarResponsiveLayout(width: width, items: overlay)

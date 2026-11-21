@@ -147,6 +147,7 @@ enum OverlayControlBarItemID: String, CaseIterable, Sendable {
     case mouseEvents
     case pause
     case translate
+    case originalView
     case copyAll
     case copyImage
     case saveImage
@@ -176,6 +177,7 @@ enum OverlayControlBarOverflowPresentation: Sendable {
     case refreshModeMenu
     case pauseAction
     case translateAction
+    case originalViewAction
     case copyAllAction
     case copyImageAction
     case saveImageAction
@@ -262,6 +264,8 @@ enum OverlayControlBarCatalog {
               overflowPresentation: .pauseAction),
         .init(id: .translate, group: .trailing, width: OverlayControlBarMetrics.iconControlWidth,
               overflowPresentation: .translateAction),
+        .init(id: .originalView, group: .trailing, width: OverlayControlBarMetrics.iconControlWidth,
+              overflowPresentation: .originalViewAction, modes: [.overlay]),
         .init(id: .copyAll, group: .trailing, width: OverlayControlBarMetrics.iconControlWidth,
               overflowPresentation: .copyAllAction),
         .init(id: .copyImage, group: .trailing, width: OverlayControlBarMetrics.iconControlWidth,
@@ -334,6 +338,7 @@ func overlayControlBarShortcutSource(
     case .mouseEvents: .toolbar(.modeSpecificDisplayControl)
     case .pause: .toolbar(.sessionControlSingleKey)
     case .translate: .immediateTranslation
+    case .originalView: .toolbar(.overlayOriginalView)
     case .copyAll: .toolbar(.copyAll)
     case .copyImage: .toolbar(.copyImage)
     case .saveImage: .toolbar(.saveImage)
@@ -891,6 +896,9 @@ final class OverlayControlBarController: NSObject, NSMenuDelegate {
     private let protectNonSourceTextButton = OverlayControlBarButton()
     private let refreshModeButton = OverlayControlBarButton()
     private let pauseButton = OverlayControlBarButton()
+    private let originalViewButton = OverlayControlBarButton()
+    private var originalView = false
+    var onOriginalViewToggle: (() -> Void)?
     private let translateButton = OverlayControlBarButton()
     private let copyButton = OverlayControlBarButton()
     private let copyImageButton = OverlayControlBarButton()
@@ -1138,6 +1146,10 @@ final class OverlayControlBarController: NSObject, NSMenuDelegate {
             action: #selector(translateImmediately)
         )
         configureButton(
+            originalViewButton, symbol: "eye", toolTip: L10n.text("원본 보기"),
+            action: #selector(toggleOriginalView)
+        )
+        configureButton(
             copyButton, symbol: "doc.on.doc", toolTip: toolbarShortcutToolTip(
                 L10n.text("텍스트 전체 복사"), action: .copyAll
             ),
@@ -1262,7 +1274,7 @@ final class OverlayControlBarController: NSObject, NSMenuDelegate {
                 }
             }
         case .grouped:
-            let executionIDs: Set<OverlayControlBarItemID> = [.pause, .translate]
+            let executionIDs: Set<OverlayControlBarItemID> = [.pause, .translate, .originalView]
             let resultIDs: Set<OverlayControlBarItemID> = [
                 .copyAll, .copyImage, .saveImage, .search, .selection
             ]
@@ -1377,6 +1389,7 @@ final class OverlayControlBarController: NSObject, NSMenuDelegate {
         case .refreshMode: refreshModeButton
         case .pause: pauseButton
         case .translate: translateButton
+        case .originalView: originalViewButton
         case .copyAll: copyButton
         case .copyImage: copyImageButton
         case .saveImage: saveImageButton
@@ -1945,6 +1958,7 @@ final class OverlayControlBarController: NSObject, NSMenuDelegate {
         setProtectsNonSourceText(protectsNonSourceText)
         updateRefreshPresentation()
         updatePausePresentation()
+        updateOriginalViewPresentation()
         updateSelectionPresentation()
         updateMouseEventIgnoringPresentation()
         setFollowSelectionSize(followsSelectionSize)
@@ -2016,7 +2030,7 @@ final class OverlayControlBarController: NSObject, NSMenuDelegate {
             ? L10n.text("자동 갱신 · 클릭하여 수동으로 전환")
             : L10n.text("수동 갱신 · 클릭하여 자동으로 전환"), action: .refreshMode),
             for: refreshModeButton)
-        pauseButton.isEnabled = automatic
+        pauseButton.isEnabled = automatic && !originalView
         refreshModeButton.contentTintColor = regionPresentationColor(for: presentationState)
         translateButton.contentTintColor = automatic
             ? .labelColor : regionPresentationColor(for: .manual)
@@ -2076,6 +2090,7 @@ final class OverlayControlBarController: NSObject, NSMenuDelegate {
     }
 
     func refreshShortcutToolTips() {
+        updateOriginalViewPresentation()
         updateDisplayModePresentation()
         setExtractionMode(extractionMode)
         setTranslationDirection(translationDirection)
@@ -2153,7 +2168,7 @@ final class OverlayControlBarController: NSObject, NSMenuDelegate {
             controlHosts[definition.id]?.isHidden = !visibleIDs.contains(definition.id)
         }
         if OverlayControlBarTuning.itemGrouping == .grouped {
-            executionControlsGroup.isHidden = ![.pause, .translate].contains {
+            executionControlsGroup.isHidden = ![.pause, .translate, .originalView].contains {
                 visibleIDs.contains($0)
             }
             resultControlsGroup.isHidden = ![
@@ -2306,7 +2321,7 @@ final class OverlayControlBarController: NSObject, NSMenuDelegate {
         }
     }
 
-    private func activateForInteraction() {
+    func activateForInteraction() {
         NSApp.activate(ignoringOtherApps: true)
         if embeddedInMirrorToolbar {
             container.window?.makeKeyAndOrderFront(nil)
@@ -2380,6 +2395,26 @@ final class OverlayControlBarController: NSObject, NSMenuDelegate {
         onRefreshModeChange?(refreshMode == .automatic ? .manual : .automatic)
     }
 
+    private var originalViewLabel: String {
+        originalView ? L10n.text("오버레이 재개") : L10n.text("원본 보기")
+    }
+
+    func setOriginalView(_ enabled: Bool) {
+        originalView = enabled
+        updateOriginalViewPresentation()
+        updateRefreshPresentation()
+        for button in [translateButton, searchButton, selectionButton, debugButton] {
+            button.isEnabled = !enabled
+        }
+    }
+
+    private func updateOriginalViewPresentation() {
+        originalViewButton.image = symbol(originalView ? "eye.slash" : "eye", description: originalViewLabel)
+        originalViewButton.setAccessibilityLabel(originalViewLabel)
+        setTooltip(toolbarShortcutToolTip(originalViewLabel, action: .overlayOriginalView), for: originalViewButton)
+    }
+
+    @objc private func toggleOriginalView() { onOriginalViewToggle?() }
     @objc private func togglePause() { onPauseChange?(!paused) }
     @objc private func translateImmediately() { onImmediateTranslation?() }
     @objc private func copyAll() { onCopyAll?() }
@@ -2433,11 +2468,15 @@ final class OverlayControlBarController: NSObject, NSMenuDelegate {
 
     private func makeOverflowMenu() -> NSMenu {
         let menu = NSMenu(title: L10n.text("번역 세션 제어"))
+        menu.autoenablesItems = false
         for id in responsiveLayout.overflowItemIDs {
             guard let definition = OverlayControlBarCatalog.items.first(where: {
                 $0.id == id
             }) else { continue }
             let item = overflowMenuItem(for: definition)
+            if originalView, [.pause, .translate, .copyAll, .copyImage, .saveImage, .search, .selection, .debug].contains(id) {
+                item.isEnabled = false
+            }
             item.representedObject = id.rawValue
             applyOverflowMenuShortcut(for: id, to: item)
             menu.addItem(item)
@@ -2528,6 +2567,9 @@ final class OverlayControlBarController: NSObject, NSMenuDelegate {
             )
             pauseItem.isEnabled = refreshMode == .automatic
             return pauseItem
+        case .originalViewAction:
+            return actionMenuItem(originalViewLabel, symbol: originalView ? "eye.slash" : "eye",
+                                  action: #selector(toggleOriginalView))
         case .translateAction:
             return actionMenuItem(
                 L10n.text("즉시 번역"), symbol: "bolt.fill", action: #selector(translateImmediately)

@@ -178,6 +178,15 @@ final class SessionCoordinator {
     private var availableApplications: [CaptureApplication] = []
     private var refreshMode = RefreshMode.load()
     private var paused = false
+    private(set) var overlayOriginalView = false
+    private var captureSuspended = false
+    private var captureEpoch = 0
+    private var captureStreamID: UUID?
+    private var captureTransition: Task<Void, Never>?
+
+    var canToggleOverlayOriginalView: Bool {
+        isSessionActive && displayMode == .overlay && !stopping
+    }
     private var acceptingFrames = false
     private var stopping = false
     private var mirrorFollowsSelectionSize = MirrorFollowsSelectionSize.load()
@@ -285,7 +294,7 @@ final class SessionCoordinator {
             guard self.generation == activeGeneration, self.contentRevision == activeRevision else { return }
             if self.latestCapturedFrame == nil { self.latestCapturedFrame = frame }
             if self.latestCapturedFrame != nil { self.translateImmediately() }
-            else { self.pendingModeRefresh = self.isSessionActive }
+            else { self.pendingModeRefresh = self.isSessionActive && !self.captureSuspended }
         }
         modeTransition = task
         await task.value
@@ -677,31 +686,11 @@ final class SessionCoordinator {
         initialComparisonStarted = false
         lastRealtimeOCR = .now - .seconds(2)
         lastMotion = .now
-        guard let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber else {
-            throw TranslatorError.noDisplay
-        }
         self.debugCaptureTranscript = debugCaptureTranscript
+        captureEpoch += 1
 
         do {
-            if let engine = capture as? ScreenCaptureEngine {
-                engine.onDiagnosticEvent = { [weak self] name in
-                    Task { @MainActor in self?.diagnostics.event("capture."+name) }
-                }
-                engine.onFailure = { [weak self] error in
-                    Task { @MainActor in
-                        guard let self, self.generation == activeGeneration, self.isSessionActive else { return }
-                        self.reportFailure(error, stage: .capture)
-                    }
-                }
-            }
-            try await capture.start(
-                displayID: number.uint32Value, screenFrame: screen.frame,
-                backingScale: screen.backingScaleFactor, selection: selection,
-                target: resolvedTarget,
-                policy: capturePolicy
-            ) { [weak self] image, frameID, receivedAt in
-                Task { @MainActor [weak self] in self?.receive(image, frameID: frameID, receivedAt: receivedAt) }
-            }
+            try await startCaptureStream(on: screen, epoch: captureEpoch)
             guard generation == activeGeneration else {
                 throw CancellationError()
             }
@@ -712,6 +701,98 @@ final class SessionCoordinator {
             if !(error is CancellationError), generation == activeGeneration, SessionFailure.make(error, stage: .capture).permission != .screenCapture { reportFailure(error, stage: .capture, userInitiated: true) }
             await cleanupFailedStart(activeGeneration: activeGeneration)
             throw error
+        }
+    }
+
+    private func startCaptureStream(on screen: NSScreen, epoch: Int) async throws {
+        guard let displayID = Self.displayID(for: screen) else { throw TranslatorError.noDisplay }
+        let streamID = UUID()
+        captureStreamID = streamID
+        if let engine = capture as? ScreenCaptureEngine {
+            engine.onDiagnosticEvent = { [weak self] name in
+                Task { @MainActor in self?.diagnostics.event("capture." + name) }
+            }
+            engine.onFailure = { [weak self] error in
+                Task { @MainActor in
+                    guard let self, self.captureEpoch == epoch, self.captureStreamID == streamID,
+                          self.isSessionActive else { return }
+                    self.reportFailure(error, stage: .capture)
+                }
+            }
+        }
+        try await capture.start(
+            displayID: displayID, screenFrame: screen.frame,
+            backingScale: screen.backingScaleFactor, selection: selection,
+            target: captureTarget, policy: capturePolicy
+        ) { [weak self] image, frameID, receivedAt in
+            Task { @MainActor [weak self] in
+                guard let self, self.captureEpoch == epoch, self.captureStreamID == streamID else { return }
+                self.receive(image, frameID: frameID, receivedAt: receivedAt)
+            }
+        }
+    }
+
+    func toggleOverlayOriginalView() {
+        guard canToggleOverlayOriginalView else { return }
+        setOverlayOriginalView(!overlayOriginalView)
+    }
+
+    private func setOverlayOriginalView(_ enabled: Bool) {
+        guard overlayOriginalView != enabled else { return }
+        overlayOriginalView = enabled
+        mirror?.setOriginalView(enabled)
+        updateRegionBorderPresentation()
+        captureEpoch += 1
+        let epoch = captureEpoch
+        acceptingFrames = false
+        captureSuspended = true
+        if enabled {
+            pendingModeRefresh = false
+            invalidateCapturedContent()
+            failureNotice.dismiss()
+        }
+        let previous = captureTransition
+        captureTransition = Task { @MainActor [weak self] in
+            await previous?.value
+            guard let self, self.captureEpoch == epoch else { return }
+            defer {
+                if self.captureEpoch == epoch { self.captureTransition = nil }
+            }
+            await self.capture.stop()
+            guard self.captureEpoch == epoch else { return }
+            await self.modeTransition?.value
+            guard self.captureEpoch == epoch else { return }
+            await self.ax.endSession()
+            guard self.captureEpoch == epoch, !enabled else { return }
+            await self.resumeCapture(epoch: epoch)
+        }
+    }
+
+    private func resumeCapture(epoch: Int) async {
+        while captureEpoch == epoch, let screen = selectedScreen {
+            let revision = contentRevision
+            let policy = capturePolicy
+            do {
+                try await startCaptureStream(on: screen, epoch: epoch)
+                guard captureEpoch == epoch else { return }
+                if revision != contentRevision || policy != capturePolicy {
+                    captureStreamID = nil
+                    await capture.stop()
+                    continue
+                }
+                captureSuspended = false
+                acceptingFrames = true
+                return
+            } catch {
+                guard captureEpoch == epoch else { return }
+                if displayMode == .overlay {
+                    overlayOriginalView = true
+                    mirror?.setOriginalView(true)
+                    updateRegionBorderPresentation()
+                }
+                reportFailure(error, stage: .capture, userInitiated: true)
+                return
+            }
         }
     }
 
@@ -736,6 +817,11 @@ final class SessionCoordinator {
         latestAXTranslation = nil; latestAXRenderedFrame = nil
         guard !stopping else { return }
         stopping = true
+        captureEpoch += 1
+        overlayOriginalView = false
+        captureSuspended = false
+        let pendingCaptureTransition = captureTransition
+        captureTransition = nil
         defer { stopping = false }
         generation += 1
         cancelPrefetch()
@@ -766,6 +852,7 @@ final class SessionCoordinator {
         paused = false
         debugCaptureTranscript?.close()
         debugCaptureTranscript = nil
+        await pendingCaptureTransition?.value
         await capture.stop()
         await modeTransition?.value
         await ax.endSession()
@@ -904,6 +991,7 @@ final class SessionCoordinator {
         guard displayMode != mode else { return }
         displayMode = mode
         mode.save()
+        if mode == .mirror { setOverlayOriginalView(false) }
         mirror?.setDisplayMode(mode, focusBehavior: focusBehavior)
         onDisplayModeChange?(mode)
     }
@@ -938,6 +1026,7 @@ final class SessionCoordinator {
 
     func setCapturePolicy(_ policy: CapturePolicy) async {
         capturePolicy = policy
+        guard !captureSuspended else { return }
         do {
             try await capture.update(policy: policy)
         } catch {
@@ -951,7 +1040,10 @@ final class SessionCoordinator {
         refreshMode = mode
         mode.save()
         if mode == .manual {
-            if paused { setPaused(false) }
+            if paused {
+                paused = false
+                mirror?.setPaused(false)
+            }
             suspendAutomaticProcessing()
         }
         mirror?.setRefreshMode(mode)
@@ -962,6 +1054,7 @@ final class SessionCoordinator {
     }
 
     func setPaused(_ value: Bool) {
+        guard !overlayOriginalView else { return }
         diagnostics.event("pause.change", ["paused":String(value)])
         guard paused != value else { return }
         paused = value
@@ -1016,7 +1109,9 @@ final class SessionCoordinator {
 
     private func updateRegionBorderPresentation() {
         let state: RegionBorderController.PresentationState
-        if refreshMode == .manual {
+        if overlayOriginalView {
+            state = .originalView
+        } else if refreshMode == .manual {
             state = .manual
         } else {
             state = paused ? .automaticPaused : .automatic
@@ -1037,7 +1132,7 @@ final class SessionCoordinator {
     }
 
     private func processLatestFrameImmediately(strategy: OCRExecutionStrategy) {
-        guard let frame = latestCapturedFrame, ocrTask == nil else { return }
+        guard !captureSuspended, let frame = latestCapturedFrame, ocrTask == nil else { return }
         latestFrame = nil
         pendingAutomaticFrame.clear()
         _ = prepareFrame(frame)
@@ -1199,6 +1294,7 @@ final class SessionCoordinator {
     }
 
     private func display(_ original: MirrorFrame) {
+        guard !captureSuspended else { return }
         if !original.isAXScrollPreview { scrollPreviewFrameID = nil }
         var frame=original
         let id=diagnostics.find(frameID:frame.frameID,generation:generation,revision:contentRevision)
@@ -1299,6 +1395,7 @@ final class SessionCoordinator {
         window.onDisplayModeChange = { [weak self] mode in
             guard let self else { return }
             self.displayMode = mode
+            if mode == .mirror { self.setOverlayOriginalView(false) }
             self.regionBorder?.setChromeVisible(mode == .mirror)
             mode.save()
             self.onDisplayModeChange?(mode)
@@ -1332,6 +1429,7 @@ final class SessionCoordinator {
             Task { @MainActor [weak self] in await self?.refreshApplicationList() }
         }
         window.onRefreshModeChange = { [weak self] mode in self?.setRefreshMode(mode) }
+        window.onOriginalViewToggle = { [weak self] in self?.toggleOverlayOriginalView() }
         window.onPauseChange = { [weak self] paused in self?.setPaused(paused) }
         window.onImmediateTranslation = { [weak self] in self?.translateImmediately() }
         window.onExtractionModeToggle = { [weak self] in
@@ -1434,14 +1532,18 @@ final class SessionCoordinator {
         selection = rect
         invalidateCapturedContent()
         let activeRevision = contentRevision
+        let epoch = captureEpoch
         acceptingFrames = false
         do {
-            try await capture.updateRegion(
-                selection: rect, screenFrame: selectedScreen.frame,
-                backingScale: selectedScreen.backingScaleFactor,
-                displayID: Self.displayID(for: selectedScreen)
-            )
+            if !captureSuspended {
+                try await capture.updateRegion(
+                    selection: rect, screenFrame: selectedScreen.frame,
+                    backingScale: selectedScreen.backingScaleFactor,
+                    displayID: Self.displayID(for: selectedScreen)
+                )
+            }
         } catch {
+            guard captureEpoch == epoch else { return }
             logger.error("Capture region update failed: \(error.localizedDescription, privacy: .public)")
             let ownsState = trackingGeneration == nil
                 || (generation == trackingGeneration && contentRevision == activeRevision)
@@ -1455,6 +1557,7 @@ final class SessionCoordinator {
             acceptingFrames = true
             return
         }
+        guard captureEpoch == epoch else { return }
         guard generation == (trackingGeneration ?? generation),
               trackingRevision == nil || activeRevision == contentRevision else {
             acceptingFrames = true
@@ -1466,7 +1569,7 @@ final class SessionCoordinator {
             mirror?.selectionSizeDidChange(rect.size, followsSelectionSize: mirrorFollowsSelectionSize)
         }
         mirror?.setSelectionFrame(rect)
-        acceptingFrames = true
+        acceptingFrames = !captureSuspended
         if rebuildTrackingAnchor, case .application = captureTarget, !selectionInteractionActive {
             startWindowTrackingIfNeeded()
         }
@@ -1489,15 +1592,18 @@ final class SessionCoordinator {
         selectionUpdateTask = nil
         invalidateCapturedContent()
         acceptingFrames = false
+        let epoch = captureEpoch
         await modeTransition?.value
         await ax.endSession()
+        guard captureEpoch == epoch, isSessionActive else { return }
         do {
             try await updateCaptureTarget(target, on: selectedScreen)
         } catch {
             logger.error("Capture target update failed: \(error.localizedDescription, privacy: .public)")
             updateTargetControl()
         }
-        acceptingFrames = true
+        guard captureEpoch == epoch else { return }
+        acceptingFrames = !captureSuspended
         startWindowTrackingIfNeeded()
     }
 
@@ -1687,7 +1793,12 @@ final class SessionCoordinator {
         guard let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber else {
             throw TranslatorError.noDisplay
         }
-        try await capture.updateTarget(displayID: number.uint32Value, target: target)
+        let epoch = captureEpoch
+        if !captureSuspended {
+            try await capture.updateTarget(displayID: number.uint32Value, target: target)
+        }
+        guard captureEpoch == epoch else { return }
+        if captureSuspended { contentRevision += 1 }
         captureTarget = target
         refreshDiagnosticState()
         updateTargetControl()
@@ -1721,7 +1832,7 @@ final class SessionCoordinator {
     }
 
     private func receive(_ image: CGImage, frameID: UInt64, receivedAt: UInt64) {
-        guard acceptingFrames else { return }
+        guard acceptingFrames, !captureSuspended else { return }
         let received = FrameEnvelope(image: image, id: frameID, receivedAt: receivedAt)
         latestCapturedFrame = received
         diagnostics.event("capture.received", ["frameID":String(frameID),"receivedAt":String(receivedAt),"width":String(image.width),"height":String(image.height)])
