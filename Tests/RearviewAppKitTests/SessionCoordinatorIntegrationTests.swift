@@ -44,10 +44,12 @@ private final class TestCaptureProvider: SessionCaptureProvider, @unchecked Send
     private(set) var stopCount = 0
     private(set) var startedSelection: CGRect?
     let startError: Error?
+    let stillImage: CGImage?
     private var onFrame: (@Sendable (CGImage, UInt64, UInt64) -> Void)?
 
-    init(startError: Error? = nil) {
+    init(startError: Error? = nil, stillImage: CGImage? = nil) {
         self.startError = startError
+        self.stillImage = stillImage
     }
 
     func start(
@@ -73,6 +75,10 @@ private final class TestCaptureProvider: SessionCaptureProvider, @unchecked Send
     func stop() async {
         stopCount += 1
         onFrame = nil
+    }
+
+    func captureStill() async throws -> (CGImage, UInt64, UInt64)? {
+        stillImage.map { ($0, 100, DispatchTime.now().uptimeNanoseconds) }
     }
 
     func emit(_ image: CGImage, frameID: UInt64) {
@@ -120,13 +126,14 @@ private actor TestAXProvider: SessionAXProvider {
     let snapshot: AXExtractionSnapshot?
     let images: Bool
     let imageCount: Int
-    init(gate: TestGate? = nil, failure: AXExtractionError? = nil, snapshot: AXExtractionSnapshot? = nil, images: Bool = false, imageCount: Int = 1) {
-        self.gate = gate; self.failure = failure; self.snapshot = snapshot; self.images = images; self.imageCount = imageCount
+    let gatedCall: Int?
+    init(gate: TestGate? = nil, failure: AXExtractionError? = nil, snapshot: AXExtractionSnapshot? = nil, images: Bool = false, imageCount: Int = 1, gatedCall: Int? = nil) {
+        self.gate = gate; self.failure = failure; self.snapshot = snapshot; self.images = images; self.imageCount = imageCount; self.gatedCall = gatedCall
     }
     func collect(_ request: AXExtractionRequest) async throws -> AXExtractionSnapshot {
         calls += 1
         requestID=request.diagnosticRequestID
-        if let gate { await gate.wait() }
+        if let gate, gatedCall == nil || gatedCall == calls { await gate.wait() }
         if let failure { throw failure }
         // Intentionally ignores cancellation to test stale-result rejection.
         if images {
@@ -429,6 +436,111 @@ final class SessionCoordinatorIntegrationTests: XCTestCase {
         for _ in 0..<10 { await Task.yield() }
         XCTAssertNil(coordinator.latestAXSnapshot)
         XCTAssertTrue(output.frames.allSatisfy { $0.axArtwork == nil && $0.translatedItems.isEmpty })
+    }
+
+    func testAXSettlesWithStillCaptureAfterStreamStopsDeliveringFrames() async throws {
+        let initial = makeImage(width: 32, height: 24, gray: 40)
+        let changed = makeImage(width: 32, height: 24, gray: 40, changedPixel: (0, 0, 255))
+        let capture = TestCaptureProvider(stillImage: changed)
+        let coordinator = SessionCoordinator(broker: TestTranslationProvider(translations: [:]), capture: capture,
+            targetResolver: TestTargetResolver(), ocr: TestOCRProvider(batch: makeBatch(lines: [])),
+            ax: TestAXProvider(snapshot: try translatedAXFixture()), outputSink: TestOutputSink(), createsOutputWindow: false)
+        coordinatorsUnderTest.append(coordinator)
+        let (screen, selection) = try makeScreenAndSelection()
+        await coordinator.setTextExtractionMode(.ax)
+        try await coordinator.start(screen: screen, selection: selection, captureTarget: .application(
+            CaptureApplication(processID: ProcessInfo.processInfo.processIdentifier, bundleIdentifier: "notion.id", name: "Notion",
+                               anchorWindowID: 42, anchorWindowFrame: screen.frame)))
+        await coordinator.setCapturePolicy(CapturePolicy(targetFPS: 30, axRefreshIntervalMilliseconds: 100,
+                                                         axSettleMilliseconds: 300))
+        coordinator.setRefreshMode(.automatic)
+        coordinator.setPaused(false)
+        let first = expectation(description: "initial result")
+        let settled = expectation(description: "settled still result")
+        var movedAt: ContinuousClock.Instant?
+        coordinator.onAXTranslation = { value in
+            if value.frame.frameID == 10 { first.fulfill() }
+            if value.frame.frameID == 100 {
+                if let movedAt { XCTAssertGreaterThanOrEqual(movedAt.duration(to: .now), .milliseconds(300)) }
+                settled.fulfill()
+            }
+        }
+        capture.emit(initial, frameID: 10)
+        await fulfillment(of: [first], timeout: 2)
+        movedAt = .now
+        capture.emit(changed, frameID: 11)
+        await fulfillment(of: [settled], timeout: 2)
+        XCTAssertEqual(coordinator.latestAXTranslation?.frame.frameID, 100)
+    }
+
+    func testAXSettlesUsingNewestStreamFrameWithoutDuplicateCollection() async throws {
+        let initial = makeImage(width: 32, height: 24, gray: 40)
+        let changed = makeImage(width: 32, height: 24, gray: 40, changedPixel: (0, 0, 255))
+        let capture = TestCaptureProvider(stillImage: changed)
+        let coordinator = SessionCoordinator(broker: TestTranslationProvider(translations: [:]), capture: capture,
+            targetResolver: TestTargetResolver(), ocr: TestOCRProvider(batch: makeBatch(lines: [])),
+            ax: TestAXProvider(snapshot: try translatedAXFixture()), outputSink: TestOutputSink(), createsOutputWindow: false)
+        coordinatorsUnderTest.append(coordinator)
+        let (screen, selection) = try makeScreenAndSelection()
+        await coordinator.setTextExtractionMode(.ax)
+        try await coordinator.start(screen: screen, selection: selection, captureTarget: .application(
+            CaptureApplication(processID: ProcessInfo.processInfo.processIdentifier, bundleIdentifier: "notion.id", name: "Notion",
+                               anchorWindowID: 42, anchorWindowFrame: screen.frame)))
+        await coordinator.setCapturePolicy(CapturePolicy(targetFPS: 30, axRefreshIntervalMilliseconds: 400))
+        coordinator.setRefreshMode(.automatic)
+        coordinator.setPaused(false)
+        let first = expectation(description: "initial result")
+        let settled = expectation(description: "settled stream result")
+        var results: [UInt64] = []
+        coordinator.onAXTranslation = { value in
+            results.append(value.frame.frameID)
+            if value.frame.frameID == 10 { first.fulfill() }
+            if value.frame.frameID == 12 { settled.fulfill() }
+        }
+        capture.emit(initial, frameID: 10)
+        await fulfillment(of: [first], timeout: 2)
+        capture.emit(changed, frameID: 11)
+        try await Task.sleep(for: .milliseconds(200))
+        capture.emit(changed, frameID: 12)
+        await fulfillment(of: [settled], timeout: 2)
+        XCTAssertEqual(results, [10, 12])
+    }
+
+    func testAXSettlesAgainWhenMotionResumesDuringCollection() async throws {
+        let initial = makeImage(width: 32, height: 24, gray: 40)
+        let moved = makeImage(width: 32, height: 24, gray: 40, changedPixel: (0, 0, 255))
+        let movedAgain = makeImage(width: 32, height: 24, gray: 40, changedPixel: (6, 6, 255))
+        let gate = TestGate()
+        let capture = TestCaptureProvider(stillImage: moved)
+        let ax = TestAXProvider(gate: gate, snapshot: try translatedAXFixture(), gatedCall: 2)
+        let coordinator = SessionCoordinator(broker: TestTranslationProvider(translations: [:]), capture: capture,
+            targetResolver: TestTargetResolver(), ocr: TestOCRProvider(batch: makeBatch(lines: [])),
+            ax: ax, outputSink: TestOutputSink(), createsOutputWindow: false)
+        coordinatorsUnderTest.append(coordinator)
+        let (screen, selection) = try makeScreenAndSelection()
+        await coordinator.setTextExtractionMode(.ax)
+        try await coordinator.start(screen: screen, selection: selection, captureTarget: .application(
+            CaptureApplication(processID: ProcessInfo.processInfo.processIdentifier, bundleIdentifier: "notion.id",
+                               name: "Notion", anchorWindowID: 42, anchorWindowFrame: screen.frame)))
+        await coordinator.setCapturePolicy(CapturePolicy(targetFPS: 30, axRefreshIntervalMilliseconds: 100))
+        coordinator.setRefreshMode(.automatic)
+        coordinator.setPaused(false)
+        let first = expectation(description: "initial result")
+        let settled = expectation(description: "result after motion resumes")
+        coordinator.onAXTranslation = { value in
+            if value.frame.frameID == 10 { first.fulfill() }
+            if value.frame.frameID == 102 { settled.fulfill() }
+        }
+        capture.emit(initial, frameID: 10)
+        await fulfillment(of: [first], timeout: 2)
+        capture.emit(moved, frameID: 11)
+        await gate.waitUntilStarted()
+        capture.emit(movedAgain, frameID: 101)
+        try await Task.sleep(for: .milliseconds(200))
+        capture.emit(movedAgain, frameID: 102)
+        await gate.release()
+        await fulfillment(of: [settled], timeout: 2)
+        XCTAssertEqual(coordinator.latestAXTranslation?.frame.frameID, 102)
     }
 
     func testNewestPendingFrameRunsAfterInFlightAXFinishes() async throws {

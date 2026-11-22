@@ -51,7 +51,9 @@ package func rect(_ r: CGRect) -> [String: Double] { ["x":r.minX,"y":r.minY,"wid
 
 package enum AXCollector {
 static func collect(_ request: AXExtractionRequest, window: AXUIElement, cancellation: AXCancellation, prefetch: (([AXUIElement]) -> Void)? = nil,
-                    scrollAnchors: (([(AXUIElement, CGPoint)]) -> Void)? = nil) throws -> AXExtractionSnapshot {
+                    scrollAnchors: ((AXScrollAnchors) -> Void)? = nil,
+                    previousCoordinates: [AXScrollCoordinateProbe.Coordinate]? = nil,
+                    trackCoordinates: (([AXScrollCoordinateProbe.Coordinate]) -> Void)? = nil) throws -> AXExtractionSnapshot {
  let before = request.windowFrame
     func selectionViewport(_ row: [String:Any]) -> CGRect {
         let surface = (row["surfaceViewport"] as? [String:Double]).map {
@@ -621,10 +623,32 @@ static func collect(_ request: AXExtractionRequest, window: AXUIElement, cancell
         ]
     }
 
-    for unit in groups.keys.sorted() {
+    var unitOrder = groups.keys.sorted()
+    if previousCoordinates != nil, let displacement = request.scrollCoordinateDisplacement {
+        let body = unitOrder.filter { rows[$0]["surfaceKind"] == nil && verticalScroller($0) != nil }
+        let ordered = body.sorted {
+            let a = rowFrame($0)?.minY ?? 0
+            let b = rowFrame($1)?.minY ?? 0
+            return a == b ? $0 < $1 : (displacement < 0 ? a < b : a > b)
+        }
+        let bodySet = Set(body)
+        var iterator = ordered.makeIterator()
+        unitOrder = unitOrder.map { bodySet.contains($0) ? (iterator.next() ?? $0) : $0 }
+    }
+    var sampledCoordinateFrames: [Int: CGRect] = [:]
+    for unit in unitOrder {
         try cancellation.check()
         var leafIDs: [Int] = []
         collectTextLeaves(unit, into: &leafIDs)
+        let probeDisplacement = rows[unit]["surfaceKind"] == nil && verticalScroller(unit) != nil &&
+            previousCoordinates != nil ? request.scrollCoordinateDisplacement : nil
+        if let probeDisplacement {
+            let order = probeDisplacement < 0 ? leafIDs : Array(leafIDs.reversed())
+            for id in order where rows[id]["mathOwner"] == nil && sampledCoordinateFrames[id] == nil {
+                try cancellation.check()
+                sampledCoordinateFrames[id] = frame(elements[id])
+            }
+        }
         let viewport=selectionViewport(rows[unit])
         var probe:[String:Any]
         if let parts = MathSegments.parts(root: unit, rows: rows, children: childrenByParent) {
@@ -669,7 +693,8 @@ static func collect(_ request: AXExtractionRequest, window: AXUIElement, cancell
             probe=["lineMethod":"unavailable","lineSourceText":rows[unit]["value"] as? String ?? "",
                    "lineRangeStatus":"no_static_text_descendants","lineRanges":[]]
         } else {
-            probe=investigator.inspectParagraph(elements[unit],role:rows[unit]["role"] as? String ?? "",leaves:leafIDs.map{($0,elements[$0],(rows[$0]["recoveredText"] ?? rows[$0]["value"]) as! String)},viewport:viewport)
+            probe=investigator.inspectParagraph(elements[unit],role:rows[unit]["role"] as? String ?? "",leaves:leafIDs.map{($0,elements[$0],(rows[$0]["recoveredText"] ?? rows[$0]["value"]) as! String)},viewport:viewport,
+                topFirstBounds: probeDisplacement.map { $0 < 0 } ?? false)
         }
         probe["sourceNodes"]=leafIDs
         let lines=probe["lineRanges"] as? [[String:Any]] ?? []
@@ -796,7 +821,7 @@ static func collect(_ request: AXExtractionRequest, window: AXUIElement, cancell
     let surfaceStarted=Date()
     let documentSurfaces=AXDocumentSurfaceBuilder.build(rows:rows)
     let surfaceSeconds=Date().timeIntervalSince(surfaceStarted)
-    let metadata: [String: Any] = ["imageViewerActive":imageViewer != nil,"documentSurfaces":documentSurfaces,"documentSurfaceSeconds":surfaceSeconds, "popupOcclusionSeconds":popupDetectionSeconds, "popupOcclusionPanels":popupOcclusion.diagnostics, "popupOcclusionPolicy":"semantic-dialog-and-floating-sidebar-v2; anonymous-popups-unsupported", "imageRegions":imageRegions,"status": valid ? (partial ? "partial" : "complete") : "failed",
+    var metadata: [String: Any] = ["imageViewerActive":imageViewer != nil,"documentSurfaces":documentSurfaces,"documentSurfaceSeconds":surfaceSeconds, "popupOcclusionSeconds":popupDetectionSeconds, "popupOcclusionPanels":popupOcclusion.diagnostics, "popupOcclusionPolicy":"semantic-dialog-and-floating-sidebar-v2; anonymous-popups-unsupported", "imageRegions":imageRegions,"status": valid ? (partial ? "partial" : "complete") : "failed",
         "targetAndFrameMatch":valid,"coordinateSystem":"screen-top-left-points", "elapsed":Date().timeIntervalSince(started), "colorQueries":colorCalls, "colorQuerySeconds":Date().timeIntervalSince(colorStarted),
         "codeRangeQueries":investigator.calls-codeCallsBefore,"codeRangeSeconds":codeSeconds,
         "parentValueQueries":request.collectParentTextDiagnostics ? rows.filter { $0["role"] as? String == "AXTextArea" }.count : 0,
@@ -836,16 +861,88 @@ static func collect(_ request: AXExtractionRequest, window: AXUIElement, cancell
             }
             return belongsToBody ? (id, CGPoint(x: x, y: y)) : nil
         }
-        var selected: [(AXUIElement, CGPoint)] = []
+        var selected: [(Int, CGPoint)] = []
         for fraction in [0.3, 0.5, 0.7] {
             let y = captureViewport.minY + fraction * captureViewport.height
             if let choice = choices.filter({ candidate in
                 selected.allSatisfy { abs($0.1.y - candidate.1.y) >= 35 }
             }).min(by: { abs($0.1.y - y) < abs($1.1.y - y) }) {
-                selected.append((elements[choice.0], choice.1))
+                selected.append(choice)
             }
         }
-        scrollAnchors(selected)
+        let scrollers = Set(selected.compactMap { verticalScroller($0.0) })
+        if selected.count >= 2, scrollers.count == 1, let scroller = scrollers.first,
+           selected.allSatisfy({ verticalScroller($0.0) == scroller }),
+           let viewport = rowFrame(scroller), !viewport.isEmpty {
+            let path = Set(ancestorIDs(scroller))
+            let fixed = rows.indices.filter { id in
+                let c = classes(id)
+                return c.contains("notion-topbar") || c.contains("notion-sidebar") ||
+                    c.contains("notion-peek-renderer") || c.contains("sticky-portal-target") ||
+                    c.contains("notion-text-action-menu") ||
+                    (rows[id]["role"] as? String == "AXWebArea" && rows[id]["title"] as? String == "Tab Bar")
+            }
+            let fixedFrames = fixed.compactMap { id in rowFrame(id).map { (elements[id], $0) } }
+            let overlayRoots = rows.indices.filter { classes($0).contains("notion-overlay-container") }
+            let boundaryBranches = path.union(overlayRoots).sorted()
+            var branches: [(AXUIElement, [AXUIElement])] = []
+            for id in boundaryBranches {
+                try cancellation.check()
+                guard let children = get(elements[id], "AXChildren") as? [AXUIElement], children.count <= 64 else { break }
+                branches.append((elements[id], children))
+            }
+            if branches.count == boundaryBranches.count, fixedFrames.count == fixed.count,
+               !popupOcclusion.diagnostics.contains(where: { $0["kind"] as? String == "unsupported_overlay" }),
+               fixed.allSatisfy({ id in
+                   guard classes(id).contains("notion-peek-renderer") else { return true }
+                   guard let peek = rowFrame(id) else { return false }
+                   return peek.minX >= viewport.midX && !peek.contains(CGPoint(x: viewport.midX, y: viewport.midY))
+               }) {
+                scrollAnchors(AXScrollAnchors(elements: selected.map { (elements[$0.0], $0.1) },
+                    viewport: (elements[scroller], viewport), exclusions: fixedFrames, branches: branches))
+                if let trackCoordinates {
+                    let byUnit = Dictionary(uniqueKeysWithValues: paragraphs.map { ($0["node"] as! Int, $0) })
+                    var coordinates: [AXScrollCoordinateProbe.Coordinate] = []
+                    for unit in unitOrder {
+                        guard let paragraph = byUnit[unit], rows[unit]["surfaceKind"] == nil,
+                              verticalScroller(unit) == scroller,
+                              paragraph["inlineContent"] == nil, paragraph["isCodeBlock"] as? Bool != true else { continue }
+                        let members = paragraph["members"] as? [Int] ?? []
+                        let upward = (request.scrollCoordinateDisplacement ?? 0) > 0
+                        for id in upward ? Array(members.reversed()) : members {
+                            guard rows[id]["mathOwner"] == nil, rows[id]["role"] as? String == "AXStaticText",
+                                  let text = (rows[id]["recoveredText"] ?? rows[id]["value"]) as? String, !text.isEmpty,
+                                  let box = sampledCoordinateFrames[id] ?? rowFrame(id) else { continue }
+                            coordinates.append(.init(element: elements[id], text: text, range: nil, box: box, node: id))
+                        }
+                        let lines = paragraph["lineRanges"] as? [[String: Any]] ?? []
+                        for line in upward ? Array(lines.reversed()) : lines {
+                            guard let text = line["text"] as? String, let start = line["rangeStart"] as? Int,
+                                  let length = line["rangeLength"] as? Int, length > 0,
+                                  let box = line["box"] as? [String: Double],
+                                  let x = box["x"], let y = box["y"], let w = box["width"], let h = box["height"] else { continue }
+                            coordinates.append(.init(element: elements[unit], text: text, range: start..<(start + length),
+                                box: CGRect(x: x, y: y, width: w, height: h), node: unit))
+                        }
+                    }
+                    if let previousCoordinates, let displacement = request.scrollCoordinateDisplacement {
+                        let bodyViewport = viewport.intersection(captureViewport)
+                        let exclusions = fixedFrames.map { $0.1 }
+                        let alignment = AXScrollCoordinateProbe.compare(previous: previousCoordinates,
+                            current: coordinates, displacement: displacement, viewport: bodyViewport, exclusions: exclusions,
+                            referenceIsStable: request.scrollCoordinateReferenceIsStable)
+                        trackCoordinates(alignment.coordinates)
+                        metadata["scrollCoordinateProbe"] = alignment.records
+                        if !bodyViewport.isEmpty {
+                            metadata["scrollCoordinateViewport"] = rect(bodyViewport)
+                            metadata["scrollCoordinateExclusions"] = exclusions.map(rect)
+                        }
+                    } else {
+                        trackCoordinates(coordinates)
+                    }
+                }
+            }
+        }
     }
     if let prefetch, imageViewer == nil, metadata["status"] as? String == "complete" {
         let roots = rows.filter { $0["documentURL"] != nil && $0["surfaceKind"] == nil }

@@ -45,16 +45,36 @@ final class AXScrollPreviewTests: XCTestCase {
         diagnostic.originalLineBoxes = [line]
         let artwork = AXRenderArtwork(background: previous, text: previous, debug: nil, items: [],
             fragments: [], clipRects: [line], diagnostics: [diagnostic], elapsed: 0)
+        let region = AXScrollPreview.Region(viewport: CGRect(x: 0, y: 0, width: 96, height: 128))
         for dy in [-16, 16] {
             let preview = try XCTUnwrap(AXScrollPreview.make(size: CGSize(width: 96, height: 128),
-                deltaY: CGFloat(dy), artwork: artwork, snapshot: snapshot))
+                deltaY: CGFloat(dy), artwork: artwork, snapshot: snapshot, previous: region, current: region))
             XCTAssertEqual(preview.diagnostics.first?.lineBoxes, [line.offsetBy(dx: 0, dy: CGFloat(dy))])
             XCTAssertTrue(preview.items.isEmpty)
             let layer = try XCTUnwrap(preview.background)
             XCTAssertEqual(try pixel(layer, x: 40, y: 54 + dy), try pixel(previous, x: 40, y: 54))
             XCTAssertEqual(try pixel(layer, x: 10, y: 54 + dy), [0, 0, 0, 0])
         }
-        XCTAssertNil(AXScrollPreview.make(size: CGSize(width: 96, height: 128), deltaY: 0, artwork: artwork, snapshot: snapshot))
+        let blocked = AXScrollPreview.Region(viewport: region.viewport,
+                                            exclusions: [CGRect(x: 0, y: 64, width: 96, height: 14)])
+        XCTAssertNil(AXScrollPreview.make(size: CGSize(width: 96, height: 128), deltaY: 16,
+            artwork: artwork, snapshot: snapshot, previous: region, current: blocked))
+        var partial = diagnostic
+        partial.clipped = true
+        let secondLine = line.offsetBy(dx: 0, dy: -24)
+        partial.lineBoxes = [line, secondLine]
+        partial.originalLineBoxes = [line, secondLine]
+        let partialArtwork = AXRenderArtwork(background: previous, text: previous, debug: nil, items: [],
+            fragments: [], clipRects: [line, secondLine], diagnostics: [partial], elapsed: 0)
+        let preview = try XCTUnwrap(AXScrollPreview.make(size: CGSize(width: 96, height: 128), deltaY: 16,
+            artwork: partialArtwork, snapshot: snapshot, previous: region, current: blocked))
+        XCTAssertEqual(preview.diagnostics.first?.lineBoxes, [secondLine.offsetBy(dx: 0, dy: 16)])
+        let bodyEdge = line.maxX
+        let leftOfPreview = AXScrollPreview.Region(viewport: CGRect(x: 0, y: 0, width: bodyEdge, height: 128))
+        let edgePreview = try XCTUnwrap(AXScrollPreview.make(size: CGSize(width: 96, height: 128), deltaY: 16,
+            artwork: artwork, snapshot: snapshot, previous: leftOfPreview, current: leftOfPreview))
+        XCTAssertEqual(edgePreview.clipRects.first?.maxX, bodyEdge)
+        XCTAssertNil(AXScrollPreview.make(size: CGSize(width: 96, height: 128), deltaY: 0, artwork: artwork, snapshot: snapshot, previous: region, current: region))
     }
 }
 #endif

@@ -27,6 +27,7 @@ final class ScreenCaptureEngine: NSObject, SCStreamOutput, SCStreamDelegate, @un
     private var screenObserver: NSObjectProtocol?
     private let logger = Logger(subsystem: "io.github.bloodybear.rearview", category: "capture")
     private var stream: SCStream?
+    private var activeFilter: SCContentFilter?
     private var configuration: SCStreamConfiguration?
     private let queue = DispatchQueue(label: "Rearview.capture", qos: .userInteractive)
     private let ciContext = CIContext(options: [.cacheIntermediates: false])
@@ -98,6 +99,7 @@ final class ScreenCaptureEngine: NSObject, SCStreamOutput, SCStreamDelegate, @un
             let stream = SCStream(filter: filter, configuration: configuration, delegate: self)
             try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: queue)
             self.stream = stream
+            self.activeFilter = filter
             self.configuration = configuration
             captureTarget = target
             currentDisplayID = displayID
@@ -125,9 +127,12 @@ final class ScreenCaptureEngine: NSObject, SCStreamOutput, SCStreamDelegate, @un
             return
         }
         let previousInterval = configuration.minimumFrameInterval
-        configuration.minimumFrameInterval = CMTime(
-            value: 1, timescale: CMTimeScale(policy.targetFPS)
-        )
+        let interval = CMTime(value: 1, timescale: CMTimeScale(policy.targetFPS))
+        if previousInterval == interval {
+            record(policy, target: captureTarget)
+            return
+        }
+        configuration.minimumFrameInterval = interval
         do {
             try await stream.updateConfiguration(configuration)
         } catch {
@@ -155,6 +160,7 @@ final class ScreenCaptureEngine: NSObject, SCStreamOutput, SCStreamDelegate, @un
             }
             let filter = try makeFilter(content: content, display: display, target: captureTarget)
             try await stream.updateContentFilter(filter)
+        activeFilter = filter
             currentDisplayID = displayID
         }
         let sourceRect = pixelAlignedCaptureRect(
@@ -184,8 +190,23 @@ final class ScreenCaptureEngine: NSObject, SCStreamOutput, SCStreamDelegate, @un
         }
         let filter = try makeFilter(content: content, display: display, target: target)
         try await stream.updateContentFilter(filter)
+        activeFilter = filter
         captureTarget = target
         record(currentPolicy, target: target)
+    }
+
+    func captureStill() async throws -> (CGImage, UInt64, UInt64)? {
+        try await operations.run { [self] in
+            guard let activeFilter, let configuration else { return nil }
+            let image = try await SCScreenshotManager.captureImage(
+                contentFilter: activeFilter, configuration: configuration)
+            return await withCheckedContinuation { continuation in
+                queue.async {
+                    self.nextFrameID &+= 1
+                    continuation.resume(returning: (image, self.nextFrameID, DispatchTime.now().uptimeNanoseconds))
+                }
+            }
+        }
     }
 
     func stop() async {
@@ -205,6 +226,7 @@ final class ScreenCaptureEngine: NSObject, SCStreamOutput, SCStreamDelegate, @un
         }
         self.stream = nil
         configuration = nil
+        activeFilter = nil
         onFrame = nil
         onFailure = nil
         captureTarget = .allContent
@@ -298,6 +320,7 @@ final class ScreenCaptureEngine: NSObject, SCStreamOutput, SCStreamDelegate, @un
             value: policy.realtimeOCRIntervalMilliseconds
         )
         profiler.setCounter("ax.refreshIntervalMilliseconds", value: policy.axRefreshIntervalMilliseconds)
+        profiler.setCounter("ax.settleMilliseconds", value: policy.axSettleMilliseconds)
         profiler.setCounter("capture.mode.mirror", value: 1)
         profiler.setCounter("capture.filter.application", value: target.isApplication ? 1 : 0)
     }

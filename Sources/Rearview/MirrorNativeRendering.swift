@@ -904,6 +904,7 @@ final class NativeTranslationMirrorView: NSView, NSMenuItemValidation, NSPopover
     var onOCRDebugSelection: ((OCRDebugItem) -> Void)?
     var onSearchCountChange: ((Int, String?) -> Void)?
     var ocrDebugOverlayEnabled = false
+    private var exportedScrollPreview: UUID?
     var showsCapturedImage = true
     var fillsBackgroundOutsideImage = true
     private let renderer = NativeMirrorRenderer()
@@ -1111,7 +1112,20 @@ final class NativeTranslationMirrorView: NSView, NSMenuItemValidation, NSPopover
             )
         }
         snapshot.diagnosticContext?.recorder?.mark("display.drawn",id:snapshot.diagnosticContext?.id,["hasComposite":String(imageToDraw != nil),"hasAXTranslationArtwork":String(snapshot.axArtwork?.diagnostics.contains { $0.status == "rendered" } == true),"showsCapturedImage":String(showsCapturedImage),"windowVisible":String(window?.isVisible ?? false),"liveResize":String(window?.inLiveResize ?? false),"axScrollPreview":String(snapshot.isAXScrollPreview)])
-        if ocrDebugOverlayEnabled {
+        if ocrDebugOverlayEnabled, snapshot.isAXScrollPreview {
+            if showsCapturedImage, let imageToDraw, let context = NSGraphicsContext.current?.cgContext {
+                let size = CGSize(width: snapshot.image.width, height: snapshot.image.height)
+                let boxes = snapshot.axArtwork?.diagnostics.flatMap(\.lineBoxes) ?? []
+                AXScrollDebugExport.drawBoxes(boxes, in: context, destination: imageRect, sourceSize: size)
+                if window?.isVisible == true, let export = snapshot.axScrollDebugExport,
+                   exportedScrollPreview != export.attempt {
+                    exportedScrollPreview = export.attempt
+                    export.record("displayed", shift: snapshot.axScrollPreviewShift, image: imageToDraw, boxes: boxes,
+                                  reference: snapshot.axScrollDebugReference, current: snapshot.image,
+                                  currentReceivedAt: snapshot.axScrollDebugReceivedAt, backgroundOpacity: backgroundOpacity)
+                }
+            }
+        } else if ocrDebugOverlayEnabled {
             if let debug = snapshot.axArtwork?.debug {
                 NSImage(cgImage:debug,size:imageRect.size).draw(in:imageRect)
             }

@@ -121,7 +121,26 @@ import NotionAXReportSupport
             var translationSamples: [[String:Any]] = []
             var translationStartedAt = Date()
             var presentations: [[String:Any]] = []
+            var scrollPairs: [(CGImage, CGImage, [String: String])] = []
+            if CommandLine.arguments.contains("--ax-save-scroll-pairs") {
+                coordinator.onAXScrollProbeFrames = { before, after, viewport, summary in
+                    let bounds = CGRect(x: 0, y: 0, width: after.width, height: after.height)
+                    let region = viewport.intersection(bounds).integral
+                    guard scrollPairs.count < 8, !region.isEmpty,
+                          let oldBody = before.cropping(to: region), let newBody = after.cropping(to: region) else { return }
+                    scrollPairs.append((oldBody, newBody, summary))
+                }
+            }
+            var scrollProbeSample: (SessionCoordinator.AXTranslatedFrame, MirrorFrame, [[String:Any]])?
+            let measureCoordinates = CommandLine.arguments.contains("--ax-show-scroll-coordinate-probe")
             coordinator.onAXPresentation = { value in
+                if measureCoordinates, scrollProbeSample == nil,
+                   let frame = coordinator.latestAXRenderedFrame, frame.frameID == value.frame.frameID,
+                   let metadata = (try? JSONSerialization.jsonObject(with: value.frame.snapshot.metadata)) as? [String:Any],
+                   let records = metadata["scrollCoordinateProbe"] as? [[String:Any]],
+                   records.contains(where: { ($0["dy"] as? Double ?? 0) != 0 && $0["rangeStart"] != nil }) {
+                    scrollProbeSample = (value, frame, records)
+                }
                 presentations.append(["seconds":Date().timeIntervalSince(translationStartedAt),
                     "frameID":value.frame.frameID,
                     "sinceCaptureMs":Double(DispatchTime.now().uptimeNanoseconds - value.frame.receivedAt)/1e6,
@@ -162,8 +181,14 @@ import NotionAXReportSupport
             // Track the replay's window, not the focused app/window.
             let target = CaptureApplication(processID:input.request.processID,bundleIdentifier:"notion.id",name:"Notion",
                 anchorWindowID:input.request.windowID,anchorWindowFrame:input.request.windowFrame)
-            let selection = appKitSelectionRect(for:input.request.selectionRegion,screenFrame:screen.frame,displayBounds:CGDisplayBounds(display.uint32Value))
+            let selectionRegion = CommandLine.arguments.contains("--ax-full-window-capture")
+                ? input.request.windowFrame : input.request.selectionRegion
+            let selection = appKitSelectionRect(for: selectionRegion, screenFrame: screen.frame,
+                                                displayBounds: CGDisplayBounds(display.uint32Value))
             try await coordinator.start(screen:screen,selection:selection,captureTarget:.application(target))
+            if measureLiveDraw, CommandLine.arguments.contains("--ax-scroll-debug-overlay") {
+                coordinator.toggleOCRDebugOverlay()
+            }
             func exportPhase(targetCount:Int) throws -> (URL,Bool) {
                 if let failure { throw failure }
                 guard let collected else { throw CocoaError(.coderValueNotFound) }
@@ -297,6 +322,26 @@ import NotionAXReportSupport
                     }
                 }
                 let (folder,failed)=try exportPhase(targetCount:targetCount)
+                if let (value, corrected, records) = scrollProbeSample {
+                    scrollProbeSample = nil
+                    var original = corrected
+                    original.axArtwork = AXLineRendering.build(value, appliesScrollProbe: false)
+                    let view = NativeTranslationMirrorView(frame: CGRect(x: 0, y: 0,
+                        width: corrected.image.width, height: corrected.image.height))
+                    view.setRenderingActive(true)
+                    view.backgroundOpacity = 1
+                    for (name, frame) in [("scroll-probe-ax.png", original), ("scroll-probe-corrected.png", corrected)] {
+                        view.frameSnapshot = frame
+                        if let tiff = view.compositedImage()?.tiffRepresentation, let bitmap = NSBitmapImageRep(data: tiff) {
+                            try bitmap.representation(using: .png, properties: [:])?.write(to: folder.appendingPathComponent(name))
+                        }
+                    }
+                    try NSBitmapImageRep(cgImage: corrected.image).representation(using: .png, properties: [:])?
+                        .write(to: folder.appendingPathComponent("scroll-probe-source.png"))
+                    try JSONSerialization.data(withJSONObject: ["frameID": value.frame.frameID, "coordinates": records],
+                                               options: [.prettyPrinted, .sortedKeys])
+                        .write(to: folder.appendingPathComponent("scroll-probe-coordinates.json"))
+                }
                 lastOutput=folder;allOutputs.append(folder);anyFailure = anyFailure || failed
                 if let control {
                     try JSONSerialization.data(withJSONObject:["phase":phase,"name":name,"output":folder.path,"failed":failed],options:[.sortedKeys])
@@ -310,6 +355,18 @@ import NotionAXReportSupport
                 for folder in allOutputs { try encoder.encode(profile).write(to:folder.appendingPathComponent("translation-profile.json"),options:.atomic) }
             }
             if CommandLine.arguments.contains("--export-diagnostics") {
+                if !scrollPairs.isEmpty {
+                    let directory = output.appendingPathComponent("scroll-probe-pairs", isDirectory: true)
+                    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                    for (index, pair) in scrollPairs.enumerated() {
+                        for (suffix, image) in [("before", pair.0), ("after", pair.1)] {
+                            try NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:])?
+                                .write(to: directory.appendingPathComponent("\(index)-\(suffix).png"))
+                        }
+                        try JSONSerialization.data(withJSONObject: pair.2, options: [.sortedKeys])
+                            .write(to: directory.appendingPathComponent("\(index).json"))
+                    }
+                }
                 let snapshot=coordinator.diagnosticSnapshot()
                 _=try await Task.detached(priority:.utility) {
                     try DiagnosticBundleWriter.write(snapshot,options:.init(),destination:output.appendingPathComponent("diagnostics.zip"))

@@ -79,6 +79,20 @@ enum AXLineRendering {
     }
 
     private static let queue = DispatchQueue(label: "Rearview.ax.layout", qos: .userInitiated)
+    static func scrollProbeClips(line: CGRect, regions: [CGRect], delta: CGFloat,
+                                 viewport: CGRect, exclusions: [CGRect]) -> [CGRect] {
+        regions.flatMap { region -> [CGRect] in
+            // A line correction changes Y. Preserve the original translation width
+            // while independently reapplying the body viewport and stationary masks.
+            let strip = CGRect(x: region.minX, y: line.minY, width: region.width, height: line.height)
+            let moved = strip.intersection(region).offsetBy(dx: 0, dy: delta).intersection(viewport)
+            guard !moved.isEmpty else { return [] }
+            return exclusions.reduce([moved]) { visible, panel in
+                visible.flatMap { PreviewOcclusion.visibleBoxes($0, behind: panel) }
+            }
+        }
+    }
+
     static func render(_ value: SessionCoordinator.AXTranslatedFrame) async -> AXRenderArtwork {
         let cancellation = AXLayoutCancellation()
         return await withTaskCancellationHandler {
@@ -90,7 +104,7 @@ enum AXLineRendering {
             }
         } onCancel: { cancellation.cancel() }
     }
-    static func build(_ value: SessionCoordinator.AXTranslatedFrame, isCancelled: () -> Bool = { false }) -> AXRenderArtwork {
+    static func build(_ value: SessionCoordinator.AXTranslatedFrame, appliesScrollProbe: Bool = true, isCancelled: () -> Bool = { false }) -> AXRenderArtwork {
         let start = CFAbsoluteTimeGetCurrent()
         let image = value.frame.image, width = image.width, height = image.height
         func context() -> CGContext? {
@@ -103,6 +117,32 @@ enum AXLineRendering {
         var diagnostics: [AXRenderDiagnostic] = [], items: [MirrorItem] = [], fragments: [NativeMirrorRenderedFragment] = []
         let observations = Dictionary(uniqueKeysWithValues:value.frame.snapshot.observations.map { ($0.id,$0) })
         let metadata = (try? JSONSerialization.jsonObject(with:value.frame.snapshot.metadata)) as? [String:Any]
+        struct ProbeLine: Decodable {
+            let node: Int
+            let rangeStart, rangeLength: Int?
+            let dy: CGFloat
+            let corrected: AXBox
+        }
+        struct ProbeMetadata: Decodable {
+            let scrollCoordinateProbe: [ProbeLine]?
+            let scrollCoordinateViewport: AXBox?
+            let scrollCoordinateExclusions: [AXBox]?
+        }
+        let probeLines: [Int: [ProbeLine]]
+        let probeViewport: CGRect?
+        let probeExclusions: [CGRect]
+        if appliesScrollProbe, value.frame.appliesScrollCoordinateCorrection,
+           let probe = try? JSONDecoder().decode(ProbeMetadata.self, from: value.frame.snapshot.metadata) {
+            probeLines = Dictionary(grouping: (probe.scrollCoordinateProbe ?? []).filter {
+                $0.rangeStart != nil && $0.dy != 0
+            }, by: \.node)
+            probeViewport = probe.scrollCoordinateViewport?.cgRect
+            probeExclusions = (probe.scrollCoordinateExclusions ?? []).map(\.cgRect)
+        } else {
+            probeLines = [:]
+            probeViewport = nil
+            probeExclusions = []
+        }
         let selection = metadata?["selectionRegion"] as? [String:Double] ?? [:]
         let region = CGRect(x:selection["x"] ?? 0,y:selection["y"] ?? 0,
             width:selection["width"] ?? Double(width),height:selection["height"] ?? Double(height))
@@ -121,6 +161,24 @@ enum AXLineRendering {
         var hover: [AXFullTextHover] = []
         var itemNodes: [UUID:Int] = [:]
         for paragraph in value.frame.snapshot.paragraphUnits {
+            var sourceLines = paragraph.lineRanges
+            var displayRegions = paragraph.displayRegions.map(\.cgRect)
+            if let observations = probeLines[paragraph.node], let probeViewport,
+               paragraph.inlineContent == nil, !paragraph.isCodeBlock {
+                let originalRegions = displayRegions
+                displayRegions = []
+                sourceLines = sourceLines.map { line in
+                    let correction = observations.first { $0.rangeStart == line.rangeStart && $0.rangeLength == line.rangeLength }
+                    let originalBox = line.box.cgRect
+                    let dy = correction?.dy ?? 0
+                    let correctedBox = correction?.corrected ?? line.box
+                    displayRegions += scrollProbeClips(line: originalBox, regions: originalRegions,
+                        delta: dy, viewport: probeViewport, exclusions: probeExclusions)
+                    return AXLine(text: line.text, rangeStart: line.rangeStart, rangeLength: line.rangeLength,
+                                  box: correctedBox, line: line.line, segment: line.segment,
+                                  segmentRangeStart: line.segmentRangeStart)
+                }
+            }
             let firstItem=items.count
             let firstHover=hover.count
             defer {
@@ -139,8 +197,8 @@ enum AXLineRendering {
                     } else if let logical = entry?.logicalSegments {
                         full = logical.map { ($0.translation ?? $0.source)+$0.delimiter }.joined()
                     } else { full = entry?.translation ?? paragraph.translationSourceText ?? paragraph.text }
-                    let lineBoxes = (paragraph.inlineContent?.flatMap { $0.lineRanges ?? [] } ?? paragraph.lineRanges).map { pixel($0.box.cgRect) }
-                    let hoverBoxes = lineBoxes.flatMap { line in paragraph.displayRegions.map { pixel($0.cgRect).intersection(bounds).intersection(line) }.filter { !$0.isNull && !$0.isEmpty } }
+                    let lineBoxes = (paragraph.inlineContent?.flatMap { $0.lineRanges ?? [] } ?? sourceLines).map { pixel($0.box.cgRect) }
+                    let hoverBoxes = lineBoxes.flatMap { line in displayRegions.map { pixel($0).intersection(bounds).intersection(line) }.filter { !$0.isNull && !$0.isEmpty } }
                     for index in firstHover..<hover.count {
                         hover[index] = .init(itemID:hover[index].itemID,text:full,boxes:hoverBoxes)
                     }
@@ -149,7 +207,7 @@ enum AXLineRendering {
             if isCancelled() { break }
             let entry = value.entries.first { $0.node == paragraph.node }
             let sourceText = paragraph.translationSourceText ?? ""
-            let clips = paragraph.displayRegions.map(\.cgRect).map(pixel).map { $0.intersection(bounds) }.filter { !$0.isNull && !$0.isEmpty }
+            let clips = displayRegions.map(pixel).map { $0.intersection(bounds) }.filter { !$0.isNull && !$0.isEmpty }
             func excluded(_ reason: String, segment: Int? = nil) {
                 diagnostics.append(.init(node:paragraph.node,segment:segment,status:reason,box:pixel(paragraph.box.cgRect)))
             }
@@ -271,7 +329,7 @@ enum AXLineRendering {
                 if entry?.status == "skipped_non_source_language" {
                     if let content = paragraph.inlineContent {
                         for part in content where part.kind == "text" { preserve(part.text ?? "",lines:part.lineRanges ?? []) }
-                    } else { preserve(sourceText,lines:paragraph.lineRanges) }
+                    } else { preserve(sourceText,lines:sourceLines) }
                     excluded("skipped_non_source_language"); continue
                 }
                 if newline(sourceText), entry?.logicalSegments == nil { excluded("logical_translation_unavailable"); continue }
@@ -279,7 +337,7 @@ enum AXLineRendering {
                 if entry.status != "translated" && entry.segments?.contains(where: { $0.status == "translated" }) != true && entry.logicalSegments?.contains(where: { $0.status == "translated" }) != true { excluded(entry.status); continue }
                 let sources: [(Int?,String,[AXLine],String?)] = paragraph.inlineContent.map { content in
                     content.filter { $0.kind == "text" }.map { ($0.id,$0.text ?? "",$0.lineRanges ?? [],$0.lineRangeStatus) }
-                } ?? [(nil,sourceText,paragraph.lineRanges,paragraph.lineRangeStatus)]
+                } ?? [(nil,sourceText,sourceLines,paragraph.lineRangeStatus)]
                 for (segment,source,lines,status) in sources {
                     if let status, status != "complete_unverified" && status != "nonrendering_text" { excluded("line_"+status,segment:segment); invalid = true; break }
                     let itemID = UUID()

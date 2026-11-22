@@ -62,10 +62,10 @@ package final class RangeInvestigator {
     let cancellation: AXCancellation
     init(deadline: Date, cancellation: AXCancellation = AXCancellation()) { self.deadline = deadline; self.cancellation = cancellation }
 
-    func inspect(_ element: AXUIElement, text: String, sourceNode: Int, viewport: CGRect) -> [String: Any] {
+    func inspect(_ element: AXUIElement, text: String, sourceNode: Int, viewport: CGRect, topFirstBounds: Bool = false) -> [String: Any] {
         let started = Date()
         defer { elapsed += Date().timeIntervalSince(started) }
-        var trace: [[String: Any]] = []
+        let trace: [[String: Any]] = []
         func query(_ key: String, _ input: CFTypeRef? = nil) -> CFTypeRef? {
             guard !cancellation.isCancelled, Date() < deadline, calls < maxCalls else { limitReached = true; return nil }
             recordAXQuery()
@@ -84,13 +84,27 @@ package final class RangeInvestigator {
         // See notion-fixtures/AX_LINE_DIRECTION_COMPARISON.md.
         var result: [String: Any] = ["sourceNode": sourceNode, "lineMethod": "markers-local-reverse"]
         var lines: [[String: Any]] = []
+        var pending: [(CFRange, String, AXTextMarkerRange)] = []
+        func readBounds(_ r: CFRange, _ string: String, _ pair: AXTextMarkerRange) -> String? {
+            guard let value = query("AXBoundsForTextMarkerRange", pair), CFGetTypeID(value) == AXValueGetTypeID() else {
+                return "marker_bounds_unavailable"
+            }
+            var box = CGRect.zero
+            guard AXValueGetValue(value as! AXValue, .cgRect, &box),
+                  box.width.isFinite, box.height.isFinite, box.minX.isFinite, box.minY.isFinite,
+                  box.width > 0, box.height > 0 else { return "marker_empty_bounds" }
+            lines.append(["rangeStart": r.location, "rangeLength": r.length, "text": string,
+                          "box": rect(box), "boxKind": "marker_reverse_line", "sourceNode": sourceNode,
+                          "visibility": TextRangeSafety.visibility(box, in: viewport)])
+            return nil
+        }
         let total = (text as NSString).length
         var offset = total
         var status = "marker_range_unavailable"
         if let whole = query("AXTextMarkerRangeForUIElement", element),
            CFGetTypeID(whole) == AXTextMarkerRangeGetTypeID() {
             var end = AXTextMarkerRangeCopyEndMarker(whole as! AXTextMarkerRange)
-            while offset > 0 && lines.count < 128 && !limitReached {
+            while offset > 0 && lines.count + pending.count < 128 && !limitReached {
                 guard let boundary = query("AXPreviousLineStartTextMarkerForTextMarker", end),
                       CFGetTypeID(boundary) == AXTextMarkerGetTypeID() else {
                     status = "marker_line_start_unavailable"; break
@@ -116,27 +130,27 @@ package final class RangeInvestigator {
                       (text as NSString).substring(with: NSRange(location: r.location, length: length)) == string else {
                     status = "marker_string_mismatch"; break
                 }
-                guard let value = query("AXBoundsForTextMarkerRange", pair), CFGetTypeID(value) == AXValueGetTypeID() else {
-                    status = "marker_bounds_unavailable"; break
-                }
-                var box = CGRect.zero
-                guard AXValueGetValue(value as! AXValue, .cgRect, &box),
-                      box.width.isFinite, box.height.isFinite, box.minX.isFinite, box.minY.isFinite,
-                      box.width > 0, box.height > 0 else {
-                    status = "marker_empty_bounds"; break
-                }
-                lines.append(["rangeStart": r.location, "rangeLength": length, "text": string,
-                              "box": rect(box), "boxKind": "marker_reverse_line", "sourceNode": sourceNode,
-                              "visibility": TextRangeSafety.visibility(box, in: viewport)])
+                if topFirstBounds { pending.append((r, string, pair)) }
+                else if let failure = readBounds(r, string, pair) { status = failure; break }
                 offset = r.location
                 end = start
             }
         }
-        if lines.count == 128 && offset > 0 { status = "line_limit_reached" }
+        if lines.count + pending.count == 128 && offset > 0 { status = "line_limit_reached" }
+        // Marker discovery remains reverse and retains the same UTF-16 checks.
+        // Only the experimental geometry pass changes direction.
+        var boundsFailure = false
+        for (range, string, pair) in pending.reversed() {
+            if let failure = readBounds(range, string, pair) {
+                status = failure
+                boundsFailure = true
+                break
+            }
+        }
         result["lineRanges"] = lines.sorted { ($0["rangeStart"] as! Int) < ($1["rangeStart"] as! Int) }
-        result["coveredUTF16Length"] = total - offset
+        result["coveredUTF16Length"] = topFirstBounds ? lines.reduce(0) { $0 + ($1["rangeLength"] as! Int) } : total - offset
         result["totalUTF16Length"] = total
-        result["lineRangeStatus"] = offset == 0 ? "complete_unverified" : (limitReached ? "query_limit_reached" : status)
+        result["lineRangeStatus"] = offset == 0 && !boundsFailure ? "complete_unverified" : (limitReached ? "query_limit_reached" : status)
         result["trace"] = trace
         return result
     }

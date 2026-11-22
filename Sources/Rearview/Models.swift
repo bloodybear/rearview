@@ -149,6 +149,7 @@ enum AppDefaults {
     static let refreshMode: RefreshMode = .automatic
     static let realtimeOCRIntervalMilliseconds = 500
     static let axRefreshIntervalMilliseconds = 250
+    static let axScrollPreviewKey = "axScrollPreviewEnabled"
     static let mirrorUpdateStyle: MirrorUpdateStyle = .atomic
 
     // OCR Execution
@@ -187,10 +188,13 @@ enum ImageSaveSettings {
     static let directoryDefaultsKey = "imageSave.directoryPath"
     static let filenameTemplateDefaultsKey = "imageSave.filenameTemplate"
 
+    static func configuredDirectoryURL(from defaults: UserDefaults = .standard) -> URL? {
+        guard let path = defaults.string(forKey: directoryDefaultsKey), !path.isEmpty else { return nil }
+        return URL(fileURLWithPath: path, isDirectory: true)
+    }
+
     static func directoryURL(from defaults: UserDefaults = .standard) -> URL {
-        if let path = defaults.string(forKey: directoryDefaultsKey), !path.isEmpty {
-            return URL(fileURLWithPath: path, isDirectory: true)
-        }
+        if let directory = configuredDirectoryURL(from: defaults) { return directory }
         let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
             ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Documents")
         return documents.appendingPathComponent("Rearview", isDirectory: true)
@@ -248,7 +252,7 @@ enum AppSettings {
         "toolbarShortcut.alwaysOnTop.label", "toolbarShortcut.alwaysOnTop.enabled",
         "toolbarShortcut.pause.keyCode", "toolbarShortcut.pause.modifiers",
         "toolbarShortcut.pause.label", "toolbarShortcut.pause.enabled",
-        CapturePolicy.targetFPSKey, CapturePolicy.realtimeOCRIntervalMillisecondsKey, CapturePolicy.axRefreshIntervalMillisecondsKey,
+        AppDefaults.axScrollPreviewKey, CapturePolicy.targetFPSKey, CapturePolicy.realtimeOCRIntervalMillisecondsKey, CapturePolicy.axRefreshIntervalMillisecondsKey, CapturePolicy.axSettleMillisecondsKey, CapturePolicy.axScrollMethodKey,
         OCRRecognitionPolicy.minimumConfidenceKey, RefinementOCRPolicy.automaticStrategyKey,
         RefinementOCRPolicy.manualStrategyKey, RefinementOCRPolicy.alwaysRunKey,
         RefinementOCRPolicy.confidenceThresholdKey, RefinementOCRPolicy.delayMillisecondsKey,
@@ -1322,10 +1326,25 @@ enum TargetApplicationTracking {
     static func save(_ enabled: Bool, to defaults: UserDefaults = .standard) { defaults.set(enabled, forKey: defaultsKey) }
 }
 
+enum AXScrollMethod: String, CaseIterable, Sendable {
+    case ax, pixel
+
+    var title: String {
+        switch self {
+        case .ax: L10n.text("AX 좌표")
+        case .pixel: L10n.text("픽셀 비교")
+        }
+    }
+}
+
 struct CapturePolicy: Equatable, Sendable {
     static let targetFPSKey = "captureTargetFPS"
     static let realtimeOCRIntervalMillisecondsKey = "realtimeOCRIntervalMilliseconds"
     static let axRefreshIntervalMillisecondsKey = "axRefreshIntervalMilliseconds"
+    static let axSettleMillisecondsKey = "axSettleMilliseconds"
+    static let axScrollMethodKey = "axScrollMethod"
+    static let defaultAXSettleMilliseconds = 150
+    static let axSettleMillisecondsRange = 0...2_000
     static let defaultTargetFPS = AppDefaults.captureTargetFPS
     static let defaultRealtimeOCRIntervalMilliseconds = AppDefaults.realtimeOCRIntervalMilliseconds
     static let targetFPSRange = 1...30
@@ -1334,15 +1353,23 @@ struct CapturePolicy: Equatable, Sendable {
     let targetFPS: Int
     let realtimeOCRIntervalMilliseconds: Int
     let axRefreshIntervalMilliseconds: Int
+    let axSettleMilliseconds: Int
+    let axScrollMethod: AXScrollMethod
+
+    var axSettleInterval: Duration { .milliseconds(Int64(axSettleMilliseconds)) }
 
     init(
         targetFPS: Int = defaultTargetFPS,
         realtimeOCRIntervalMilliseconds: Int = defaultRealtimeOCRIntervalMilliseconds,
-        axRefreshIntervalMilliseconds: Int = AppDefaults.axRefreshIntervalMilliseconds
+        axRefreshIntervalMilliseconds: Int = AppDefaults.axRefreshIntervalMilliseconds,
+        axSettleMilliseconds: Int = defaultAXSettleMilliseconds,
+        axScrollMethod: AXScrollMethod = .ax
     ) {
         self.targetFPS = Self.targetFPSRange.clamp(targetFPS)
         self.realtimeOCRIntervalMilliseconds =
             Self.refreshIntervalMillisecondsRange.clamp(realtimeOCRIntervalMilliseconds)
+        self.axSettleMilliseconds = Self.axSettleMillisecondsRange.clamp(axSettleMilliseconds)
+        self.axScrollMethod = axScrollMethod
         self.axRefreshIntervalMilliseconds = Self.refreshIntervalMillisecondsRange.clamp(axRefreshIntervalMilliseconds)
     }
 
@@ -1359,7 +1386,10 @@ struct CapturePolicy: Equatable, Sendable {
                 ? defaultRealtimeOCRIntervalMilliseconds
                 : defaults.integer(forKey: realtimeOCRIntervalMillisecondsKey),
             axRefreshIntervalMilliseconds: defaults.object(forKey: axRefreshIntervalMillisecondsKey) == nil
-                ? AppDefaults.axRefreshIntervalMilliseconds : defaults.integer(forKey: axRefreshIntervalMillisecondsKey)
+                ? AppDefaults.axRefreshIntervalMilliseconds : defaults.integer(forKey: axRefreshIntervalMillisecondsKey),
+            axSettleMilliseconds: defaults.object(forKey: axSettleMillisecondsKey) == nil
+                ? defaultAXSettleMilliseconds : defaults.integer(forKey: axSettleMillisecondsKey),
+            axScrollMethod: defaults.string(forKey: axScrollMethodKey).flatMap(AXScrollMethod.init(rawValue:)) ?? .ax
         )
     }
 
@@ -1370,6 +1400,8 @@ struct CapturePolicy: Equatable, Sendable {
             forKey: Self.realtimeOCRIntervalMillisecondsKey
         )
         defaults.set(axRefreshIntervalMilliseconds, forKey: Self.axRefreshIntervalMillisecondsKey)
+        defaults.set(axSettleMilliseconds, forKey: Self.axSettleMillisecondsKey)
+        defaults.set(axScrollMethod.rawValue, forKey: Self.axScrollMethodKey)
     }
 }
 
@@ -1685,6 +1717,10 @@ func makeMirrorItems(
 
 struct MirrorFrame {
     var isAXScrollPreview = false
+    var axScrollDebugExport: AXScrollDebugExport?
+    var axScrollDebugReference: AXScrollDebugExport.Reference?
+    var axScrollDebugReceivedAt: UInt64?
+    var axScrollPreviewShift: CGFloat?
     var diagnosticContext: DiagnosticFrameContext? = nil
     var axArtwork: AXRenderArtwork? = nil
     var imageOCRLayers: [AXImageOCRLayer] = []

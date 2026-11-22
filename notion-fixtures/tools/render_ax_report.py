@@ -407,6 +407,15 @@ def render(folder):
                 review += '<details><summary>이전 문단 '+str(p['node'])+' · '+html.escape(p.get('text','')[:90])+'</summary>'
                 review += '<p>'+html.escape(entries.get(p['node'],{}).get('translation') or '')+'</p><pre>'+html.escape(json.dumps(p,ensure_ascii=False,indent=2))+'</pre></details>'
             review += '<p><a href="retained-body-source.png">이전 원본 캡처</a> · <a href="retained-body-rawAx.json">이전 AX 관측</a> · <a href="retained-body-paragraphs.json">이전 문단·노드·라인 관계</a></p></details>'
+        if all((folder / name).is_file() for name in (
+                'scroll-probe-source.png', 'scroll-probe-ax.png', 'scroll-probe-corrected.png',
+                'scroll-probe-coordinates.json')):
+            review += '<details><summary>스크롤 중 좌표 보정 비교</summary>'
+            for label, name in [('원본 캡처', 'scroll-probe-source.png'),
+                                ('AX 좌표', 'scroll-probe-ax.png'),
+                                ('픽셀 이동량으로 보정한 좌표', 'scroll-probe-corrected.png')]:
+                review += f'<figure><figcaption>{label}</figcaption><img loading="lazy" src="{name}" style="width:100%"></figure>'
+            review += '<p><a href="scroll-probe-coordinates.json">좌표별 보정 상세</a></p></details>'
         review += image_ocr_review(folder, metadata)
         review += '</details>'
         page = page.replace('</style>', '</style>'+review, 1)

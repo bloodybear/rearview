@@ -4,15 +4,16 @@ import Foundation
 actor CaptureOperationQueue {
     private var tail: Task<Void, Never>?
 
-    func run(cancellable: Bool = true, _ operation: @escaping @Sendable () async throws -> Void) async throws {
+    func run<Value: Sendable>(cancellable: Bool = true,
+                              _ operation: @escaping @Sendable () async throws -> Value) async throws -> Value {
         let previous = tail
         let task = Task {
             await previous?.value
             try Task.checkCancellation()
-            try await operation()
+            return try await operation()
         }
         tail = Task { _ = await task.result }
-        try await withTaskCancellationHandler {
+        return try await withTaskCancellationHandler {
             try await task.value
         } onCancel: {
             if cancellable { task.cancel() }

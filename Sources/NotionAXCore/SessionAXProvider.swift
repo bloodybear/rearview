@@ -4,8 +4,13 @@ import ApplicationServices
 public enum TextExtractionMode: Sendable { case ocr, ax }
 public struct AXExtractionRequest: Sendable {
     public let diagnosticRequestID = UUID()
+    public var trackScrollCoordinates = false
+    public var scrollCoordinateReference: UUID?
+    public var scrollCoordinateReferenceIsStable = true
+    public var scrollCoordinateDisplacement: CGFloat?
     public let prefetch: Bool
     public let retainScrollAnchors: Bool
+    public let readsScrollAnchorPositions: Bool
     public let visibleFirst: Bool
     public let pruneOffscreenBranches: Bool
     public let collectParentTextDiagnostics: Bool
@@ -13,9 +18,10 @@ public struct AXExtractionRequest: Sendable {
     public let windowID: CGWindowID
     public let windowFrame: CGRect
     public let selectionRegion: CGRect
-    public init(processID: pid_t, windowID: CGWindowID, windowFrame: CGRect, selectionRegion: CGRect, collectParentTextDiagnostics: Bool = false, visibleFirst: Bool = false, pruneOffscreenBranches: Bool = false, prefetch: Bool = false, retainScrollAnchors: Bool = false) {
+    public init(processID: pid_t, windowID: CGWindowID, windowFrame: CGRect, selectionRegion: CGRect, collectParentTextDiagnostics: Bool = false, visibleFirst: Bool = false, pruneOffscreenBranches: Bool = false, prefetch: Bool = false, retainScrollAnchors: Bool = false, readsScrollAnchorPositions: Bool = true) {
         self.prefetch = prefetch
         self.retainScrollAnchors = retainScrollAnchors
+        self.readsScrollAnchorPositions = readsScrollAnchorPositions
         self.visibleFirst = visibleFirst
         self.pruneOffscreenBranches = pruneOffscreenBranches
         self.collectParentTextDiagnostics = collectParentTextDiagnostics
@@ -66,17 +72,36 @@ public struct AXExtractionSnapshot: Sendable {
         self.status = AXCollectionStatus(rawValue:metadata["status"] as? String ?? "failed") ?? .failed
     }
 }
+public struct AXScrollGeometry: Sendable {
+    public let viewport: CGRect
+    public let exclusions: [CGRect]
+}
+
+public struct AXScrollMotion: Sendable {
+    public let displacement: CGFloat?
+    public let previous: AXScrollGeometry
+    public let current: AXScrollGeometry
+    public let cpuNanoseconds: UInt64
+}
+
+struct AXScrollAnchors {
+    let elements: [(AXUIElement, CGPoint)]
+    let viewport: (AXUIElement, CGRect)
+    let exclusions: [(AXUIElement, CGRect)]
+    let branches: [(AXUIElement, [AXUIElement])]
+}
+
 public protocol SessionAXProvider: Sendable {
     func collect(_ request: AXExtractionRequest) async throws -> AXExtractionSnapshot
     func diagnosticSnapshot() async -> AXCollectionDiagnostics?
     func endSession() async
     func nextPrefetchSource(requestID: UUID) async throws -> String?
-    func scrollDisplacement(from sourceID: UUID, to request: AXExtractionRequest) async -> CGFloat?
+    func scrollMotion(from sourceID: UUID, to request: AXExtractionRequest) async -> AXScrollMotion?
 }
 public extension SessionAXProvider {
     func diagnosticSnapshot() async -> AXCollectionDiagnostics? { nil }
     func nextPrefetchSource(requestID: UUID) async throws -> String? { nil }
-    func scrollDisplacement(from sourceID: UUID, to request: AXExtractionRequest) async -> CGFloat? { nil }
+    func scrollMotion(from sourceID: UUID, to request: AXExtractionRequest) async -> AXScrollMotion? { nil }
 }
 package final class AXCancellation: @unchecked Sendable {
     private let lock = NSLock()
@@ -92,9 +117,10 @@ package enum AXWindowMatch {
 }
 public final class NativeSessionAXProvider: SessionAXProvider, @unchecked Sendable {
     // Both the handles and the positions captured with them belong to this serial queue.
-    private var scrollAnchors: (request: AXExtractionRequest, elements: [(AXUIElement, CGPoint)])?
+    private var coordinateReference: (UUID, AXExtractionRequest, [AXScrollCoordinateProbe.Coordinate])?
+    private var scrollAnchors: (request: AXExtractionRequest, geometry: AXScrollAnchors)?
 
-    public func scrollDisplacement(from sourceID: UUID, to request: AXExtractionRequest) async -> CGFloat? {
+    public func scrollMotion(from sourceID: UUID, to request: AXExtractionRequest) async -> AXScrollMotion? {
         let cancellation = AXCancellation()
         return await withTaskCancellationHandler {
             await withCheckedContinuation { continuation in
@@ -105,16 +131,42 @@ public final class NativeSessionAXProvider: SessionAXProvider, @unchecked Sendab
                           anchors.request.windowID == request.windowID,
                           anchors.request.windowFrame == request.windowFrame,
                           anchors.request.selectionRegion == request.selectionRegion,
-                          anchors.elements.count >= 2 else {
+                          anchors.geometry.elements.count >= 2 else {
                         continuation.resume(returning: nil)
                         return
                     }
-                    let movements = anchors.elements.compactMap { element, before -> CGFloat? in
+                    let cpuStart = clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID)
+                    let geometry = anchors.geometry
+                    for (parent, previous) in geometry.branches {
+                        guard !cancellation.isCancelled,
+                              let current = get(parent, "AXChildren") as? [AXUIElement],
+                              current.count == previous.count,
+                              zip(current, previous).allSatisfy({ CFEqual($0.0, $0.1) }) else {
+                            continuation.resume(returning: nil)
+                            return
+                        }
+                    }
+                    guard let viewport = frame(geometry.viewport.0), viewport == geometry.viewport.1 else {
+                        continuation.resume(returning: nil)
+                        return
+                    }
+                    let exclusions = geometry.exclusions.compactMap { element, _ in frame(element) }
+                    guard exclusions == geometry.exclusions.map({ $0.1 }) else {
+                        continuation.resume(returning: nil)
+                        return
+                    }
+                    let movements = !request.readsScrollAnchorPositions ? [] : geometry.elements.compactMap { element, before -> CGFloat? in
                         guard !cancellation.isCancelled, let after = position(element),
                               abs(after.x - before.x) <= 1 else { return nil }
                         return after.y - before.y
                     }
-                    continuation.resume(returning: cancellation.isCancelled ? nil : Self.agreedScrollDisplacement(movements))
+                    guard !cancellation.isCancelled else {
+                        continuation.resume(returning: nil)
+                        return
+                    }
+                    let region = AXScrollGeometry(viewport: viewport, exclusions: exclusions)
+                    continuation.resume(returning: AXScrollMotion(displacement: Self.agreedScrollDisplacement(movements), previous: region, current: region,
+                        cpuNanoseconds: clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID) - cpuStart))
                 }
             }
         } onCancel: { cancellation.cancel() }
@@ -180,6 +232,7 @@ public final class NativeSessionAXProvider: SessionAXProvider, @unchecked Sendab
     private func clearSessionActivation() {
         candidates = []; prefetchID = nil
         scrollAnchors = nil
+        coordinateReference = nil
         activation = nil
         readinessFinished = false
         activationFacts=[:]
@@ -205,6 +258,12 @@ public final class NativeSessionAXProvider: SessionAXProvider, @unchecked Sendab
     private func collect(_ request: AXExtractionRequest, _ cancellation: AXCancellation, prefetchWait: TimeInterval?) throws -> AXExtractionSnapshot {
         candidates = []; prefetchID = nil
         scrollAnchors = nil
+        let previousCoordinates = coordinateReference.flatMap { id, previous, coordinates in
+            request.scrollCoordinateReference == id && previous.processID == request.processID &&
+                previous.windowID == request.windowID && previous.selectionRegion == request.selectionRegion
+                ? coordinates : nil
+        }
+        coordinateReference = nil
         let started=Date()
         let queries=AXQueryDiagnostics()
         var diagnostic=AXCollectionDiagnostics(fields:["requestID":request.diagnosticRequestID.uuidString,"stage":"request","processID":String(request.processID),"windowID":String(request.windowID)])
@@ -273,11 +332,15 @@ public final class NativeSessionAXProvider: SessionAXProvider, @unchecked Sendab
                 self.candidates = elements[...]
             } : nil
             scrollAnchors = nil
-            let rememberScrollAnchors: (([(AXUIElement, CGPoint)]) -> Void)? = request.retainScrollAnchors ? { elements in
-                self.scrollAnchors = (request, elements)
+            let rememberScrollAnchors: ((AXScrollAnchors) -> Void)? = request.retainScrollAnchors ? { geometry in
+                self.scrollAnchors = (request, geometry)
+            } : nil
+            let trackCoordinates: (([AXScrollCoordinateProbe.Coordinate]) -> Void)? = request.trackScrollCoordinates ? { coordinates in
+                self.coordinateReference = (request.diagnosticRequestID, request, coordinates)
             } : nil
             let snapshot = try AXCollector.collect(request, window: matches[0], cancellation: cancellation,
-                prefetch: retain, scrollAnchors: rememberScrollAnchors)
+                prefetch: retain, scrollAnchors: rememberScrollAnchors, previousCoordinates: previousCoordinates,
+                trackCoordinates: trackCoordinates)
             totalMappingSeconds += mappingSeconds
             return snapshot
         }

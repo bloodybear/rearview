@@ -264,6 +264,14 @@ Rearview가 활성 상태이거나 비활성 컨트롤 바에 마우스를 올�
 타겟 앱 창 추적	Track Target App Window	対象アプリのウィンドウを追跡
 대상 창이 이동하거나 크기가 바뀌면 선택 영역도 창의 네 변과 같은 간격을 유지합니다.	Keeps the selection at the same distance from each edge as the target window moves or resizes.	対象ウィンドウの移動やサイズ変更に合わせて、選択範囲とウィンドウの各辺との間隔を保ちます。
 갱신	Refresh	更新
+스크롤 미리보기	Scroll Preview	スクロールプレビュー
+정식 갱신 전에 본문 번역을 스크롤 위치로 옮겨 표시합니다.	Moves body translations with scrolling before the full refresh.	全体の更新前に、本文の翻訳をスクロール位置に合わせて表示します。
+스크롤 이동량 계산	Scroll Distance Method	スクロール移動量の計算
+AX 좌표	AX Coordinates	AX座標
+픽셀 비교	Pixel Comparison	ピクセル比較
+픽셀 비교를 선택하면 본문 좌표 보정에도 이동량을 사용합니다.	Pixel comparison also uses the measured distance to align body text.	ピクセル比較では移動量を本文の座標補正にも使用します。
+AX 안정 갱신 간격	AX Settling Interval	AX安定待ち時間
+화면 변화가 멈춘 뒤 최종 갱신까지 기다리는 시간입니다. 설정 범위는 0–2000ms입니다.	Time to wait after screen changes stop before the final refresh. Range: 0–2000 ms.	画面の変化が止まってから最終更新まで待つ時間です。範囲は0～2000msです。
 AX 최소 간격	Minimum AX Interval	AXの最小間隔
 AX 모드에서 자동 갱신을 시작하는 최소 간격입니다. 설정 범위는 100–2000ms입니다.	Minimum time between automatic updates in AX mode. Range: 100–2000 ms.	AXモードでの自動更新の最小間隔です。範囲は100～2000msです。
 OCR 최소 간격	Minimum OCR Interval	OCRの最小間隔
@@ -431,7 +439,7 @@ CSV 다른 이름으로 저장…	Save CSV As…	CSVを別名で保存…
 이미지 저장	Save Image	画像を保存
 이미지 저장 실패	Image Save Failed	画像の保存に失敗しました
 이미지 저장 폴더	Image Save Folder	画像の保存フォルダ
-이미지 저장 시 사용할 폴더입니다.	The folder used when saving images.	画像の保存に使用するフォルダです。
+디버그 박스 사용 중 스크롤 미리보기 기록은 이 폴더의 Scroll Previews에 저장합니다.	When debug boxes are on, scroll preview records are saved in the Scroll Previews subfolder.	デバッグ枠がオンのとき、スクロールプレビューの記録はこのフォルダ内の Scroll Previews に保存されます。
 이미지 파일명 규칙	Image Filename Template	画像ファイル名テンプレート
 {yyyy}, {MM}, {dd}, {HH}, {mm}, {ss}, {counter} 토큰을 사용할 수 있습니다.	You can use the {yyyy}, {MM}, {dd}, {HH}, {mm}, {ss}, and {counter} tokens.	{yyyy}、{MM}、{dd}、{HH}、{mm}、{ss}、{counter}トークンを使用できます。
 저장됨 · %@	Saved · %@	保存済み · %@

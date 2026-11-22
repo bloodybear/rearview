@@ -16,7 +16,7 @@ package enum PreviewOcclusion {
         return inset.width > 1 && inset.height > 1 ? inset : frame
     }
 
-    static func visibleBoxes(_ box: CGRect, behind panel: CGRect) -> [CGRect] {
+    package static func visibleBoxes(_ box: CGRect, behind panel: CGRect) -> [CGRect] {
         let covered = box.intersection(panel)
         guard !covered.isNull, !covered.isEmpty else { return [box] }
         return [

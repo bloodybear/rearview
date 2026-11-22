@@ -1944,9 +1944,11 @@ final class TranslationMirrorWindow: NSPanel, NSWindowDelegate {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { true }
 
+    var axScrollDebugEnabled: Bool { mirrorView.ocrDebugOverlayEnabled }
+
     var allowsAXScrollPreview: Bool {
         displayMode == .mirror && !selectionModeActive && !isSearchVisible &&
-            !mirrorView.ocrDebugOverlayEnabled && mirrorView.window?.inLiveResize == false
+            mirrorView.window?.inLiveResize == false
     }
 
     private var searchBars: [MirrorSearchBar] { [searchBar, overlaySearchPanel.searchBar] }

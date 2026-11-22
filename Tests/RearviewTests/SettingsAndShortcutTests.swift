@@ -477,7 +477,15 @@ struct SettingsAndShortcutTests {
             #expect(high.targetFPS == 30)
             #expect(high.realtimeOCRIntervalMilliseconds == 2_000)
             #expect(high.axRefreshIntervalMilliseconds == 2_000)
-            let saved = CapturePolicy(targetFPS: 7, realtimeOCRIntervalMilliseconds: 850, axRefreshIntervalMilliseconds: 350)
+            #expect(CapturePolicy.load(from: defaults).axSettleInterval == .milliseconds(150))
+            #expect(CapturePolicy.load(from: defaults).axScrollMethod == .ax)
+            defaults.set("unknown", forKey: CapturePolicy.axScrollMethodKey)
+            #expect(CapturePolicy.load(from: defaults).axScrollMethod == .ax)
+            #expect(CapturePolicy(axSettleMilliseconds: -1).axSettleInterval == .zero)
+            #expect(CapturePolicy(axSettleMilliseconds: 2_001).axSettleInterval == .milliseconds(2_000))
+            let saved = CapturePolicy(targetFPS: 7, realtimeOCRIntervalMilliseconds: 850,
+                                      axRefreshIntervalMilliseconds: 350, axSettleMilliseconds: 325,
+                                      axScrollMethod: .pixel)
             saved.save(to: defaults)
             #expect(CapturePolicy.load(from: defaults) == saved)
         }

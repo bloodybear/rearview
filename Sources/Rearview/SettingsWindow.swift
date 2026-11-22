@@ -156,6 +156,10 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
     private let imageSaveFilenameField = NSTextField()
     private let ocrIntervalField = NSTextField()
     private let ocrIntervalStepper = NSStepper()
+    private let axScrollPreviewSwitch = NSSwitch()
+    private let axScrollMethodPopup = NSPopUpButton()
+    private let axSettleField = NSTextField()
+    private let axSettleStepper = NSStepper()
     private let axIntervalField = NSTextField()
     private let axIntervalStepper = NSStepper()
     private let ocrFilterConfidenceField = NSTextField()
@@ -282,6 +286,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         regionBorderOpacityStepper.integerValue = regionBorderOpacityField.integerValue
         extractionPopup.selectItem(at: TextExtractionPreference.load() == .ax ? 0 : 1)
         mirrorFollowSize.state = MirrorFollowsSelectionSize.load() ? .on : .off
+        axScrollPreviewSwitch.state = (UserDefaults.standard.object(forKey: AppDefaults.axScrollPreviewKey) as? Bool ?? true) ? .on : .off
         targetApplicationTracking.state = TargetApplicationTracking.load() ? .on : .off
         let launchAtLoginEnabled = launchAtLoginStatusProvider.map {
             LaunchAtLogin.isEnabled($0())
@@ -477,10 +482,13 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         let captureSection = makeSection(title: L10n.text("캡처"), rows: [
             makePreferenceRow(title: L10n.text("화면 캡처 속도"), description: L10n.text("화면 변화를 확인할 초당 프레임 수입니다. 설정 범위는 1–30fps입니다."), control: makeNumberControl(field: captureFPSField, stepper: captureFPSStepper, unit: "fps")),
             makePreferenceRow(title: L10n.text("타겟 앱 창 추적"), description: L10n.text("대상 창이 이동하거나 크기가 바뀌면 선택 영역도 창의 네 변과 같은 간격을 유지합니다."), control: targetApplicationTracking),
-            makePreferenceRow(title: L10n.text("이미지 저장 폴더"), description: L10n.text("이미지 저장 시 사용할 폴더입니다."), control: makeImageSaveDirectoryControl()),
+            makePreferenceRow(title: L10n.text("이미지 저장 폴더"), description: L10n.text("디버그 박스 사용 중 스크롤 미리보기 기록은 이 폴더의 Scroll Previews에 저장합니다."), control: makeImageSaveDirectoryControl()),
             makePreferenceRow(title: L10n.text("이미지 파일명 규칙"), description: L10n.text("{yyyy}, {MM}, {dd}, {HH}, {mm}, {ss}, {counter} 토큰을 사용할 수 있습니다."), control: imageSaveFilenameField),
         ])
         let updateSection = makeSection(title: L10n.text("갱신"), rows: [
+            makePreferenceRow(title: L10n.text("스크롤 미리보기"), description: L10n.text("정식 갱신 전에 본문 번역을 스크롤 위치로 옮겨 표시합니다."), control: axScrollPreviewSwitch),
+            makePreferenceRow(title: L10n.text("스크롤 이동량 계산"), description: L10n.text("픽셀 비교를 선택하면 본문 좌표 보정에도 이동량을 사용합니다."), control: axScrollMethodPopup),
+            makePreferenceRow(title: L10n.text("AX 안정 갱신 간격"), description: L10n.text("화면 변화가 멈춘 뒤 최종 갱신까지 기다리는 시간입니다. 설정 범위는 0–2000ms입니다."), control: makeNumberControl(field: axSettleField, stepper: axSettleStepper, unit: "ms")),
             makePreferenceRow(title: L10n.text("AX 최소 간격"), description: L10n.text("AX 모드에서 자동 갱신을 시작하는 최소 간격입니다. 설정 범위는 100–2000ms입니다."), control: makeNumberControl(field: axIntervalField, stepper: axIntervalStepper, unit: "ms")),
             makePreferenceRow(title: L10n.text("OCR 최소 간격"), description: L10n.text("화면이 변해도 이 시간이 지난 뒤 다음 OCR을 시작합니다. 설정 범위는 100–2000ms입니다."), control: makeNumberControl(field: ocrIntervalField, stepper: ocrIntervalStepper, unit: "ms")),
             makePreferenceRow(title: L10n.text("미러 갱신 방식"), description: L10n.text("번역을 한 번에 표시하거나, 완료되는 줄부터 점진적으로 표시합니다."), control: mirrorUpdateStylePopup),
@@ -737,6 +745,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
 
         mirrorFollowSize.target = self
         mirrorFollowSize.action = #selector(mirrorFollowSizeChanged)
+        axScrollMethodPopup.addItems(withTitles: AXScrollMethod.allCases.map(\.title))
+        axScrollMethodPopup.target = self
+        axScrollMethodPopup.action = #selector(capturePolicyChanged)
+        axScrollPreviewSwitch.target = self
+        axScrollPreviewSwitch.action = #selector(axScrollPreviewChanged)
         targetApplicationTracking.target = self
         targetApplicationTracking.action = #selector(targetApplicationTrackingChanged)
         launchAtLogin.target = self
@@ -785,6 +798,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         configureNumberControl(
             field: axIntervalField, stepper: axIntervalStepper,
             range: CapturePolicy.refreshIntervalMillisecondsRange, increment: 50,
+            action: #selector(capturePolicyChanged)
+        )
+        configureNumberControl(
+            field: axSettleField, stepper: axSettleStepper,
+            range: CapturePolicy.axSettleMillisecondsRange, increment: 25,
             action: #selector(capturePolicyChanged)
         )
         configureDecimalControl(
@@ -1177,11 +1195,16 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
             ocrIntervalField.integerValue = ocrIntervalStepper.integerValue
         } else if sender as AnyObject === axIntervalStepper {
             axIntervalField.integerValue = axIntervalStepper.integerValue
+        } else if sender as AnyObject === axSettleStepper {
+            axSettleField.integerValue = axSettleStepper.integerValue
         }
         let policy = CapturePolicy(
             targetFPS: captureFPSField.integerValue,
             realtimeOCRIntervalMilliseconds: ocrIntervalField.integerValue,
-            axRefreshIntervalMilliseconds: axIntervalField.integerValue
+            axRefreshIntervalMilliseconds: axIntervalField.integerValue,
+            axSettleMilliseconds: axSettleField.integerValue,
+            axScrollMethod: AXScrollMethod.allCases.indices.contains(axScrollMethodPopup.indexOfSelectedItem)
+                ? AXScrollMethod.allCases[axScrollMethodPopup.indexOfSelectedItem] : .ax
         )
         updateCapturePolicyControls(policy)
         policy.save()
@@ -1195,6 +1218,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         ocrIntervalStepper.integerValue = policy.realtimeOCRIntervalMilliseconds
         axIntervalField.integerValue = policy.axRefreshIntervalMilliseconds
         axIntervalStepper.integerValue = policy.axRefreshIntervalMilliseconds
+        axSettleField.integerValue = policy.axSettleMilliseconds
+        axSettleStepper.integerValue = policy.axSettleMilliseconds
+        axScrollMethodPopup.selectItem(at: AXScrollMethod.allCases.firstIndex(of: policy.axScrollMethod) ?? 0)
     }
 
     @objc private func ocrFilterConfidenceChanged(_ sender: Any?) {
@@ -1209,7 +1235,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
 
     func controlTextDidEndEditing(_ notification: Notification) {
         guard let field = notification.object as? NSTextField else { return }
-        if field === captureFPSField || field === ocrIntervalField || field === axIntervalField {
+        if field === captureFPSField || field === ocrIntervalField || field === axIntervalField || field === axSettleField {
             capturePolicyChanged(field)
         }
         if field === ocrFilterConfidenceField {
@@ -1376,6 +1402,10 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         let enabled = mirrorFollowSize.state == .on
         MirrorFollowsSelectionSize.save(enabled)
         onMirrorFollowSelectionSizeChange?(enabled)
+    }
+
+    @objc private func axScrollPreviewChanged() {
+        UserDefaults.standard.set(axScrollPreviewSwitch.state == .on, forKey: AppDefaults.axScrollPreviewKey)
     }
 
     @objc private func targetApplicationTrackingChanged() {

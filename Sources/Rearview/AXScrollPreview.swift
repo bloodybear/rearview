@@ -4,8 +4,31 @@ import NotionAXCore
 
 /// Repositions complete body lines using the measured AX displacement.
 enum AXScrollPreview {
+    struct Region {
+        let viewport: CGRect
+        let exclusions: [CGRect]
+
+        init(viewport: CGRect, exclusions: [CGRect] = []) {
+            self.viewport = viewport
+            self.exclusions = exclusions
+        }
+
+        init(_ geometry: AXScrollGeometry, selection: CGRect, size: CGSize) {
+            let sx = size.width / selection.width, sy = size.height / selection.height
+            func pixels(_ rect: CGRect) -> CGRect {
+                CGRect(x: (rect.minX - selection.minX) * sx, y: (selection.maxY - rect.maxY) * sy,
+                       width: rect.width * sx, height: rect.height * sy)
+            }
+            self.init(viewport: pixels(geometry.viewport), exclusions: geometry.exclusions.map(pixels))
+        }
+
+        func contains(_ box: CGRect) -> Bool {
+            viewport.contains(box) && !exclusions.contains { $0.intersects(box) }
+        }
+    }
+
     static func make(size: CGSize, deltaY: CGFloat, artwork: AXRenderArtwork,
-                     snapshot: AXExtractionSnapshot) -> AXRenderArtwork? {
+                     snapshot: AXExtractionSnapshot, previous: Region, current: Region) -> AXRenderArtwork? {
         let width = Int(size.width), height = Int(size.height)
         let dy = deltaY.rounded()
         guard width >= 64, height >= 64, width * height <= 3_000_000,
@@ -31,28 +54,33 @@ enum AXScrollPreview {
         guard !eligible.isDisjoint(with: rendered.keys), !Task.isCancelled else { return nil }
 
         let full = CGRect(x: 0, y: 0, width: width, height: height)
-        let inner = full.insetBy(dx: 2, dy: 2)
         var clip: [CGRect] = [], reused: [AXRenderDiagnostic] = []
         for (node, parts) in rendered where eligible.contains(node) {
             guard !Task.isCancelled else { return nil }
-            var destinations: [CGRect] = []
             for part in parts {
-                guard !part.clipped, !part.lineBoxes.isEmpty,
-                      let originals = part.originalLineBoxes, originals.count == part.lineBoxes.count else { break }
+                guard let originals = part.originalLineBoxes, originals.count == part.lineBoxes.count else { continue }
+                var movedLines: [CGRect] = []
                 for (box, original) in zip(part.lineBoxes, originals) {
-                    let source = box.union(original).insetBy(dx: -1, dy: -1).integral
+                    // A long paragraph can straddle the viewport. Its fully painted
+                    // lines are still safe to reuse independently.
+                    guard artwork.clipRects.contains(where: { $0.contains(box) }) else { continue }
+                    let source = box.union(original).integral
                     let destination = source.offsetBy(dx: 0, dy: dy)
-                    guard inner.contains(source), inner.contains(destination) else { break }
-                    destinations.append(destination)
+                    guard full.contains(source), full.contains(destination),
+                          previous.contains(source), current.contains(destination) else { continue }
+                    let padded = source.insetBy(dx: -1, dy: -1)
+                        .intersection(full).intersection(previous.viewport)
+                        .intersection(full.intersection(current.viewport).offsetBy(dx: 0, dy: -dy))
+                    let paddedDestination = padded.offsetBy(dx: 0, dy: dy)
+                    clip.append(previous.contains(padded) && current.contains(paddedDestination)
+                                ? paddedDestination : destination)
+                    movedLines.append(box.offsetBy(dx: 0, dy: dy))
                 }
-            }
-            guard !destinations.isEmpty, destinations.count == parts.reduce(0, { $0 + $1.lineBoxes.count }) else { continue }
-            clip += destinations
-            reused += parts.map { part in
+                guard let first = movedLines.first else { continue }
                 var diagnostic = AXRenderDiagnostic(node: part.node, segment: part.segment, status: part.status,
-                    box: part.box.offsetBy(dx: 0, dy: dy))
-                diagnostic.lineBoxes = part.lineBoxes.map { $0.offsetBy(dx: 0, dy: dy) }
-                return diagnostic
+                    box: movedLines.dropFirst().reduce(first) { $0.union($1) })
+                diagnostic.lineBoxes = movedLines
+                reused.append(diagnostic)
             }
         }
 

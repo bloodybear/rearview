@@ -35,7 +35,7 @@ static func slice(_ text:String,_ start:Int,_ length:Int)->String? {
  for i in [start,start+length] {if i>0 && i<utf.count && (0xD800...0xDBFF).contains(utf[i-1]) && (0xDC00...0xDFFF).contains(utf[i]){return nil}}
  return (text as NSString).substring(with:NSRange(location:start,length:length))
 }
-static func native(_ u:Unit,_ q:Queries)->Output {
+static func native(_ u:Unit,_ q:Queries,topFirstBounds:Bool = false)->Output {
  var out=Output()
  // The parent's range can include generated ellipsis text or embedded-object
  // placeholders. Anchor to the actual text leaves before validating the source.
@@ -67,11 +67,13 @@ static func native(_ u:Unit,_ q:Queries)->Output {
  return position==local ? marker:nil
  }
 
+ var pending:[(Int,String,AXTextMarkerRange)]=[]
  func append(_ start:Int,_ text:String)->Bool {
  let count=(text as NSString).length
  guard let a=endpoint(start,true),let b=endpoint(start+count,false) else{out.status="leaf_endpoint_unavailable";return false}
  let range=AXTextMarkerRangeCreate(nil,a,b)
  guard q.string(u.node,range)==text else{out.status="rebased_string_mismatch";return false}
+ if topFirstBounds {pending.append((start,text,range));return true}
  guard let box=q.box(u.node,range) else{out.status="marker_empty_bounds";return false}
  out.lines.append(Line(start:start,length:count,text:text,box:box));return true
  }
@@ -92,16 +94,20 @@ static func native(_ u:Unit,_ q:Queries)->Output {
  guard count<=offset,slice(source,offset-count,count)?.utf16.elementsEqual(text.utf16)==true else{out.status="reverse_string_mismatch";break}
  if !append(offset-count,text){break};offset-=count;marker=a
  }
+ for (start,text,range) in pending.reversed() {
+ guard let box=q.box(u.node,range) else{out.status="marker_empty_bounds";break}
+ out.lines.append(Line(start:start,length:(text as NSString).length,text:text,box:box))
+ }
  out.lines.sort{$0.start<$1.start};if offset>0 && out.status=="complete"{out.status="line_limit"};return out
 }
 
 }
 
 extension RangeInvestigator {
-    func inspectParagraph(_ element:AXUIElement, role:String, leaves:[(Int,AXUIElement,String)], viewport:CGRect) -> [String:Any] {
+    func inspectParagraph(_ element:AXUIElement, role:String, leaves:[(Int,AXUIElement,String)], viewport:CGRect, topFirstBounds:Bool = false) -> [String:Any] {
         let source=leaves.map{$0.2}.joined()
         if leaves.count==1,let leaf=leaves.first {
-            var result=inspect(leaf.1,text:leaf.2,sourceNode:leaf.0,viewport:viewport)
+            var result=inspect(leaf.1,text:leaf.2,sourceNode:leaf.0,viewport:viewport,topFirstBounds:topFirstBounds)
             result["lineMethod"]="markers-local-reverse-single-node"
             result["lineSourceText"]=source
             return result
@@ -114,7 +120,7 @@ extension RangeInvestigator {
             return NativeParagraphLines.Leaf(id:leaf.0,node:leaf.1,text:leaf.2,base:base)
         }
         let unit=NativeParagraphLines.Unit(id:0,node:element,role:role,text:source,leaves:inputs)
-        let output=NativeParagraphLines.native(unit,NativeParagraphLines.Queries(self))
+        let output=NativeParagraphLines.native(unit,NativeParagraphLines.Queries(self),topFirstBounds:topFirstBounds)
         return ["lineMethod":"native-paragraph-markers-reverse","rangeAnchor":"first-to-last-text-leaf","lineSourceText":source,
                 "lineRangeStatus":limitReached ? "query_limit_reached" : output.status=="complete" ? "complete_unverified":output.status,
                 "coveredUTF16Length":output.lines.reduce(0){$0+$1.length},"totalUTF16Length":(source as NSString).length,
