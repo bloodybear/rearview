@@ -269,7 +269,9 @@ Rearview가 활성 상태이거나 비활성 컨트롤 바에 마우스를 올�
 스크롤 이동량 계산	Scroll Distance Method	スクロール移動量の計算
 AX 좌표	AX Coordinates	AX座標
 픽셀 비교	Pixel Comparison	ピクセル比較
-픽셀 비교를 선택하면 본문 좌표 보정에도 이동량을 사용합니다.	Pixel comparison also uses the measured distance to align body text.	ピクセル比較では移動量を本文の座標補正にも使用します。
+스크롤 좌표 보정	Scroll Coordinate Correction	スクロール座標補正
+스크롤 중 지연된 AX 본문 좌표를 이동량으로 보정합니다.	Uses scroll displacement to align delayed AX body coordinates.	スクロール中に遅れて更新されるAX本文座標を移動量で補正します。
+스크롤 미리보기와 좌표 보정에 사용할 이동량 계산 방식을 선택합니다.	Selects how displacement is measured for scroll preview and coordinate correction.	スクロールプレビューと座標補正に使う移動量の計算方法を選びます。
 AX 안정 갱신 간격	AX Settling Interval	AX安定待ち時間
 화면 변화가 멈춘 뒤 최종 갱신까지 기다리는 시간입니다. 설정 범위는 0–2000ms입니다.	Time to wait after screen changes stop before the final refresh. Range: 0–2000 ms.	画面の変化が止まってから最終更新まで待つ時間です。範囲は0～2000msです。
 AX 최소 간격	Minimum AX Interval	AXの最小間隔

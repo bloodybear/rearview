@@ -1027,6 +1027,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             controller.onSelectionShortcutRemove = { [weak self] action in
                 self?.removeSelectionShortcut(action) ?? false
             }
+            controller.onAXScrollOptionsChange = { [weak self] in
+                self?.coordinator.scrollOptionsChanged()
+            }
             controller.onCapturePolicyChange = { [weak self] policy in
                 Task { await self?.coordinator.setCapturePolicy(policy) }
             }

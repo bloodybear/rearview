@@ -81,8 +81,8 @@ private final class TestCaptureProvider: SessionCaptureProvider, @unchecked Send
         stillImage.map { ($0, 100, DispatchTime.now().uptimeNanoseconds) }
     }
 
-    func emit(_ image: CGImage, frameID: UInt64) {
-        onFrame?(image, frameID, DispatchTime.now().uptimeNanoseconds)
+    func emit(_ image: CGImage, frameID: UInt64, receivedAt: UInt64 = DispatchTime.now().uptimeNanoseconds) {
+        onFrame?(image, frameID, receivedAt)
     }
 }
 
@@ -121,6 +121,20 @@ private final class TestOCRProvider: SessionOCRProvider, @unchecked Sendable {
 private actor TestAXProvider: SessionAXProvider {
     var requestID:UUID?
     var calls = 0
+    var lastRequest: AXExtractionRequest?
+    var scrollMotionCalls = 0
+    var scrollCorrectionRequests: [AXExtractionRequest] = []
+    var scrollMotionGate: TestGate?
+
+    func setScrollMotionGate(_ gate: TestGate) { scrollMotionGate = gate }
+
+    func scrollMotion(from sourceID: UUID, to request: AXExtractionRequest) async -> AXScrollMotion? {
+        scrollMotionCalls += 1
+        guard let scrollMotionGate else { return nil }
+        await scrollMotionGate.wait()
+        let geometry = AXScrollGeometry(viewport: request.selectionRegion, exclusions: [])
+        return AXScrollMotion(displacement: 5, previous: geometry, current: geometry, cpuNanoseconds: 0)
+    }
     let gate: TestGate?
     let failure: AXExtractionError?
     let snapshot: AXExtractionSnapshot?
@@ -132,6 +146,8 @@ private actor TestAXProvider: SessionAXProvider {
     }
     func collect(_ request: AXExtractionRequest) async throws -> AXExtractionSnapshot {
         calls += 1
+        lastRequest = request
+        if request.scrollCoordinateDisplacement != nil { scrollCorrectionRequests.append(request) }
         requestID=request.diagnosticRequestID
         if let gate, gatedCall == nil || gatedCall == calls { await gate.wait() }
         if let failure { throw failure }
@@ -287,11 +303,11 @@ final class SessionCoordinatorIntegrationTests: XCTestCase {
         XCTAssertTrue(diagnostic.frames.contains { $0.summary["status"]=="partial" && $0.documents["ax-paragraphs.json"] != nil })
     }
 
-    private func translatedAXFixture() throws -> AXExtractionSnapshot {
+    private func translatedAXFixture(complete: Bool = false) throws -> AXExtractionSnapshot {
         try AXExtractionSnapshot(nodes:[],selected:[],paragraphs:[
             ["node":10,"text":"日本語 English 👩‍💻","box":["x":0,"y":0,"width":100,"height":20],
              "lineSourceText":"日本語 English 👩‍💻","lineRangeStatus":"complete_unverified","members":[11],"lineRanges":[],"isCodeBlock":false,"protectNonSourceText":false]],
-            metadata:["status":"partial","reason":"injected_line_failure"])
+            metadata: complete ? ["status": "complete"] : ["status": "partial", "reason": "injected_line_failure"])
     }
 
     func testAXTranslationRetainsPartialExtractionAndOriginalFrame() async throws {
@@ -436,6 +452,199 @@ final class SessionCoordinatorIntegrationTests: XCTestCase {
         for _ in 0..<10 { await Task.yield() }
         XCTAssertNil(coordinator.latestAXSnapshot)
         XCTAssertTrue(output.frames.allSatisfy { $0.axArtwork == nil && $0.translatedItems.isEmpty })
+    }
+
+    func testAXScrollFeaturesDisabledSkipScrollTrackingForBothMethods() async throws {
+        let defaults = UserDefaults.standard
+        let key = AppDefaults.axScrollPreviewKey
+        let correctionKey = AppDefaults.axScrollCoordinateCorrectionKey
+        let previous = defaults.object(forKey: key)
+        let previousCorrection = defaults.object(forKey: correctionKey)
+        defaults.set(false, forKey: key)
+        defaults.set(false, forKey: correctionKey)
+        defer {
+            defaults.set(previous, forKey: key)
+            defaults.set(previousCorrection, forKey: correctionKey)
+        }
+
+        for method in [AXScrollMethod.ax, .pixel] {
+            let capture = TestCaptureProvider()
+            let ax = TestAXProvider(snapshot: try translatedAXFixture())
+            let coordinator = SessionCoordinator(broker: TestTranslationProvider(translations: [:]), capture: capture,
+                targetResolver: TestTargetResolver(), ocr: TestOCRProvider(batch: makeBatch(lines: [])),
+                ax: ax, outputSink: TestOutputSink(), createsOutputWindow: false)
+            coordinatorsUnderTest.append(coordinator)
+            let (screen, selection) = try makeScreenAndSelection()
+            await coordinator.setTextExtractionMode(.ax)
+            try await coordinator.start(screen: screen, selection: selection, captureTarget: .application(
+                CaptureApplication(processID: ProcessInfo.processInfo.processIdentifier, bundleIdentifier: "notion.id",
+                                   name: "Notion", anchorWindowID: 42, anchorWindowFrame: screen.frame)))
+            await coordinator.setCapturePolicy(CapturePolicy(axScrollMethod: method))
+            coordinator.setRefreshMode(.automatic)
+            coordinator.setPaused(false)
+            let translated = expectation(description: "AX translation with \(method)")
+            coordinator.onAXTranslation = { _ in translated.fulfill() }
+            capture.emit(makeImage(gray: 40), frameID: 10)
+            await fulfillment(of: [translated], timeout: 2)
+            let lastRequest = await ax.lastRequest
+            let request = try XCTUnwrap(lastRequest)
+            XCTAssertFalse(request.retainScrollAnchors)
+            XCTAssertFalse(request.readsScrollAnchorPositions)
+            XCTAssertFalse(request.trackScrollCoordinates)
+            XCTAssertNil(request.scrollCoordinateDisplacement)
+            let motionCalls = await ax.scrollMotionCalls
+            XCTAssertEqual(motionCalls, 0)
+            await coordinator.stop()
+        }
+    }
+
+    func testAXScrollCorrectionDisabledWhileReadingMotionUsesAnUncorrectedRequest() async throws {
+        let defaults = UserDefaults.standard
+        let key = AppDefaults.axScrollPreviewKey
+        let correctionKey = AppDefaults.axScrollCoordinateCorrectionKey
+        let previous = defaults.object(forKey: key)
+        let previousCorrection = defaults.object(forKey: correctionKey)
+        defaults.set(false, forKey: key)
+        defaults.set(true, forKey: correctionKey)
+        defer {
+            defaults.set(previous, forKey: key)
+            defaults.set(previousCorrection, forKey: correctionKey)
+        }
+
+        let gate = TestGate()
+        let capture = TestCaptureProvider()
+        let ax = TestAXProvider(snapshot: try translatedAXFixture())
+        await ax.setScrollMotionGate(gate)
+        let coordinator = SessionCoordinator(broker: TestTranslationProvider(translations: [:]), capture: capture,
+            targetResolver: TestTargetResolver(), ocr: TestOCRProvider(batch: makeBatch(lines: [])),
+            ax: ax, outputSink: TestOutputSink(), createsOutputWindow: false)
+        coordinatorsUnderTest.append(coordinator)
+        let (screen, selection) = try makeScreenAndSelection()
+        await coordinator.setTextExtractionMode(.ax)
+        try await coordinator.start(screen: screen, selection: selection, captureTarget: .application(
+            CaptureApplication(processID: ProcessInfo.processInfo.processIdentifier, bundleIdentifier: "notion.id",
+                               name: "Notion", anchorWindowID: 42, anchorWindowFrame: screen.frame)))
+        await coordinator.setCapturePolicy(CapturePolicy(axRefreshIntervalMilliseconds: 100,
+                                                         axSettleMilliseconds: 1000, axScrollMethod: .ax))
+        coordinator.setRefreshMode(.automatic)
+        coordinator.setPaused(false)
+        let initial = expectation(description: "initial translation")
+        let motion = expectation(description: "scroll motion query started")
+        let updated = expectation(description: "uncorrected translation")
+        let observer = Task {
+            await gate.waitUntilStarted()
+            motion.fulfill()
+        }
+        defer { observer.cancel() }
+        coordinator.onAXTranslation = { value in
+            if value.frame.frameID == 10 { initial.fulfill() }
+            if value.frame.frameID == 11 {
+                XCTAssertFalse(value.frame.appliesScrollCoordinateCorrection)
+                updated.fulfill()
+            }
+        }
+        capture.emit(makeImage(width: 32, height: 24, gray: 40), frameID: 10)
+        await fulfillment(of: [initial], timeout: 2)
+        try await Task.sleep(for: .milliseconds(120))
+        capture.emit(makeImage(width: 32, height: 24, gray: 40, changedPixel: (0, 0, 255)), frameID: 11)
+        await fulfillment(of: [motion], timeout: 2)
+        defaults.set(false, forKey: correctionKey)
+        coordinator.scrollOptionsChanged()
+        await gate.release()
+        await fulfillment(of: [updated], timeout: 2)
+        let lastRequest = await ax.lastRequest
+        let request = try XCTUnwrap(lastRequest)
+        XCTAssertFalse(request.retainScrollAnchors)
+        XCTAssertNil(request.scrollCoordinateDisplacement)
+    }
+
+    func testAXScrollCorrectionUsesAXDisplacementWithoutPreviewAndPreservesStableRefresh() async throws {
+        try await verifyAXScrollCorrectionAndStableRefresh(method: .ax)
+    }
+
+    func testAXScrollCorrectionUsesPixelDisplacementWithoutPreviewAndPreservesStableRefresh() async throws {
+        try await verifyAXScrollCorrectionAndStableRefresh(method: .pixel)
+    }
+
+    private func verifyAXScrollCorrectionAndStableRefresh(method: AXScrollMethod) async throws {
+        let defaults = UserDefaults.standard
+        let key = AppDefaults.axScrollPreviewKey
+        let correctionKey = AppDefaults.axScrollCoordinateCorrectionKey
+        let previous = defaults.object(forKey: key)
+        let previousCorrection = defaults.object(forKey: correctionKey)
+        defaults.set(false, forKey: key)
+        defaults.set(true, forKey: correctionKey)
+        defer {
+            defaults.set(previous, forKey: key)
+            defaults.set(previousCorrection, forKey: correctionKey)
+        }
+
+        func image(shift: Int) throws -> CGImage {
+            let context = try XCTUnwrap(CGContext(data: nil, width: 320, height: 480,
+                bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue))
+            context.setFillColor(gray: 1, alpha: 1)
+            context.fill(CGRect(x: 0, y: 0, width: 320, height: 480))
+            for index in 0..<37 {
+                let y = index * 13 + (index * index) % 11 - shift
+                context.setFillColor(gray: CGFloat(index % 5) / 10, alpha: 1)
+                context.fill(CGRect(x: (index * 23) % 110, y: y, width: 164 + index % 27, height: 4 + index % 3))
+            }
+            if shift != 0 {
+                context.setFillColor(gray: 0.8, alpha: 1)
+                context.fill(CGRect(x: 0, y: 185, width: 45, height: 34))
+            }
+            return try XCTUnwrap(context.makeImage())
+        }
+
+        let gate = TestGate()
+        await gate.release()
+        let capture = TestCaptureProvider()
+        let ax = TestAXProvider(snapshot: try translatedAXFixture(complete: true))
+        await ax.setScrollMotionGate(gate)
+        let coordinator = SessionCoordinator(broker: TestTranslationProvider(translations: [:]), capture: capture,
+            targetResolver: TestTargetResolver(), ocr: TestOCRProvider(batch: makeBatch(lines: [])),
+            ax: ax, outputSink: TestOutputSink(), createsOutputWindow: false)
+        coordinatorsUnderTest.append(coordinator)
+        let (screen, selection) = try makeScreenAndSelection()
+        await coordinator.setTextExtractionMode(.ax)
+        try await coordinator.start(screen: screen, selection: selection, captureTarget: .application(
+            CaptureApplication(processID: ProcessInfo.processInfo.processIdentifier, bundleIdentifier: "notion.id",
+                               name: "Notion", anchorWindowID: 42, anchorWindowFrame: screen.frame)))
+        await coordinator.setCapturePolicy(CapturePolicy(axRefreshIntervalMilliseconds: 100,
+                                                         axSettleMilliseconds: 300, axScrollMethod: method))
+        coordinator.setRefreshMode(.automatic)
+        coordinator.setPaused(false)
+        let initial = expectation(description: "initial translation")
+        let corrected = expectation(description: "temporary corrected translation")
+        let settled = expectation(description: "uncorrected stable translation")
+        coordinator.onAXTranslation = { value in
+            if value.frame.frameID == 10 {
+                XCTAssertTrue(value.frame.scrollAlignmentReference)
+                initial.fulfill()
+            }
+            if value.frame.frameID == 11 {
+                if value.frame.appliesScrollCoordinateCorrection {
+                    XCTAssertFalse(value.frame.scrollAlignmentReference)
+                    corrected.fulfill()
+                } else {
+                    XCTAssertTrue(value.frame.scrollAlignmentReference)
+                    settled.fulfill()
+                }
+            }
+        }
+        capture.emit(try image(shift: 0), frameID: 10)
+        await fulfillment(of: [initial], timeout: 2)
+        try await Task.sleep(for: .milliseconds(120))
+        // Make the regular capture eligible for the timestamp check alone.
+        capture.emit(try image(shift: 13), frameID: 11, receivedAt: DispatchTime.now().uptimeNanoseconds + 350_000_000)
+        await fulfillment(of: [corrected, settled], timeout: 2, enforceOrder: true)
+        let correctionRequests = await ax.scrollCorrectionRequests
+        XCTAssertEqual(correctionRequests.count, 1)
+        let request = try XCTUnwrap(correctionRequests.first)
+        XCTAssertEqual(request.readsScrollAnchorPositions, method == .ax)
+        let expected = method == .ax ? 5 : 13 * request.selectionRegion.height / 480
+        XCTAssertEqual(try XCTUnwrap(request.scrollCoordinateDisplacement), expected, accuracy: 0.01)
     }
 
     func testAXSettlesWithStillCaptureAfterStreamStopsDeliveringFrames() async throws {

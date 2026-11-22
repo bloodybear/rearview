@@ -401,8 +401,8 @@ final class SessionCoordinator {
             selectionRegion:screenCaptureRect(for:selection,screenFrame:screen.frame,displayBounds:CGDisplayBounds(displayID)),
             collectParentTextDiagnostics:CommandLine.arguments.contains("--ax-collect-parent-values"), visibleFirst: visibleFirstAXCollection,
             pruneOffscreenBranches: pruneOffscreenAXBranches, prefetch: prefetchEnabled,
-            retainScrollAnchors: scrollPreviewEnabled || tracksScrollCoordinates,
-            readsScrollAnchorPositions: capturePolicy.axScrollMethod == .ax || comparesScrollMotion)
+            retainScrollAnchors: scrollPreviewEnabled || scrollCoordinateCorrectionEnabled,
+            readsScrollAnchorPositions: (scrollPreviewEnabled || scrollCoordinateCorrectionEnabled) && capturePolicy.axScrollMethod == .ax)
     }
 
     private func axPresentation(_ value: AXTranslatedFrame, artwork: AXRenderArtwork) -> MirrorFrame {
@@ -430,23 +430,26 @@ final class SessionCoordinator {
         #endif
     }
 
-    private var comparesScrollMotion: Bool {
-        #if !LST_EXCLUDE_DEBUG_FEATURES
-        return CommandLine.arguments.contains("--ax-compare-scroll-motion")
-        #else
-        return false
-        #endif
+    private var scrollOptionsRevision = 0
+    private var scrollCorrectionTaskSequence: UInt64?
+
+    func scrollOptionsChanged() {
+        invalidateScrollWork(cancelCorrection: !scrollCoordinateCorrectionEnabled)
     }
 
-    private var tracksScrollCoordinates: Bool {
-        capturePolicy.axScrollMethod == .pixel || comparesScrollMotion
+    private func invalidateScrollWork(cancelCorrection: Bool) {
+        scrollOptionsRevision += 1
+        cancelWaitingScrollPreview()
+        if cancelCorrection, scrollCorrectionTaskSequence == ocrTaskSequence {
+            ocrTask?.cancel()
+        }
     }
 
-    private var displaysScrollCoordinateCorrection: Bool {
+    private var scrollCoordinateCorrectionEnabled: Bool {
         #if !LST_EXCLUDE_DEBUG_FEATURES
         if CommandLine.arguments.contains("--ax-show-scroll-coordinate-probe") { return true }
         #endif
-        return capturePolicy.axScrollMethod == .pixel
+        return UserDefaults.standard.bool(forKey: AppDefaults.axScrollCoordinateCorrectionKey)
     }
 
     private var scrollPreviewFrameID: UInt64?
@@ -493,7 +496,7 @@ final class SessionCoordinator {
                     self.waitingScrollPreviewID = nil
                 }
             }
-            guard let preview = await self.startScrollPreview(frame, request: request,
+            guard let preview = await self.prepareAXScrollUpdate(frame, request: request,
                                                                diagnosticID: nil, origin: .automatic, debug: debug) else { return }
             await withTaskCancellationHandler {
                 await preview.value
@@ -503,17 +506,17 @@ final class SessionCoordinator {
         }
     }
 
-    private func startScrollPreview(_ frame: FrameEnvelope, request: AXExtractionRequest,
+    private func prepareAXScrollUpdate(_ frame: FrameEnvelope, request: AXExtractionRequest,
                                     diagnosticID: UUID?, origin: MirrorStatusOrigin,
                                     debug: AXScrollDebugExport? = nil,
                                     onCoordinateProbe: ((UUID, CGFloat, Bool) -> Void)? = nil) async -> Task<Void, Never>? {
+        let preferenceRevision = scrollOptionsRevision
         let method = capturePolicy.axScrollMethod
         let canPreview = scrollPreviewEnabled && mirrorUpdateStyle == .atomic && mirror?.allowsAXScrollPreview == true
-        let canCorrect = onCoordinateProbe != nil && tracksScrollCoordinates
+        let canCorrect = onCoordinateProbe != nil && scrollCoordinateCorrectionEnabled
         guard origin == .automatic, translatesAXParagraphs else { return nil }
         if !canPreview {
-            debug?.record(!scrollPreviewEnabled ? "preview_disabled" :
-                (mirrorUpdateStyle != .atomic ? "progressive_update" : "mirror_unavailable"))
+            debug?.record(mirrorUpdateStyle != .atomic ? "progressive_update" : "mirror_unavailable")
         }
         guard request.retainScrollAnchors, canPreview || canCorrect else { return nil }
         guard let previous = latestAXTranslation, previous.retainedBody == nil,
@@ -533,7 +536,8 @@ final class SessionCoordinator {
         // Read these anchors before starting the regular collection on the same AX queue.
         let observedMotion = await ax.scrollMotion(from: sourceID, to: request)
         guard !Task.isCancelled, self.generation == generation, self.contentRevision == revision,
-              self.ocrTaskSequence == sequence, self.stabilityEpoch == epoch else {
+              self.ocrTaskSequence == sequence, self.stabilityEpoch == epoch,
+              self.scrollOptionsRevision == preferenceRevision else {
             if canPreview { debug?.record("superseded") }
             return nil
         }
@@ -544,80 +548,58 @@ final class SessionCoordinator {
         let size = CGSize(width: frame.image.width, height: frame.image.height)
         let previousRegion = AXScrollPreview.Region(motion.previous, selection: request.selectionRegion, size: size)
         let currentRegion = AXScrollPreview.Region(motion.current, selection: request.selectionRegion, size: size)
-        var pixelDelta: Int?
-        if method == .pixel || comparesScrollMotion {
+        let displacement: CGFloat?
+        switch method {
+        case .ax:
+            displacement = motion.displacement
+        case .pixel:
             let before = previous.frame.image, after = frame.image
-            let compare = comparesScrollMotion
-            let axElapsed = started.duration(to: .now)
             let worker = Task.detached(priority: .userInitiated) {
-                let clock = ContinuousClock()
-                let start = clock.now
-                let cpuStart = compare ? clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID) : 0
-                let result = AXScrollPixelProbe.estimate(previous: before, current: after,
+                AXScrollPixelProbe.estimate(previous: before, current: after,
                     body: CGRect(x: currentRegion.viewport.minX, y: size.height - currentRegion.viewport.maxY,
                                  width: currentRegion.viewport.width, height: currentRegion.viewport.height),
                     exclusions: currentRegion.exclusions.map {
                         CGRect(x: $0.minX, y: size.height - $0.maxY, width: $0.width, height: $0.height)
                     })
-                let cpu = compare ? clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID) - cpuStart : 0
-                return (result, start.duration(to: clock.now), cpu)
             }
-            let measured = await withTaskCancellationHandler {
+            let pixels = await withTaskCancellationHandler {
                 await worker.value
             } onCancel: {
                 worker.cancel()
             }
-            guard !Task.isCancelled, self.generation == generation, self.contentRevision == revision,
-                  self.ocrTaskSequence == sequence, self.stabilityEpoch == epoch,
-                  self.capturePolicy.axScrollMethod == method else {
-                if canPreview { debug?.record("superseded") }
-                return nil
-            }
-            pixelDelta = measured.0
-            let stableReference = previous.frame.scrollAlignmentReference
-            if canCorrect, stableReference || previous.frame.appliesScrollCoordinateCorrection,
-               let delta = pixelDelta, delta != 0 {
-                onCoordinateProbe?(sourceID, CGFloat(delta) * request.selectionRegion.height / size.height, stableReference)
-                diagnostics.event("ax.scroll_coordinate_alignment", frame: diagnosticID, [
-                    "frameID": String(frame.id), "pixelDelta": String(delta),
-                    "referenceFrameID": String(previous.frame.frameID),
-                    "referenceStable": String(stableReference)
-                ])
-            }
-            #if !LST_EXCLUDE_DEBUG_FEATURES
-            if compare {
-                let axPixels = motion.displacement.map { $0 * size.height / request.selectionRegion.height }
-                let comparison = [
-                    "before": String(previous.frame.frameID), "current": String(frame.id),
-                    "stableReference": String(previous.frame.scrollAlignmentReference),
-                    "scheduledCollection": String(onCoordinateProbe != nil),
-                    "axPixels": axPixels.map { String(describing: $0) } ?? "unavailable",
-                    "pixelDelta": measured.0.map(String.init) ?? "unavailable",
-                    "axElapsed": String(describing: axElapsed), "pixelElapsed": String(describing: measured.1),
-                    "axCPU_ns": String(motion.cpuNanoseconds), "pixelCPU_ns": String(measured.2)
-                ]
-                diagnostics.event("ax.scroll_comparison", frame: diagnosticID, comparison)
-                onAXScrollProbeFrames?(before, after,
-                    CGRect(x: currentRegion.viewport.minX, y: size.height - currentRegion.viewport.maxY,
-                           width: currentRegion.viewport.width, height: currentRegion.viewport.height), comparison)
-            }
-            #endif
+            displacement = pixels.map { CGFloat($0) * request.selectionRegion.height / size.height }
         }
-        guard canPreview, !Task.isCancelled, self.generation == generation, self.contentRevision == revision,
+        guard !Task.isCancelled, self.generation == generation, self.contentRevision == revision,
               self.ocrTaskSequence == sequence, self.stabilityEpoch == epoch,
+              self.scrollOptionsRevision == preferenceRevision,
               self.capturePolicy.axScrollMethod == method else {
             if canPreview { debug?.record("superseded") }
             return nil
         }
-        let displacement = switch method {
-        case .ax: motion.displacement.map { $0 * size.height / request.selectionRegion.height }
-        case .pixel: pixelDelta.map { CGFloat($0) }
-        }
-        guard let displacement, displacement != 0 else {
+        guard let displacement, displacement.isFinite, displacement != 0 else {
             debug?.record(displacement == nil ? "displacement_unresolved" : "no_vertical_displacement")
             return nil
         }
-        let deltaY = -displacement
+        let stableReference = previous.frame.scrollAlignmentReference
+        if canCorrect, stableReference || previous.frame.appliesScrollCoordinateCorrection {
+            onCoordinateProbe?(sourceID, displacement, stableReference)
+            diagnostics.event("ax.scroll_coordinate_alignment", frame: diagnosticID, [
+                "frameID": String(frame.id), "displacement": String(Double(displacement)),
+                "method": method.rawValue, "referenceFrameID": String(previous.frame.frameID),
+                "referenceStable": String(stableReference)
+            ])
+        }
+        #if !LST_EXCLUDE_DEBUG_FEATURES
+        if let onAXScrollProbeFrames {
+            let viewport = currentRegion.viewport
+            onAXScrollProbeFrames(previous.frame.image, frame.image,
+                CGRect(x: viewport.minX, y: size.height - viewport.maxY, width: viewport.width, height: viewport.height),
+                ["before": String(previous.frame.frameID), "current": String(frame.id),
+                 "method": method.rawValue, "displacement": String(Double(displacement))])
+        }
+        #endif
+        guard canPreview else { return nil }
+        let deltaY = -displacement * size.height / request.selectionRegion.height
         return Task { [weak self] in
             let worker = Task.detached(priority: .userInitiated) {
                 AXScrollPreview.make(size: size, deltaY: deltaY, artwork: artwork, snapshot: previous.frame.snapshot,
@@ -628,6 +610,7 @@ final class SessionCoordinator {
             } onCancel: { worker.cancel() }
             guard let self, !Task.isCancelled, self.generation == generation, self.contentRevision == revision,
                   self.ocrTaskSequence == sequence, self.stabilityEpoch == epoch,
+                  self.scrollOptionsRevision == preferenceRevision,
                   self.latestAXRenderedFrame?.frameID == rendered.frameID,
                   self.capturePolicy.axScrollMethod == method, self.scrollPreviewEnabled,
                   self.mirror?.allowsAXScrollPreview == true else {
@@ -676,6 +659,7 @@ final class SessionCoordinator {
                 preview?.cancel()
                 if self.generation == activeGeneration, self.ocrTaskSequence == sequence {
                     self.ocrTask = nil; self.ocrTaskRevision = nil
+                    self.scrollCorrectionTaskSequence = nil
                     if !self.processPendingAutomaticFrameIfPossible() { self.armAXSettle() }
                 }
             }
@@ -683,14 +667,21 @@ final class SessionCoordinator {
             do {
                 var collectionRequest = try self.axRequest()
                 diagnosticRequestID=collectionRequest.diagnosticRequestID
-                collectionRequest.trackScrollCoordinates = self.tracksScrollCoordinates
-                let appliesCoordinateCorrection = self.displaysScrollCoordinateCorrection
-                if !settled {
+                collectionRequest.trackScrollCoordinates = self.scrollCoordinateCorrectionEnabled
+                if !settled, self.scrollPreviewEnabled || self.scrollCoordinateCorrectionEnabled {
+                    let preferenceRevision = self.scrollOptionsRevision
                     var coordinateProbe: (UUID, CGFloat, Bool)?
-                    preview = await self.startScrollPreview(frame, request: collectionRequest, diagnosticID: diagnosticID, origin: origin,
+                    preview = await self.prepareAXScrollUpdate(frame, request: collectionRequest, diagnosticID: diagnosticID, origin: origin,
                                                             debug: self.scrollDebugExport(frameID: frame.id, whileWaiting: false)) { coordinateProbe = ($0, $1, $2) }
+                    if self.scrollOptionsRevision != preferenceRevision {
+                        collectionRequest = try self.axRequest()
+                        diagnosticRequestID = collectionRequest.diagnosticRequestID
+                        collectionRequest.trackScrollCoordinates = self.scrollCoordinateCorrectionEnabled
+                        coordinateProbe = nil
+                    }
                     collectionRequest.scrollCoordinateReference = coordinateProbe?.0
                     collectionRequest.scrollCoordinateDisplacement = coordinateProbe?.1
+                    if coordinateProbe != nil { self.scrollCorrectionTaskSequence = sequence }
                     collectionRequest.scrollCoordinateReferenceIsStable = coordinateProbe?.2 ?? true
                 }
                 let request = collectionRequest
@@ -704,7 +695,8 @@ final class SessionCoordinator {
                 guard !Task.isCancelled, self.generation == activeGeneration,
                       self.contentRevision == activeRevision, self.ocrTaskSequence == sequence else { self.diagnostics.event("result.discarded",frame:diagnosticID,["reason":"stale_or_cancelled"]); return }
                 if result.status == .failed { throw SessionCollectionFailure.failed }
-                if result.status == .complete, self.axSettleEpoch == collectionEpoch,
+                let usedScrollCorrection = request.scrollCoordinateDisplacement != nil
+                if !usedScrollCorrection, result.status == .complete, self.axSettleEpoch == collectionEpoch,
                    self.stabilityEpoch == collectionEpoch, frame.receivedAt >= self.axSettleFrameTime {
                     self.clearAXSettle()
                 }
@@ -715,10 +707,9 @@ final class SessionCoordinator {
                 let (retainedBody,reuseDiagnostic)=self.bodyRetention.resolve(snapshot:result,scope:bodyScope)
                 self.latestAXFrame = AXFrameSnapshot(snapshot:result,image:frame.image,frameID:frame.id,receivedAt:frame.receivedAt,
                     scrollAnchorRequestID: request.retainScrollAnchors ? request.diagnosticRequestID : nil,
-                    scrollAlignmentReference: request.trackScrollCoordinates && result.status == .complete &&
+                    scrollAlignmentReference: !usedScrollCorrection && request.trackScrollCoordinates && result.status == .complete &&
                         self.stabilityEpoch == collectionEpoch && self.axSettleEpoch == nil,
-                    appliesScrollCoordinateCorrection: appliesCoordinateCorrection &&
-                        request.scrollCoordinateDisplacement != nil && self.displaysScrollCoordinateCorrection)
+                    appliesScrollCoordinateCorrection: usedScrollCorrection)
                 // Match OCR: atomic updates retain the displayed result until rendering finishes.
                 if !self.translatesAXParagraphs || (self.mirrorUpdateStyle == .progressive && retainedBody == nil) {
                     self.display(MirrorFrame(image:frame.image,translatedItems:[],frameID:frame.id))
@@ -826,7 +817,9 @@ final class SessionCoordinator {
                     self.latestAXRenderedFrame = rendered
                     self.display(rendered)
                     self.onAXPresentation?(translated)
-                    self.bodyRetention.store(value:translated,artwork:artwork,scope:bodyScope)
+                    if !usedScrollCorrection {
+                        self.bodyRetention.store(value:translated,artwork:artwork,scope:bodyScope)
+                    }
                     self.recordAXTranslationDiagnostic(translated,id:diagnosticID)
                     self.latestAXTranslation = translated
                     let attempts = entries.filter { ["failed", "translated", "partial"].contains($0.status) }
@@ -1253,7 +1246,7 @@ final class SessionCoordinator {
     func setCapturePolicy(_ policy: CapturePolicy) async {
         let previous = capturePolicy
         capturePolicy = policy
-        if previous.axScrollMethod != policy.axScrollMethod { cancelWaitingScrollPreview() }
+        if previous.axScrollMethod != policy.axScrollMethod { invalidateScrollWork(cancelCorrection: true) }
         if previous.axSettleInterval != policy.axSettleInterval ||
             previous.axRefreshIntervalMilliseconds != policy.axRefreshIntervalMilliseconds {
             axSettleTask?.cancel()

@@ -149,6 +149,7 @@ enum AppDefaults {
     static let refreshMode: RefreshMode = .automatic
     static let realtimeOCRIntervalMilliseconds = 500
     static let axRefreshIntervalMilliseconds = 250
+    static let axScrollCoordinateCorrectionKey = "axScrollCoordinateCorrectionEnabled"
     static let axScrollPreviewKey = "axScrollPreviewEnabled"
     static let mirrorUpdateStyle: MirrorUpdateStyle = .atomic
 
@@ -252,7 +253,7 @@ enum AppSettings {
         "toolbarShortcut.alwaysOnTop.label", "toolbarShortcut.alwaysOnTop.enabled",
         "toolbarShortcut.pause.keyCode", "toolbarShortcut.pause.modifiers",
         "toolbarShortcut.pause.label", "toolbarShortcut.pause.enabled",
-        AppDefaults.axScrollPreviewKey, CapturePolicy.targetFPSKey, CapturePolicy.realtimeOCRIntervalMillisecondsKey, CapturePolicy.axRefreshIntervalMillisecondsKey, CapturePolicy.axSettleMillisecondsKey, CapturePolicy.axScrollMethodKey,
+        AppDefaults.axScrollPreviewKey, AppDefaults.axScrollCoordinateCorrectionKey, CapturePolicy.targetFPSKey, CapturePolicy.realtimeOCRIntervalMillisecondsKey, CapturePolicy.axRefreshIntervalMillisecondsKey, CapturePolicy.axSettleMillisecondsKey, CapturePolicy.axScrollMethodKey,
         OCRRecognitionPolicy.minimumConfidenceKey, RefinementOCRPolicy.automaticStrategyKey,
         RefinementOCRPolicy.manualStrategyKey, RefinementOCRPolicy.alwaysRunKey,
         RefinementOCRPolicy.confidenceThresholdKey, RefinementOCRPolicy.delayMillisecondsKey,

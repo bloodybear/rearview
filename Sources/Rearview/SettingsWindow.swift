@@ -106,6 +106,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
     var onToolbarHotKeyRemove: ((ToolbarShortcutAction) -> Bool)?
     var onSelectionShortcutChange: ((SelectionShortcutAction, ToolbarHotKey) -> Bool)?
     var onSelectionShortcutRemove: ((SelectionShortcutAction) -> Bool)?
+    var onAXScrollOptionsChange: (() -> Void)?
     var onCapturePolicyChange: ((CapturePolicy) -> Void)?
     var onOCRSettingsChange: ((OCRMode, OCRSettings) -> Void)?
     var onRefinementOCRPolicyChange: ((RefinementOCRPolicy) -> Void)?
@@ -156,6 +157,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
     private let imageSaveFilenameField = NSTextField()
     private let ocrIntervalField = NSTextField()
     private let ocrIntervalStepper = NSStepper()
+    private let axScrollCoordinateCorrectionSwitch = NSSwitch()
     private let axScrollPreviewSwitch = NSSwitch()
     private let axScrollMethodPopup = NSPopUpButton()
     private let axSettleField = NSTextField()
@@ -287,6 +289,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         extractionPopup.selectItem(at: TextExtractionPreference.load() == .ax ? 0 : 1)
         mirrorFollowSize.state = MirrorFollowsSelectionSize.load() ? .on : .off
         axScrollPreviewSwitch.state = (UserDefaults.standard.object(forKey: AppDefaults.axScrollPreviewKey) as? Bool ?? true) ? .on : .off
+        axScrollCoordinateCorrectionSwitch.state = UserDefaults.standard.bool(forKey: AppDefaults.axScrollCoordinateCorrectionKey) ? .on : .off
         targetApplicationTracking.state = TargetApplicationTracking.load() ? .on : .off
         let launchAtLoginEnabled = launchAtLoginStatusProvider.map {
             LaunchAtLogin.isEnabled($0())
@@ -487,7 +490,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         ])
         let updateSection = makeSection(title: L10n.text("갱신"), rows: [
             makePreferenceRow(title: L10n.text("스크롤 미리보기"), description: L10n.text("정식 갱신 전에 본문 번역을 스크롤 위치로 옮겨 표시합니다."), control: axScrollPreviewSwitch),
-            makePreferenceRow(title: L10n.text("스크롤 이동량 계산"), description: L10n.text("픽셀 비교를 선택하면 본문 좌표 보정에도 이동량을 사용합니다."), control: axScrollMethodPopup),
+            makePreferenceRow(title: L10n.text("스크롤 좌표 보정"), description: L10n.text("스크롤 중 지연된 AX 본문 좌표를 이동량으로 보정합니다."), control: axScrollCoordinateCorrectionSwitch),
+            makePreferenceRow(title: L10n.text("스크롤 이동량 계산"), description: L10n.text("스크롤 미리보기와 좌표 보정에 사용할 이동량 계산 방식을 선택합니다."), control: axScrollMethodPopup),
             makePreferenceRow(title: L10n.text("AX 안정 갱신 간격"), description: L10n.text("화면 변화가 멈춘 뒤 최종 갱신까지 기다리는 시간입니다. 설정 범위는 0–2000ms입니다."), control: makeNumberControl(field: axSettleField, stepper: axSettleStepper, unit: "ms")),
             makePreferenceRow(title: L10n.text("AX 최소 간격"), description: L10n.text("AX 모드에서 자동 갱신을 시작하는 최소 간격입니다. 설정 범위는 100–2000ms입니다."), control: makeNumberControl(field: axIntervalField, stepper: axIntervalStepper, unit: "ms")),
             makePreferenceRow(title: L10n.text("OCR 최소 간격"), description: L10n.text("화면이 변해도 이 시간이 지난 뒤 다음 OCR을 시작합니다. 설정 범위는 100–2000ms입니다."), control: makeNumberControl(field: ocrIntervalField, stepper: ocrIntervalStepper, unit: "ms")),
@@ -748,6 +752,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         axScrollMethodPopup.addItems(withTitles: AXScrollMethod.allCases.map(\.title))
         axScrollMethodPopup.target = self
         axScrollMethodPopup.action = #selector(capturePolicyChanged)
+        axScrollCoordinateCorrectionSwitch.target = self
+        axScrollCoordinateCorrectionSwitch.action = #selector(axScrollCoordinateCorrectionChanged)
         axScrollPreviewSwitch.target = self
         axScrollPreviewSwitch.action = #selector(axScrollPreviewChanged)
         targetApplicationTracking.target = self
@@ -1404,8 +1410,14 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         onMirrorFollowSelectionSizeChange?(enabled)
     }
 
+    @objc private func axScrollCoordinateCorrectionChanged() {
+        UserDefaults.standard.set(axScrollCoordinateCorrectionSwitch.state == .on, forKey: AppDefaults.axScrollCoordinateCorrectionKey)
+        onAXScrollOptionsChange?()
+    }
+
     @objc private func axScrollPreviewChanged() {
         UserDefaults.standard.set(axScrollPreviewSwitch.state == .on, forKey: AppDefaults.axScrollPreviewKey)
+        onAXScrollOptionsChange?()
     }
 
     @objc private func targetApplicationTrackingChanged() {
