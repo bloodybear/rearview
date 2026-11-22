@@ -264,6 +264,10 @@ Rearview가 활성 상태이거나 비활성 컨트롤 바에 마우스를 올�
 타겟 앱 창 추적	Track Target App Window	対象アプリのウィンドウを追跡
 대상 창이 이동하거나 크기가 바뀌면 선택 영역도 창의 네 변과 같은 간격을 유지합니다.	Keeps the selection at the same distance from each edge as the target window moves or resizes.	対象ウィンドウの移動やサイズ変更に合わせて、選択範囲とウィンドウの各辺との間隔を保ちます。
 갱신	Refresh	更新
+진단 자료 범위	Diagnostic export scope	診断データの範囲
+최근 로그 포함	Include Recent Logs	最近のログを含める
+현재 화면만	Current Screen Only	現在の画面のみ
+최근 로그 포함은 최근 처리 기록과 보관된 프레임을 저장합니다. 현재 화면만은 표시 중인 프레임의 이미지만 저장합니다.	Include Recent Logs saves recent activity and retained frames. Current Screen Only saves images of the displayed frame.	「最近のログを含める」は最近の処理記録と保持されたフレームを保存します。「現在の画面のみ」は表示中のフレームの画像だけを保存します。
 스크롤 미리보기	Scroll Preview	スクロールプレビュー
 정식 갱신 전에 본문 번역을 스크롤 위치로 옮겨 표시합니다.	Moves body translations with scrolling before the full refresh.	全体の更新前に、本文の翻訳をスクロール位置に合わせて表示します。
 스크롤 이동량 계산	Scroll Distance Method	スクロール移動量の計算

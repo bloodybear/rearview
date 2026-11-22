@@ -17,13 +17,20 @@ import UniformTypeIdentifiers
         let symptom=NSPopUpButton(frame:.zero,pullsDown:false)
         let labels=["번역 실패","화면 미표시·갱신 멈춤","인식·번역 누락","결과 부정확","기타"]
         symptom.addItems(withTitles:labels.map { L10n.text($0) })
+        let scope=NSPopUpButton(frame:.zero,pullsDown:false)
+        scope.addItems(withTitles:[L10n.text("최근 로그 포함"),L10n.text("현재 화면만")])
+        scope.selectItem(at:0)
+        scope.setAccessibilityLabel(L10n.text("진단 자료 범위"))
+        let scopeHint=NSTextField(wrappingLabelWithString:L10n.text("최근 로그 포함은 최근 처리 기록과 보관된 프레임을 저장합니다. 현재 화면만은 표시 중인 프레임의 이미지만 저장합니다."))
+        scopeHint.font = .systemFont(ofSize:11)
         let description=NSTextField(string:"");description.placeholderString=L10n.text("문제 설명 (선택 사항)")
         let include=NSButton(checkboxWithTitle:L10n.text("화면 이미지·문서 원문·번역문 포함"),target:nil,action:nil);include.state = .on
         let hint=NSTextField(wrappingLabelWithString:L10n.text("설명에 입력한 내용은 위 선택과 관계없이 포함됩니다."))
         hint.font = .systemFont(ofSize:11);hint.textColor = .secondaryLabelColor
-        let stack=NSStackView(views:[symptom,description,include,hint]);stack.orientation = .vertical;stack.alignment = .leading;stack.spacing=10
-        stack.frame=NSRect(x:0,y:0,width:430,height:130)
+        let stack=NSStackView(views:[symptom,scope,scopeHint,description,include,hint]);stack.orientation = .vertical;stack.alignment = .leading;stack.spacing=10
+        stack.frame=NSRect(x:0,y:0,width:430,height:204)
         description.widthAnchor.constraint(equalToConstant:420).isActive=true
+        scopeHint.widthAnchor.constraint(equalToConstant:420).isActive=true
         alert.accessoryView=stack
         guard alert.runModal() == .alertFirstButtonReturn else { busy=false;return }
         let panel=NSSavePanel();panel.allowedContentTypes=[.zip]
@@ -31,7 +38,7 @@ import UniformTypeIdentifiers
         panel.nameFieldStringValue="Rearview-Diagnostics-\(date).zip"
         guard panel.runModal() == .OK, let destination=panel.url else { busy=false;return }
         let codes=["translation_failure","no_display_or_stalled","missing_text","inaccurate_result","other"]
-        let options=DiagnosticExportOptions(includesContent:include.state == .on,symptom:codes[symptom.indexOfSelectedItem],description:description.stringValue)
+        let options=DiagnosticExportOptions(includesContent:include.state == .on,symptom:codes[symptom.indexOfSelectedItem],description:description.stringValue,includesRecentLogs:scope.indexOfSelectedItem == 0)
         let progress=NSPanel(contentRect:NSRect(x:0,y:0,width:340,height:110),styleMask:[.titled],backing:.buffered,defer:false)
         progress.title=L10n.text("진단 자료 저장 중…");progress.isReleasedWhenClosed=false
         let spinner=NSProgressIndicator(frame:NSRect(x:20,y:58,width:24,height:24));spinner.style = .spinning;spinner.startAnimation(nil)

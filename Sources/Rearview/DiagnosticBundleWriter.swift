@@ -5,6 +5,7 @@ struct DiagnosticExportOptions: Sendable {
     var includesContent = true
     var symptom = "other"
     var description = ""
+    var includesRecentLogs = true
 }
 struct DiagnosticManifest: Codable, Sendable {
     struct Frame: Codable, Sendable {
@@ -21,6 +22,7 @@ struct DiagnosticManifest: Codable, Sendable {
     let createdAt: Date
     let session: UUID
     let contentIncluded: Bool
+    let recentLogsIncluded: Bool?
     let symptom, description: String
     let state: [String:String]
     let contentEnvironment: [String:String]?
@@ -77,9 +79,12 @@ enum DiagnosticBundleWriter {
         let encoder=JSONEncoder();encoder.outputFormatting=[.prettyPrinted,.sortedKeys];encoder.dateEncodingStrategy = .iso8601
         var exported:[DiagnosticManifest.Frame]=[]
         var remaining=DiagnosticRecorder.maximumBytes
-        for frame in snapshot.frames {
+        let includesRecentLogs = options.includesRecentLogs
+        let displayed = snapshot.frames.first { $0.id == snapshot.displayed }
+        let frames = includesRecentLogs ? snapshot.frames : displayed.map { [$0] } ?? []
+        for frame in frames {
             try Task.checkCancellation()
-            var files:[String]=[],omissions=frame.omissions
+            var files:[String]=[],omissions=includesRecentLogs ? frame.omissions : []
             if frame.images["composite.png"] == nil { omissions.append("no_composite_available") }
             if options.includesContent {
                 let directory=folder.appendingPathComponent(frame.id.uuidString,isDirectory:true)
@@ -89,13 +94,13 @@ enum DiagnosticBundleWriter {
                     try data.write(to:directory.appendingPathComponent(name),options:.atomic)
                     remaining-=data.count;files.append(name)
                 }
-                for name in frame.documents.keys.sorted() {
+                for name in frame.documents.keys.sorted() where includesRecentLogs {
                     try Task.checkCancellation()
                     do { try save(name,try frame.documents[name]!.encode()) }
                     catch is CancellationError { throw CancellationError() }
                     catch { omissions.append("\(name):serialization_or_write_failed") }
                 }
-                for name in frame.images.keys.sorted() {
+                for name in frame.images.keys.sorted() where includesRecentLogs || name == "source.png" || name == "composite.png" {
                     try Task.checkCancellation()
                     do {
                         guard let data=NSBitmapImageRep(cgImage:frame.images[name]!).representation(using:.png,properties:[:]) else { omissions.append("\(name):image_encoding_failed");continue }
@@ -103,24 +108,34 @@ enum DiagnosticBundleWriter {
                     } catch { omissions.append("\(name):image_write_failed") }
                 }
             } else { omissions.append("content_excluded_by_user") }
-            exported.append(.init(id:frame.id,session:frame.session,frameID:frame.frameID,generation:frame.generation,revision:frame.revision,task:frame.task,receivedAt:frame.receivedAt,createdAt:frame.createdAt,summary:frame.summary,omissions:omissions,files:files))
+            exported.append(.init(id:frame.id,session:frame.session,frameID:frame.frameID,generation:frame.generation,revision:frame.revision,task:frame.task,receivedAt:frame.receivedAt,createdAt:frame.createdAt,summary:includesRecentLogs ? frame.summary : [:],omissions:omissions,files:files))
         }
         let manifest=DiagnosticManifest(schemaVersion:snapshot.schemaVersion,createdAt:snapshot.createdAt,session:snapshot.session,
-            contentIncluded:options.includesContent,symptom:options.symptom,description:options.description,state:snapshot.state,
-            contentEnvironment:options.includesContent ? snapshot.contentEnvironment : nil,current:snapshot.current,displayed:snapshot.displayed,failed:snapshot.failed,
-            omissions:snapshot.omissions,frames:exported)
+            contentIncluded:options.includesContent,recentLogsIncluded:includesRecentLogs,
+            symptom:options.symptom,description:options.description,state:includesRecentLogs ? snapshot.state : [:],
+            contentEnvironment:includesRecentLogs && options.includesContent ? snapshot.contentEnvironment : nil,
+            current:includesRecentLogs ? snapshot.current : nil,displayed:includesRecentLogs ? snapshot.displayed : displayed?.id,
+            failed:includesRecentLogs ? snapshot.failed : nil,
+            omissions:includesRecentLogs ? snapshot.omissions : (displayed == nil ? ["no_displayed_frame"] : []),frames:exported)
         try encoder.encode(manifest).write(to:folder.appendingPathComponent("manifest.json"),options:.atomic)
-        // Events are a structural allowlist at source. No raw provider error strings are allowed here.
-        var events=Data()
-        let eventEncoder=JSONEncoder();eventEncoder.outputFormatting=[.sortedKeys];eventEncoder.dateEncodingStrategy = .iso8601
-        for event in snapshot.events { events.append(try eventEncoder.encode(event));events.append(10) }
-        try events.write(to:folder.appendingPathComponent("events.jsonl"),options:.atomic)
-        let readme=warning+"\n\n화면·원문 등 포함: \(options.includesContent)\n설명란은 내용 포함 설정과 관계없이 저장됩니다.\n"
-            + "\n수집 항목: 실행 환경, 설정, 처리 상태·이벤트, 선택한 경우 화면·추출·번역·렌더링 결과.\n"
-            + "\n재현은 저장된 결과의 렌더링에 한합니다. 대상 앱의 당시 상태나 번역 모델의 동일 결과는 보장하지 않습니다.\n"
-            + "\nDeveloper: inspect manifest.json and events.jsonl. Frame folders are UUIDs. Missing files/omissions are not successes.\n"
-            + "Use the development app --review-diagnostics <folder> --diagnostic-frame <UUID> --diagnostic-review-output <new folder>. No AX/OCR/model calls are made.\n"
-        try readme.write(to:folder.appendingPathComponent("README.txt"),atomically:true,encoding:.utf8)
+        if includesRecentLogs {
+            // Events are a structural allowlist at source. No raw provider error strings are allowed here.
+            var events=Data()
+            let eventEncoder=JSONEncoder();eventEncoder.outputFormatting=[.sortedKeys];eventEncoder.dateEncodingStrategy = .iso8601
+            for event in snapshot.events { events.append(try eventEncoder.encode(event));events.append(10) }
+            try events.write(to:folder.appendingPathComponent("events.jsonl"),options:.atomic)
+        }
+        let scope = includesRecentLogs
+            ? "수집 항목: 실행 환경, 설정, 최근 이벤트, 선택한 경우 화면·추출·번역·렌더링 결과."
+            : "수집 항목: 선택한 경우 현재 표시 중인 프레임의 원본·합성 이미지."
+        let readme=warning+"\n\n최근 로그 포함: \(includesRecentLogs)\n화면 내용 포함: \(options.includesContent)\n설명란은 내용 포함 설정과 관계없이 저장됩니다.\n"
+            + "\n"+scope+"\n"
+            + "\nDeveloper: inspect manifest.json and, when included, events.jsonl. Frame folders are UUIDs.\n"
+        let replayInstructions = includesRecentLogs
+            ? "\n재현은 저장된 결과의 렌더링에 한합니다. 대상 앱의 당시 상태나 번역 모델의 동일 결과는 보장하지 않습니다.\n"
+                + "Use the development app --review-diagnostics <folder> --diagnostic-frame <UUID> --diagnostic-review-output <new folder>. No AX/OCR/model calls are made.\n"
+            : ""
+        try (readme + replayInstructions).write(to:folder.appendingPathComponent("README.txt"),atomically:true,encoding:.utf8)
         try Task.checkCancellation()
         return manifest
     }

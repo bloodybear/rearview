@@ -84,6 +84,39 @@ final class DiagnosticTests:XCTestCase {
         XCTAssertTrue(manifest.frames[0].omissions.contains("bad.json:serialization_or_write_failed"))
         XCTAssertTrue(FileManager.default.fileExists(atPath:destination.appendingPathComponent(id.uuidString+"/source.png").path))
     }
+    @MainActor func testCurrentScreenExportExcludesHistoryAndPendingFrame() async throws {
+        let recorder = DiagnosticRecorder()
+        recorder.begin()
+        recorder.update(["history": "previous-state"], content: ["path": "private-path"])
+        let failed = try XCTUnwrap(recorder.startFrame(image: image(), frameID: 1, receivedAt: 1,
+            generation: 1, revision: 1, task: 1, mode: "ax"))
+        recorder.error(nil, stage: "ax", id: failed)
+        let displayed = try XCTUnwrap(recorder.startFrame(image: image(), frameID: 2, receivedAt: 2,
+            generation: 1, revision: 1, task: 2, mode: "ax"))
+        recorder.submitted(MirrorFrame(image: image(), translatedItems: [], frameID: 2), id: displayed)
+        recorder.image("composite.png", image(), to: displayed)
+        recorder.image("retained-source.png", image(), to: displayed)
+        recorder.add("retained-translations.json", document: .init(["source": "private"], estimatedBytes: 100), to: displayed)
+        let pending = try XCTUnwrap(recorder.startFrame(image: image(), frameID: 3, receivedAt: 3,
+            generation: 1, revision: 1, task: 3, mode: "ax"))
+        let snapshot = recorder.snapshot()
+        XCTAssertEqual(Set(snapshot.frames.map(\.id)), Set([failed, displayed, pending]))
+        let destination = folder()
+        defer { try? FileManager.default.removeItem(at: destination) }
+        let manifest = try await Task.detached {
+            try DiagnosticBundleWriter.writeFolder(snapshot, options: .init(includesRecentLogs: false), to: destination)
+        }.value
+
+        XCTAssertEqual(manifest.recentLogsIncluded, false)
+        XCTAssertEqual(manifest.displayed, displayed)
+        XCTAssertNil(manifest.current)
+        XCTAssertNil(manifest.failed)
+        XCTAssertNil(manifest.contentEnvironment)
+        XCTAssertTrue(manifest.state.isEmpty)
+        XCTAssertEqual(manifest.frames.map(\.id), [displayed])
+        XCTAssertEqual(Set(allFiles(destination).filter { $0.hasDirectoryPath == false }.map(\.lastPathComponent))
+            .subtracting([displayed.uuidString]), Set(["manifest.json", "README.txt", "source.png", "composite.png"]))
+    }
     @MainActor func testCancelledExportDoesNotReplaceDestination() async throws {
         let recorder=DiagnosticRecorder();recorder.begin();let snapshot=recorder.snapshot()
         let root=folder();try FileManager.default.createDirectory(at:root,withIntermediateDirectories:true)
