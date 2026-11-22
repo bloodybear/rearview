@@ -298,7 +298,7 @@ final class SessionCoordinatorIntegrationTests: XCTestCase {
         XCTAssertEqual(coordinator.latestAXFrame?.frameID,1)
         XCTAssertEqual(output.frames.last?.translatedItems.count,0)
         XCTAssertTrue(translator.calls.isEmpty)
-        XCTAssertTrue(output.statuses.contains(.completed(failures:1)))
+        XCTAssertTrue(output.statuses.contains(.axCompleted(translationFailures:0,imageFailures:0,extractionIncomplete:true)))
         let diagnostic=coordinator.diagnosticSnapshot()
         XCTAssertTrue(diagnostic.frames.contains { $0.summary["status"]=="partial" && $0.documents["ax-paragraphs.json"] != nil })
     }
@@ -337,7 +337,7 @@ final class SessionCoordinatorIntegrationTests: XCTestCase {
         XCTAssertEqual(coordinator.latestAXTranslation?.frame.frameID,1)
         XCTAssertNotNil(output.frames.last?.axArtwork)
         XCTAssertEqual(coordinator.latestAXRenderedFrame?.frameID,1)
-        XCTAssertTrue(output.statuses.contains(.completed(failures:1)))
+        XCTAssertTrue(output.statuses.contains(.axCompleted(translationFailures:0,imageFailures:0,extractionIncomplete:true)))
     }
 
     func testReadAheadShowsCandidateProgressAndHidesWhenFinished() async throws {

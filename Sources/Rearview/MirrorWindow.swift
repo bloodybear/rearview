@@ -354,29 +354,36 @@ enum MirrorProcessingStatus: Equatable {
     case translating(completed: Int, total: Int)
     case prefetching(completed: Int, total: Int)
     case completed(failures: Int)
+    case axCompleted(translationFailures: Int, imageFailures: Int, extractionIncomplete: Bool)
     case recognitionFailed
 
     var title: String {
         switch self {
         case .recognizing:
-            L10n.text("텍스트 인식 중")
+            return L10n.text("텍스트 인식 중")
         case .translating(let completed, let total):
-            L10n.format("번역 중 %d/%d", completed, total)
+            return L10n.format("번역 중 %d/%d", completed, total)
         case .prefetching(let completed, let total):
-            L10n.format("미리 읽기 %d/%d", completed, total)
+            return L10n.format("미리 읽기 %d/%d", completed, total)
         case .completed(let failures):
-            failures == 0
+            return failures == 0
                 ? L10n.text("완료")
                 : L10n.format("완료 · %d줄 실패", failures)
+        case .axCompleted(let translationFailures, let imageFailures, let extractionIncomplete):
+            var parts = [L10n.text("완료")]
+            if translationFailures > 0 { parts.append(L10n.format("번역 %d건 실패", translationFailures)) }
+            if imageFailures > 0 { parts.append(L10n.format("이미지 처리 %d건 실패", imageFailures)) }
+            if extractionIncomplete { parts.append(L10n.text("AX 추출 미완료")) }
+            return parts.joined(separator: " · ")
         case .recognitionFailed:
-            L10n.text("텍스트 인식 실패")
+            return L10n.text("텍스트 인식 실패")
         }
     }
 
     var isProcessing: Bool {
         switch self {
         case .recognizing, .translating, .prefetching: true
-        case .completed, .recognitionFailed: false
+        case .completed, .axCompleted, .recognitionFailed: false
         }
     }
 }

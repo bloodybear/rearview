@@ -19,6 +19,7 @@ package final class ControlTextResolver: AXTextAccess {
         var emptyRange = false
         var internalTextAttempted = false
         var complete = true
+        var diagnostics: Entry = [:]
     }
 
     private var verifyTextParents = false
@@ -138,7 +139,14 @@ package final class ControlTextResolver: AXTextAccess {
                 }
                 return [:]
             }
-            result.complete = tree.complete && Date() < deadline
+            let deadlineExceeded = Date() >= deadline
+            result.diagnostics = tree.diagnostics
+            result.diagnostics["deadlineExceeded"] = deadlineExceeded
+            if deadlineExceeded {
+                result.diagnostics["reasons"] = (result.diagnostics["reasons"] as? [String] ?? []) + ["deadline_exceeded"]
+            }
+            result.diagnostics["recoveredTexts"] = texts.map { ["text":$0.source,"frame":rect($0.frame),"method":$0.method] as Entry }
+            result.complete = tree.complete && !deadlineExceeded
             result.texts = texts
             result.status = result.complete ? "internal_text_resolved" : "internal_text_incomplete"
             return result
@@ -230,7 +238,7 @@ extension ControlTextResolver {
             let neighbors = rows[owner]["surfaceKind"] as? String == "tabbar" ? controls.filter { $0 != owner && frame(rows[$0]).map { ownerFrame.contains($0) } == true }.map { elements[$0] } : []
             let before = queryCount
             let found = resolve(elements[owner], header: classes.contains("notion-table-view-header-row"), internalText: internalText, neighbors: neighbors, deadline: deadline, documentTab: documentTab)
-            rows[owner]["controlTextResolution"] = ["status":found.status,"complete":found.complete,"calls":queryCount-before,"textCount":found.texts.count,"chromiumInternalPath":found.internalTextAttempted]
+            rows[owner]["controlTextResolution"] = ["status":found.status,"complete":found.complete,"calls":queryCount-before,"textCount":found.texts.count,"chromiumInternalPath":found.internalTextAttempted,"internalTraversal":found.diagnostics]
             // Never replace a whole control with a partial private-tree walk.
             guard found.complete, !found.texts.isEmpty else {
                 if found.status == "empty_native_text_range" {

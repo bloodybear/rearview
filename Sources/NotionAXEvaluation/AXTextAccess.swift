@@ -5,6 +5,7 @@ import ApplicationServices
 class AXTextAccess {
     typealias Entry = [String: Any]
     var queryCount = 0
+    var lastParameterizedResult: Int32?
 
     func attr(_ e: AXUIElement, _ name: String) -> CFTypeRef? {
         queryCount += 1
@@ -13,9 +14,12 @@ class AXTextAccess {
     }
 
     func param(_ e: AXUIElement, _ name: String, _ input: CFTypeRef) -> CFTypeRef? {
+        lastParameterizedResult = nil
         queryCount += 1
         var value: CFTypeRef?
-        return AXUIElementCopyParameterizedAttributeValue(e, name as CFString, input, &value) == .success ? value : nil
+        let result = AXUIElementCopyParameterizedAttributeValue(e, name as CFString, input, &value)
+        lastParameterizedResult = result.rawValue
+        return result == .success ? value : nil
     }
 
     func asElement(_ value: CFTypeRef?) -> AXUIElement? {
@@ -62,13 +66,13 @@ class AXTextAccess {
     // determine whether a text node exists underneath macOS AX's platform tree.
     // This diagnostic follows reported live child IDs within the current tree.
     func internalTree(_ origin: AXUIElement, _ rootMarker: CFTypeRef, _ rootDescription: String,
-                      lookup: (AXUIElement) -> Entry) -> (nodes: [Entry], complete: Bool) {
-        guard CFGetTypeID(rootMarker) == AXTextMarkerGetTypeID() else { return ([], false) }
+                      lookup: (AXUIElement) -> Entry) -> (nodes: [Entry], complete: Bool, diagnostics: Entry) {
+        guard CFGetTypeID(rootMarker) == AXTextMarkerGetTypeID() else { return ([], false, ["reasons":["unsupported_marker_format"]]) }
         let marker = rootMarker as! AXTextMarker
         let length = AXTextMarkerGetLength(marker)
         let parts = rootDescription.split(separator: " ", maxSplits: 2)
         guard length == 56, parts.count >= 2, parts[0].hasPrefix("id="),
-              let ownID = Int32(parts[0].dropFirst(3)) else { return ([], false) }
+              let ownID = Int32(parts[0].dropFirst(3)) else { return ([], false, ["reasons":["unsupported_marker_format"]]) }
         let bytes = AXTextMarkerGetBytePtr(marker)
         let raw = UnsafeRawBufferPointer(start: bytes, count: length)
         guard raw.loadUnaligned(fromByteOffset:0,as:Int32.self) == 2,
@@ -77,7 +81,7 @@ class AXTextAccess {
               raw.loadUnaligned(fromByteOffset:12,as:Int32.self) == 0,
               raw.loadUnaligned(fromByteOffset:16,as:Int32.self) == 1,
               raw[52] == 0, raw[20..<52].allSatisfy({ (48...57).contains($0) || (65...70).contains($0) || (97...102).contains($0) })
-        else { return ([], false) }
+        else { return ([], false, ["reasons":["unsupported_marker_format"]]) }
 
         func ids(_ description: String, _ field: String) -> [Int32] {
             guard let match = description.range(of: " " + field + "=") else { return [] }
@@ -93,15 +97,19 @@ class AXTextAccess {
         var pending = branches(rootDescription, 1, "child")
         var read = Set([ownID]), found: [Entry] = []
         var incomplete = false
+        var issues: [Entry] = []
+        var maximumDepth = 0
         while !pending.isEmpty, read.count <= 64 {
             let (id, depth, relation) = pending.removeFirst()
             guard read.insert(id).inserted else { continue }
+            maximumDepth = max(maximumDepth, depth)
             var copied = Array(raw)
             let childBytes = withUnsafeBytes(of:id.littleEndian) { Array($0) }
             copied.replaceSubrange(4..<8,with:childBytes)
             let child = copied.withUnsafeBufferPointer({ AXTextMarkerCreate(nil, $0.baseAddress!, length) })
-            guard let description = param(origin,"AXTextMarkerNodeDebugDescription",child) as? String,
-                  description.hasPrefix("id=\(id) ") else {
+            let descriptionResult = param(origin,"AXTextMarkerNodeDebugDescription",child) as? String
+            guard let description = descriptionResult, description.hasPrefix("id=\(id) ") else {
+                issues.append(["reason":descriptionResult == nil ? "description_unavailable" : "description_id_mismatch", "id":id, "depth":depth, "response":descriptionResult ?? "", "axResult":lastParameterizedResult.map { String($0) } ?? "not_called"])
                 incomplete = true
                 continue
             }
@@ -114,10 +122,18 @@ class AXTextAccess {
             if !description.hasPrefix("id=\(id) staticText") {
                 let children = branches(description, depth + 1, relation)
                 if depth < 16 { pending += children }
-                else if !children.isEmpty { incomplete = true }
+                else if !children.isEmpty {
+                    incomplete = true
+                    issues.append(["reason":"depth_limit", "id":id, "depth":depth, "pendingChildIDs":children.map { $0.0 }])
+                }
             }
         }
-        return (found, pending.isEmpty && !incomplete)
+        if !pending.isEmpty { issues.append(["reason":"node_limit"]) }
+        return (found, pending.isEmpty && !incomplete, [
+            "reasons":Array(Set(issues.compactMap { $0["reason"] as? String })).sorted(),
+            "issues":issues, "visitedNodes":read.count, "maximumDepth":maximumDepth,
+            "pendingNodeIDs":pending.map { $0.0 }, "nodeLimit":64, "depthLimit":16,
+            "rootDescription":rootDescription, "nodes":found])
     }
 
 }

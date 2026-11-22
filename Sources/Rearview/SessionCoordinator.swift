@@ -835,11 +835,11 @@ final class SessionCoordinator {
                         let stage: SessionFailure.Stage = imageOCR.diagnostics.contains { $0.status == "failed" } ? .ocr : .translation
                         self.reportFailure(nil, stage: stage, userInitiated: origin == .userAction)
                     } else { self.failureDeduplicator.succeeded(.translation) }
-                    self.showProcessingStatus(.completed(failures:imageOCR.failures + entries.filter { $0.status == "failed" }.count + (result.status == .complete ? 0 : 1)),frameID:frame.id,origin:origin)
+                    self.showProcessingStatus(.axCompleted(translationFailures:entries.filter { $0.status == "failed" }.count, imageFailures:imageOCR.failures, extractionIncomplete:result.status != .complete),frameID:frame.id,origin:origin)
                     self.onAXTranslation?(translated)
                     if result.status == .complete { self.startPrefetch(requestID: request.diagnosticRequestID, frameID: frame.id, total: result.prefetchCandidateCount) }
                 } else {
-                    self.showProcessingStatus(.completed(failures:result.status == .complete ? 0 : 1),frameID:frame.id,origin:origin)
+                    self.showProcessingStatus(.axCompleted(translationFailures:0, imageFailures:0, extractionIncomplete:result.status != .complete),frameID:frame.id,origin:origin)
                 }
             } catch {
                 if let requestID=diagnosticRequestID { self.recordAXAccessDiagnostic(await self.ax.diagnosticSnapshot(),requestID:requestID,id:diagnosticID) }

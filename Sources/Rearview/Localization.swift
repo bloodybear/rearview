@@ -382,6 +382,9 @@ CSV 다른 이름으로 저장…	Save CSV As…	CSVを別名で保存…
 미리 읽기 %d/%d	Reading ahead %d/%d	先読み %d/%d
 완료	Completed	完了
 완료 · %d줄 실패	Completed · %d Lines Failed	完了・%d行失敗
+번역 %d건 실패	%d Translation Failures	翻訳%d件失敗
+이미지 처리 %d건 실패	%d Image Processing Failures	画像処理%d件失敗
+AX 추출 미완료	AX Extraction Incomplete	AX抽出未完了
 텍스트 인식 실패	Text Recognition Failed	テキスト認識に失敗
 일시정지	Paused	一時停止
 원본 보기	Show Original	原文を表示
