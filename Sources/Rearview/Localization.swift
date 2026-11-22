@@ -267,7 +267,7 @@ Rearview가 활성 상태이거나 비활성 컨트롤 바에 마우스를 올�
 진단 자료 범위	Diagnostic export scope	診断データの範囲
 최근 로그 포함	Include Recent Logs	最近のログを含める
 현재 화면만	Current Screen Only	現在の画面のみ
-최근 로그 포함은 최근 처리 기록과 보관된 프레임을 저장합니다. 현재 화면만은 표시 중인 프레임의 이미지만 저장합니다.	Include Recent Logs saves recent activity and retained frames. Current Screen Only saves images of the displayed frame.	「最近のログを含める」は最近の処理記録と保持されたフレームを保存します。「現在の画面のみ」は表示中のフレームの画像だけを保存します。
+최근 로그 포함은 최근 처리 기록과 보관된 프레임을 저장합니다. 현재 화면만은 표시 중인 화면을 만드는 데 쓰인 자료와 관련 프레임 로그를 저장합니다.	Include Recent Logs saves recent activity and retained frames. Current Screen Only saves the data used to produce the displayed screen and related frame logs.	「最近のログを含める」は最近の処理記録と保持されたフレームを保存します。「現在の画面のみ」は表示中の画面の生成に使われたデータと関連フレームのログを保存します。
 스크롤 미리보기	Scroll Preview	スクロールプレビュー
 정식 갱신 전에 본문 번역을 스크롤 위치로 옮겨 표시합니다.	Moves body translations with scrolling before the full refresh.	全体の更新前に、本文の翻訳をスクロール位置に合わせて表示します。
 스크롤 이동량 계산	Scroll Distance Method	スクロール移動量の計算

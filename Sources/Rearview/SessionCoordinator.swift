@@ -172,6 +172,7 @@ final class SessionCoordinator {
     var onAXExtractionError: ((Error) -> Void)?
     private let ocr: any SessionOCRProvider
     private let changes = ChangeDetector()
+    private var lastAnalyzedFrameID: UInt64?
     private let outputSink: (any SessionOutputSink)?
     private let createsOutputWindow: Bool
     private var mirror: TranslationMirrorWindow?
@@ -583,6 +584,7 @@ final class SessionCoordinator {
         let stableReference = previous.frame.scrollAlignmentReference
         if canCorrect, stableReference || previous.frame.appliesScrollCoordinateCorrection {
             onCoordinateProbe?(sourceID, displacement, stableReference)
+            diagnostics.recordReference(frameID: previous.frame.frameID, to: diagnosticID)
             diagnostics.event("ax.scroll_coordinate_alignment", frame: diagnosticID, [
                 "frameID": String(frame.id), "displacement": String(Double(displacement)),
                 "method": method.rawValue, "referenceFrameID": String(previous.frame.frameID),
@@ -630,11 +632,16 @@ final class SessionCoordinator {
             preview.axScrollPreviewShift = deltaY.rounded()
             debug?.record("submitted", shift: deltaY.rounded(), reference: debugReference, currentReceivedAt: frame.receivedAt)
             self.scrollPreviewFrameID = frame.id
-            self.diagnostics.event("ax.scroll_preview", frame: diagnosticID, [
+            let previewID = diagnosticID
+                ?? self.diagnostics.find(frameID: frame.id, generation: generation, revision: revision)
+                ?? self.beginDiagnosticFrame(frame, task: sequence)
+            self.diagnostics.recordReference(frameID: previous.frame.frameID, to: previewID)
+            self.diagnostics.event("ax.scroll_preview", frame: previewID, [
                 "frameID": String(frame.id), "whileWaiting": String(onCoordinateProbe == nil),
                 "body": String(describing: currentRegion.viewport),
                 "destination": String(describing: result.clipRects.reduce(CGRect.null) { $0.union($1) }),
                 "shift": String(Double(deltaY)), "method": method == .ax ? "ax_position" : "pixel", "parts": String(result.diagnostics.count),
+                "referenceFrameID": String(previous.frame.frameID),
                 "elapsed": String(describing: started.duration(to: .now))
             ])
             self.display(preview)
@@ -896,6 +903,7 @@ final class SessionCoordinator {
         delayedRefinementTask = nil
         clearAXSettle()
         changes.reset()
+        lastAnalyzedFrameID = nil
         lastRealtimeLines = []
         lastRealtimeObservationCount = 0
         stabilityEpoch = 0
@@ -1507,6 +1515,7 @@ final class SessionCoordinator {
         diagnostics.add("image-ocr.json",document:.init(value.imageOCR.diagnostics,estimatedBytes:estimate),to:id)
         if let reuse=value.bodyReuseDiagnostic { diagnostics.add("body-reuse.json",document:.init(reuse,estimatedBytes:4096),to:id) }
         if let retained=value.retainedBody {
+            diagnostics.recordReference(frameID: retained.body.frame.frameID, to: id)
             recordRetainedDiagnostic(retained,id:id)
         }
     }
@@ -2056,6 +2065,7 @@ final class SessionCoordinator {
         pendingAutomaticFrame.clear()
         clearAXSettle()
         changes.reset()
+        lastAnalyzedFrameID = nil
         cancelProcessingStatus()
     }
 
@@ -2159,7 +2169,12 @@ final class SessionCoordinator {
 
     private func prepareFrame(_ frame: FrameEnvelope) -> FrameChange {
         let change = changes.analyze(frame.image)
-        diagnostics.event("change.analyzed", ["frameID":String(frame.id),"ratio":String(change.changedRatio),"kind":String(describing:change.motion.kind)])
+        var fields = ["frameID":String(frame.id),"ratio":String(change.changedRatio),"kind":String(describing:change.motion.kind)]
+        if change.motion.kind != .initial, let lastAnalyzedFrameID {
+            fields["referenceFrameID"] = String(lastAnalyzedFrameID)
+        }
+        lastAnalyzedFrameID = frame.id
+        diagnostics.event("change.analyzed", fields)
         PerformanceProfiler.shared.increment("change.tilesPercent", by: Int(change.changedRatio * 100))
         if change.changedRatio > 0 {
             lastMotion = .now

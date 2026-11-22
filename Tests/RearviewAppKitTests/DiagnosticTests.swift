@@ -91,15 +91,28 @@ final class DiagnosticTests:XCTestCase {
         let failed = try XCTUnwrap(recorder.startFrame(image: image(), frameID: 1, receivedAt: 1,
             generation: 1, revision: 1, task: 1, mode: "ax"))
         recorder.error(nil, stage: "ax", id: failed)
-        let displayed = try XCTUnwrap(recorder.startFrame(image: image(), frameID: 2, receivedAt: 2,
+        recorder.event("unrelated.session.event")
+        recorder.event("capture.received", ["frameID": "2"])
+        let reference = try XCTUnwrap(recorder.startFrame(image: image(), frameID: 2, receivedAt: 2,
             generation: 1, revision: 1, task: 2, mode: "ax"))
-        recorder.submitted(MirrorFrame(image: image(), translatedItems: [], frameID: 2), id: displayed)
+        recorder.mark("ax.finished", id: reference)
+        recorder.add("reference-only.json", document: .init(["source": "older screen"], estimatedBytes: 100), to: reference)
+        recorder.event("capture.received", ["frameID": "3"])
+        recorder.event("change.analyzed", ["frameID": "3", "referenceFrameID": "2"])
+        let displayed = try XCTUnwrap(recorder.startFrame(image: image(), frameID: 3, receivedAt: 3,
+            generation: 1, revision: 1, task: 3, mode: "ax"))
+        recorder.mark("ax.finished", id: displayed)
+        recorder.add("ax-access.json", document: .init(["calls": 10], estimatedBytes: 100), to: displayed)
+        recorder.add("render-layout.json", document: .init(["status": "rendered"], estimatedBytes: 100), to: displayed)
+        recorder.submitted(MirrorFrame(image: image(), translatedItems: [], frameID: 3), id: displayed)
         recorder.image("composite.png", image(), to: displayed)
         recorder.image("retained-source.png", image(), to: displayed)
-        recorder.add("retained-translations.json", document: .init(["source": "private"], estimatedBytes: 100), to: displayed)
-        let pending = try XCTUnwrap(recorder.startFrame(image: image(), frameID: 3, receivedAt: 3,
-            generation: 1, revision: 1, task: 3, mode: "ax"))
-        let snapshot = recorder.snapshot()
+        recorder.add("retained-translations.json", document: .init(["source": "used by displayed frame"], estimatedBytes: 100), to: displayed)
+        let pending = try XCTUnwrap(recorder.startFrame(image: image(), frameID: 4, receivedAt: 4,
+            generation: 1, revision: 1, task: 4, mode: "ax"))
+        recorder.mark("ax.finished", id: pending)
+        let snapshot = recorder.snapshot(now: Date().addingTimeInterval(301))
+        XCTAssertTrue(snapshot.events.isEmpty)
         XCTAssertEqual(Set(snapshot.frames.map(\.id)), Set([failed, displayed, pending]))
         let destination = folder()
         defer { try? FileManager.default.removeItem(at: destination) }
@@ -114,8 +127,23 @@ final class DiagnosticTests:XCTestCase {
         XCTAssertNil(manifest.contentEnvironment)
         XCTAssertTrue(manifest.state.isEmpty)
         XCTAssertEqual(manifest.frames.map(\.id), [displayed])
-        XCTAssertEqual(Set(allFiles(destination).filter { $0.hasDirectoryPath == false }.map(\.lastPathComponent))
-            .subtracting([displayed.uuidString]), Set(["manifest.json", "README.txt", "source.png", "composite.png"]))
+        let files = Set(allFiles(destination).map(\.lastPathComponent))
+        XCTAssertTrue(files.isSuperset(of: ["events.jsonl", "source.png", "composite.png",
+            "ax-access.json", "render-layout.json", "retained-source.png", "retained-translations.json"]))
+        XCTAssertFalse(files.contains("reference-only.json"))
+        let log = try String(contentsOf: destination.appendingPathComponent("events.jsonl"), encoding: .utf8)
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let events = try log.split(separator: "\n").map { try decoder.decode(DiagnosticEvent.self, from: Data($0.utf8)) }
+        XCTAssertEqual(Set(events.compactMap(\.frame)), Set([reference, displayed]))
+        XCTAssertEqual(Set(events.filter { $0.frame == nil }.compactMap { $0.fields["frameID"] }), ["2", "3"])
+        XCTAssertTrue(events.filter { $0.frame == nil }.allSatisfy { ["capture.received", "change.analyzed"].contains($0.name) })
+
+        let structuralOnly = destination.appendingPathComponent("structural-only")
+        let structuralManifest = try DiagnosticBundleWriter.writeFolder(snapshot,
+            options: .init(includesContent: false, includesRecentLogs: false), to: structuralOnly)
+        XCTAssertEqual(structuralManifest.frames.first?.files, [])
+        XCTAssertEqual(try String(contentsOf: structuralOnly.appendingPathComponent("events.jsonl"), encoding: .utf8), log)
     }
     @MainActor func testCancelledExportDoesNotReplaceDestination() async throws {
         let recorder=DiagnosticRecorder();recorder.begin();let snapshot=recorder.snapshot()

@@ -34,6 +34,8 @@ struct DiagnosticFrameRecord: @unchecked Sendable {
     var documents: [String:DiagnosticDocument] = [:]
     var images: [String:CGImage] = [:]
     var omissions: [String] = []
+    // Frame events survive expiration of the separate session history.
+    var scopedEvents: [DiagnosticEvent] = []
     var estimatedBytes: Int {
         documents.values.reduce(0) { $0+$1.estimatedBytes } + images.values.reduce(0) { $0+$1.bytesPerRow*$1.height }
     }
@@ -82,7 +84,16 @@ struct DiagnosticSnapshot: @unchecked Sendable {
     func event(_ name: String, frame: UUID? = nil, _ fields: [String:String] = [:], now: Date = Date()) {
         guard enabled else { return }
         sequence &+= 1
-        events.append(.init(sequence:sequence,date:now,uptime:ProcessInfo.processInfo.systemUptime,name:name,frame:frame,fields:fields))
+        var fields = fields
+        if let frame, let record = frames[frame] { fields["processingFrameID"] = String(record.frameID) }
+        let entry = DiagnosticEvent(sequence:sequence,date:now,uptime:ProcessInfo.processInfo.systemUptime,name:name,frame:frame,fields:fields)
+        events.append(entry)
+        if let frame, frames[frame] != nil {
+            frames[frame]?.scopedEvents.append(entry)
+            if (frames[frame]?.scopedEvents.count ?? 0) > Self.maximumEvents {
+                frames[frame]?.scopedEvents.removeFirst()
+            }
+        }
         let cutoff=now.addingTimeInterval(-300)
         if events.count > Self.maximumEvents { events.removeFirst(events.count-Self.maximumEvents) }
         if let index=events.firstIndex(where: { $0.date >= cutoff }),index>0 { events.removeFirst(index) }
@@ -93,10 +104,37 @@ struct DiagnosticSnapshot: @unchecked Sendable {
         let id=UUID()
         frames[id] = .init(id:id,session:session,frameID:frameID,generation:generation,revision:revision,task:task,
             receivedAt:receivedAt,createdAt:Date(),summary:["mode":mode,"stage":"started","width":String(image.width),"height":String(image.height)],images:["source.png":image])
+        let context = captureEvents(for: String(frameID), in: events)
+        frames[id]?.scopedEvents = context
+        if let reference = context.last(where: { $0.name == "change.analyzed" })?
+            .fields["referenceFrameID"].flatMap(UInt64.init) {
+            recordReference(frameID: reference, to: id)
+        }
         current=id
         event("processing.start",frame:id,["mode":mode]); trim(prefer:id)
         return id
     }
+    private func captureEvents(for frameID: String, in entries: [DiagnosticEvent]) -> [DiagnosticEvent] {
+        entries.filter {
+            $0.frame == nil && $0.fields["frameID"] == frameID &&
+                ["capture.received", "change.analyzed", "frame.queued", "ax.settle.started"].contains($0.name)
+        }
+    }
+
+    func recordReference(frameID: UInt64, to id: UUID?) {
+        guard let id, let destination = frames[id], frameID < destination.frameID else { return }
+        let reference = find(frameID: frameID, generation: destination.generation, revision: destination.revision)
+        let candidates = reference.flatMap { frames[$0]?.scopedEvents } ?? events
+        let number = String(frameID)
+        // Match direct references only, even if the reference itself reused an older frame.
+        let linked = candidates.filter { $0.frame != nil && $0.fields["processingFrameID"] == number }
+        let captures = captureEvents(for: number, in: candidates)
+        let existing = Set(destination.scopedEvents.map(\.sequence))
+        frames[id]?.scopedEvents.append(contentsOf: (captures + linked.suffix(64)).filter {
+            !existing.contains($0.sequence)
+        })
+    }
+
     func event(_ name:String,_ fields:[String:String]) { event(name,frame:nil,fields) }
     func find(frameID:UInt64,generation:Int,revision:Int) -> UUID? {
         frames.values.filter { $0.frameID==frameID && $0.generation==generation && $0.revision==revision }.max { $0.task<$1.task }?.id
